@@ -20,7 +20,7 @@ This MVP is intentionally conservative:
 ## Install
 
 ```bash
-pip install -e .
+pip install trustcheck
 ```
 
 ## Usage
