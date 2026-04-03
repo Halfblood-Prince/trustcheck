@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trustcheck"
-version = "1.0.0"
+version = "1.0.1"
 description = "Package trust and provenance verification for PyPI consumers."
 readme = "README.md"
 requires-python = ">=3.10"
