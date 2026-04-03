@@ -1,0 +1,87 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: New package version to publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version input
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import sys
+
+          version = os.environ["VERSION"].strip()
+          pattern = r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[._-]?(?:a|b|rc|post|dev)\d*)?$"
+          if not re.fullmatch(pattern, version):
+              print(f"Invalid version: {version}", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bump version in pyproject.toml
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
+
+          path = pathlib.Path("pyproject.toml")
+          content = path.read_text(encoding="utf-8")
+          version = os.environ["VERSION"].strip()
+          updated, count = re.subn(
+              r'(?m)^version = "[^"]+"$',
+              f'version = "{version}"',
+              content,
+              count=1,
+          )
+          if count != 1:
+              print("Could not find a single project version entry in pyproject.toml", file=sys.stderr)
+              sys.exit(1)
+          path.write_text(updated, encoding="utf-8")
+          PY
+
+      - name: Commit version bump
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "Bump version to $VERSION"
+          git push
+
+      - name: Build package
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
