@@ -72,8 +72,10 @@ Field notes:
 ## Release process
 
 - Pull requests and pushes to `main` run CI for tests, lint, type checks, and a build smoke test.
-- Publishing is triggered from a GitHub Release and rebuilds the tagged source before upload.
-- The publish workflow cannot run the upload step unless the release revision passes the same CI gates in the workflow.
+- Releases start from a pushed `v*` tag, not from CI-side version edits.
+- Release tags must be annotated; signed annotated tags are recommended for maintainers.
+- The release workflow checks out the exact tagged commit SHA, runs the same CI gates, publishes the already-built artifacts, and then creates a GitHub Release from that immutable ref.
+- GitHub Release notes are generated automatically and artifact checksums are attached for traceability.
 
 ## What the report includes
 
