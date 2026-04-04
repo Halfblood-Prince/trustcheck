@@ -1,5 +1,8 @@
 # trustcheck
 
+[![CI](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/trustcheck.svg)](https://pypi.org/project/trustcheck/)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://pypi.org/project/trustcheck/)
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/trustcheck?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/trustcheck)
 
 `trustcheck` is a small Python package and CLI for checking PyPI package trust signals before installation.
@@ -30,6 +33,40 @@ trustcheck inspect sampleproject --version 4.0.0
 trustcheck inspect sampleproject --expected-repo https://github.com/pypa/sampleproject
 trustcheck inspect sampleproject --format json
 ```
+
+## Common workflows
+
+Inspect the latest release with the concise default output:
+
+```bash
+trustcheck inspect requests
+```
+
+Inspect a pinned release and require full verification:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --strict
+```
+
+Review detailed file-level provenance evidence:
+
+```bash
+trustcheck inspect sampleproject --verbose
+```
+
+Check whether a release matches the repository you expect:
+
+```bash
+trustcheck inspect sampleproject --expected-repo https://github.com/pypa/sampleproject
+```
+
+Send machine-readable output to another tool:
+
+```bash
+trustcheck inspect sampleproject --format json
+```
+
+Shell completion is not implemented yet, so the README focuses on copy-pasteable examples for the most common operator workflows.
 
 ## JSON contract
 
@@ -74,6 +111,7 @@ Field notes:
 ## Release process
 
 - Pull requests and pushes to `main` run CI for tests, lint, type checks, and a build smoke test.
+- CI currently runs on Python 3.12, and package classifiers should only advertise versions covered by that workflow.
 - Releases start from a pushed `v*` tag, not from CI-side version edits.
 - Release tags must be annotated; signed annotated tags are recommended for maintainers.
 - The release workflow checks out the exact tagged commit SHA, runs the same CI gates, publishes the already-built artifacts, and then creates a GitHub Release from that immutable ref.
