@@ -101,9 +101,9 @@ def _render_text_report(report: TrustReport) -> str:
     if report.summary:
         lines.append(f"summary: {report.summary}")
 
-    if report.repository_urls:
-        lines.append("repository urls:")
-        lines.extend(f"  - {url}" for url in report.repository_urls)
+    if report.declared_repository_urls:
+        lines.append("declared repository urls:")
+        lines.extend(f"  - {url}" for url in report.declared_repository_urls)
 
     if report.expected_repository:
         lines.append(f"expected repository: {report.expected_repository}")

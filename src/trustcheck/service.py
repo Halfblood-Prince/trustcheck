@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -29,7 +30,7 @@ def inspect_package(
     payload = client.get_release(project, version) if version else client.get_project(project)
     info = payload.get("info", {})
     selected_version = payload.get("info", {}).get("version") or version or "unknown"
-    project_urls = _extract_repository_urls(info.get("project_urls") or {})
+    declared_repository_urls = _extract_repository_urls(info.get("project_urls") or {})
     vulnerabilities = _parse_vulnerabilities(payload.get("vulnerabilities") or [])
     ownership = info.get("ownership") or {}
     files = _collect_files(project, selected_version, payload, client)
@@ -39,7 +40,8 @@ def inspect_package(
         version=selected_version,
         summary=info.get("summary"),
         package_url=f"https://pypi.org/project/{project}/{selected_version}/",
-        repository_urls=project_urls,
+        declared_repository_urls=declared_repository_urls,
+        repository_urls=declared_repository_urls,
         expected_repository=expected_repository,
         ownership=ownership,
         vulnerabilities=vulnerabilities,
@@ -118,24 +120,27 @@ def _parse_vulnerabilities(items: list[dict[str, Any]]) -> list[VulnerabilityRec
 
 
 def _extract_repository_urls(project_urls: dict[str, str]) -> list[str]:
-    repo_urls: list[str] = []
-    preferred_labels = ("source", "source code", "repository", "repo", "homepage", "home")
+    explicit_repo_urls: list[str] = []
+    fallback_repo_urls: list[str] = []
 
     for label, url in project_urls.items():
-        label_norm = label.strip().lower()
-        if any(token in label_norm for token in preferred_labels):
-            repo_urls.append(url)
+        normalized = _normalize_repo_url(url)
+        if not normalized:
+            continue
 
-    if not repo_urls:
-        repo_urls.extend(project_urls.values())
+        if _is_explicit_repository_label(label):
+            explicit_repo_urls.append(normalized)
+        else:
+            fallback_repo_urls.append(normalized)
+
+    repo_urls = explicit_repo_urls or fallback_repo_urls
 
     deduped: list[str] = []
     seen: set[str] = set()
     for url in repo_urls:
-        normalized = _normalize_repo_url(url)
-        if normalized not in seen:
+        if url not in seen:
             deduped.append(url)
-            seen.add(normalized)
+            seen.add(url)
     return deduped
 
 
@@ -197,7 +202,7 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
 
     if report.expected_repository:
         expected = _normalize_repo_url(report.expected_repository)
-        repo_matches = any(_normalize_repo_url(url) == expected for url in report.repository_urls)
+        repo_matches = any(url == expected for url in report.declared_repository_urls)
         publisher_matches = any(
             _normalize_repo_url(identity.repository) == expected
             for file in report.files
@@ -296,39 +301,77 @@ def _normalize_repo_url(url: str | None) -> str:
     if not url:
         return ""
 
-    parsed = urlparse(url)
+    ssh_match = re.fullmatch(r"git@(?P<host>github\.com|gitlab\.com):(?P<path>.+)", url.strip())
+    if ssh_match:
+        host = ssh_match.group("host")
+        path = ssh_match.group("path")
+        return _normalize_supported_forge_url(host, path)
+
+    parsed = urlparse(url.strip())
     if not parsed.scheme and not parsed.netloc:
         if url.count("/") == 1:
-            return _normalize_repo_url(f"https://github.com/{url}")
-        return url.rstrip("/")
-    scheme = parsed.scheme.lower() or "https"
-    netloc = parsed.netloc.lower()
-    path = parsed.path.rstrip("/")
+            return _normalize_supported_forge_url("github.com", url)
+        return ""
 
-    if netloc.endswith("github.com") or netloc.endswith("gitlab.com"):
-        path = path.removesuffix(".git")
-        segments = [segment for segment in path.split("/") if segment]
-        path = "/" + "/".join(segments[:2])
+    host = parsed.hostname.lower() if parsed.hostname else ""
+    path = parsed.path or ""
 
-    normalized = parsed._replace(
-        scheme=scheme,
-        netloc=netloc,
-        path=path,
-        params="",
-        query="",
-        fragment="",
-    )
-    return normalized.geturl()
+    if parsed.scheme.lower() == "ssh" and parsed.username == "git" and host:
+        return _normalize_supported_forge_url(host, path)
+
+    if parsed.scheme.lower().startswith("git+"):
+        nested = urlparse(url[len("git+"):])
+        host = nested.hostname.lower() if nested.hostname else ""
+        path = nested.path or ""
+
+    return _normalize_supported_forge_url(host, path)
 
 
 def _publisher_repository_url(kind: str, repository: str | None) -> str | None:
     if not repository:
         return repository
     if repository.startswith(("http://", "https://")):
-        return repository
+        return _normalize_repo_url(repository) or repository
     kind_normalized = kind.lower()
     if "github" in kind_normalized:
-        return f"https://github.com/{repository}"
+        return _normalize_repo_url(f"https://github.com/{repository}") or repository
     if "gitlab" in kind_normalized:
-        return f"https://gitlab.com/{repository}"
+        return _normalize_repo_url(f"https://gitlab.com/{repository}") or repository
     return repository
+
+
+def _is_explicit_repository_label(label: str) -> bool:
+    label_norm = label.strip().lower()
+    explicit_labels = {
+        "source",
+        "source code",
+        "repository",
+        "repo",
+        "code",
+        "source repository",
+    }
+    return label_norm in explicit_labels
+
+
+def _normalize_supported_forge_url(host: str, path: str) -> str:
+    host_normalized = host.lower().removesuffix(":")
+    cleaned_path = path.strip().lstrip("/").rstrip("/")
+    cleaned_path = cleaned_path.removesuffix(".git")
+
+    if host_normalized == "github.com":
+        segments = [segment for segment in cleaned_path.split("/") if segment]
+        if len(segments) < 2:
+            return ""
+        owner, repo = segments[0].lower(), segments[1].lower()
+        return f"https://github.com/{owner}/{repo}"
+
+    if host_normalized == "gitlab.com":
+        if "/-/" in cleaned_path:
+            cleaned_path = cleaned_path.split("/-/", maxsplit=1)[0]
+        segments = [segment for segment in cleaned_path.split("/") if segment]
+        if len(segments) < 2:
+            return ""
+        namespace = "/".join(segment.lower() for segment in segments)
+        return f"https://gitlab.com/{namespace}"
+
+    return ""

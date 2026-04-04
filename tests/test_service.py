@@ -184,7 +184,11 @@ class InspectPackageTests(unittest.TestCase):
         self.assertEqual(report.project, "demo")
         self.assertEqual(report.version, "1.2.3")
         self.assertEqual(report.recommendation, "verified")
-        self.assertEqual(report.repository_urls, ["https://github.com/example/demo"])
+        self.assertEqual(
+            report.declared_repository_urls,
+            ["https://github.com/example/demo"],
+        )
+        self.assertEqual(report.repository_urls, report.declared_repository_urls)
         self.assertTrue(report.files[0].has_provenance)
         self.assertTrue(report.files[0].verified)
         self.assertEqual(report.files[0].verified_attestation_count, 1)
@@ -256,7 +260,7 @@ class InspectPackageTests(unittest.TestCase):
 
         self.assertEqual(report.version, "unknown")
         self.assertIsNone(report.summary)
-        self.assertEqual(report.repository_urls, [])
+        self.assertEqual(report.declared_repository_urls, [])
         self.assertEqual(report.files, [])
         self.assertEqual(report.recommendation, "review-required")
 
@@ -368,19 +372,27 @@ class InspectPackageTests(unittest.TestCase):
     def test_repo_normalization_handles_common_edge_cases(self) -> None:
         self.assertEqual(
             _normalize_repo_url("git+https://github.com/Example/Demo.git?ref=main"),
-            "git+https://github.com/Example/Demo",
+            "https://github.com/example/demo",
         )
         self.assertEqual(
-            _normalize_repo_url("https://github.com/example/demo/"),
+            _normalize_repo_url("git@github.com:Example/Demo.git"),
             "https://github.com/example/demo",
+        )
+        self.assertEqual(
+            _normalize_repo_url("ssh://git@gitlab.com/Group/SubGroup/Repo.git"),
+            "https://gitlab.com/group/subgroup/repo",
+        )
+        self.assertEqual(
+            _normalize_repo_url("https://gitlab.com/group/subgroup/repo/-/tree/main"),
+            "https://gitlab.com/group/subgroup/repo",
         )
         self.assertEqual(
             _normalize_repo_url("example/demo"),
             "https://github.com/example/demo",
         )
         self.assertEqual(
-            _normalize_repo_url("https://gitlab.com/group/subgroup/repo/-/tree/main"),
-            "https://gitlab.com/group/subgroup",
+            _normalize_repo_url("https://docs.example.com/demo"),
+            "",
         )
 
     def test_expected_repository_matches_slug_style_publisher_identity(self) -> None:
@@ -401,6 +413,37 @@ class InspectPackageTests(unittest.TestCase):
 
         self.assertEqual(report.risk_flags, [])
         self.assertEqual(report.recommendation, "verified")
+
+    def test_homepage_like_urls_do_not_count_as_declared_repo(self) -> None:
+        client = FakeClient(
+            project_payload=make_project_payload(
+                urls=[],
+                project_urls={
+                    "Homepage": "https://docs.example.com/demo",
+                    "Documentation": "https://example.com/docs",
+                },
+            )
+        )
+
+        report = inspect_package("demo", client=cast(Any, client))
+
+        self.assertEqual(report.declared_repository_urls, [])
+        self.assertIn("missing_repository_url", {flag.code for flag in report.risk_flags})
+
+    def test_explicit_repository_label_wins_over_homepage_label(self) -> None:
+        client = FakeClient(
+            project_payload=make_project_payload(
+                urls=[],
+                project_urls={
+                    "Homepage": "https://github.com/example/docs-site",
+                    "Source": "git@github.com:Example/Demo.git",
+                },
+            )
+        )
+
+        report = inspect_package("demo", client=cast(Any, client))
+
+        self.assertEqual(report.declared_repository_urls, ["https://github.com/example/demo"])
 
     def test_recommendation_mapping_behavior(self) -> None:
         metadata_only = inspect_package(

@@ -17,6 +17,7 @@ def make_report() -> TrustReport:
         version="1.2.3",
         summary="Demo package",
         package_url="https://pypi.org/project/demo/1.2.3/",
+        declared_repository_urls=["https://github.com/example/demo"],
         repository_urls=["https://github.com/example/demo"],
         expected_repository="https://github.com/example/demo",
         ownership={
@@ -70,6 +71,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(
             sorted(payload.keys()),
             [
+                "declared_repository_urls",
                 "expected_repository",
                 "files",
                 "ownership",
@@ -84,6 +86,10 @@ class CliBehaviorTests(unittest.TestCase):
             ],
         )
         self.assertEqual(payload["project"], "demo")
+        self.assertEqual(
+            payload["declared_repository_urls"],
+            ["https://github.com/example/demo"],
+        )
         self.assertEqual(payload["files"][0]["verified"], True)
         self.assertEqual(payload["files"][0]["observed_sha256"], "abc123")
 

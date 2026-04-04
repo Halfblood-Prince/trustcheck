@@ -50,6 +50,7 @@ class TrustReport:
     version: str
     summary: str | None
     package_url: str
+    declared_repository_urls: list[str] = field(default_factory=list)
     repository_urls: list[str] = field(default_factory=list)
     expected_repository: str | None = None
     ownership: dict[str, Any] = field(default_factory=dict)
