@@ -2,15 +2,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+import traceback
 from typing import Sequence
 
+from .pypi import PypiClientError
 from .service import inspect_package
+
+EXIT_OK = 0
+EXIT_UPSTREAM_FAILURE = 1
+EXIT_USAGE = 2
+EXIT_DATA_ERROR = 3
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trustcheck",
         description="Inspect PyPI package trust and provenance signals.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Show tracebacks for operational failures.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -34,20 +47,46 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "inspect":
-        report = inspect_package(
-            args.project,
-            version=args.version,
-            expected_repository=args.expected_repo,
-        )
-        if args.format == "json":
-            print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
-        else:
-            print(_render_text_report(report))
-        return 0
+    try:
+        if args.command == "inspect":
+            report = inspect_package(
+                args.project,
+                version=args.version,
+                expected_repository=args.expected_repo,
+            )
+            if args.format == "json":
+                print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+            else:
+                print(_render_text_report(report))
+            return EXIT_OK
 
-    parser.error("unknown command")
-    return 2
+        parser.error("unknown command")
+        return EXIT_USAGE
+    except PypiClientError as exc:
+        return _handle_error(
+            f"error: unable to inspect package from PyPI: {exc}",
+            EXIT_UPSTREAM_FAILURE,
+            debug=args.debug,
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return _handle_error(
+            f"error: received an invalid response while inspecting the package: {exc}",
+            EXIT_DATA_ERROR,
+            debug=args.debug,
+        )
+    except Exception as exc:
+        return _handle_error(
+            f"error: unexpected failure while inspecting the package: {exc}",
+            EXIT_DATA_ERROR,
+            debug=args.debug,
+        )
+
+
+def _handle_error(message: str, exit_code: int, *, debug: bool) -> int:
+    print(message, file=sys.stderr)
+    if debug:
+        traceback.print_exc(file=sys.stderr)
+    return exit_code
 
 
 def _render_text_report(report) -> str:
