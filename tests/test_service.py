@@ -21,7 +21,7 @@ AttestationFn = Callable[[object, object], tuple[str, object | None] | None]
 
 def make_project_payload(
     *,
-    version: str = "1.2.3",
+    version: str = "2.2.0",
     project_urls: dict[str, str] | None = None,
     urls: list[dict[str, object]] | None = None,
     vulnerabilities: list[dict[str, object]] | None = None,
@@ -46,7 +46,7 @@ def make_project_payload(
         if urls is not None
         else [
             {
-                "filename": "gridoptim-1.2.3-py3-none-any.whl",
+                "filename": "gridoptim-2.2.0-py3-none-any.whl",
                 "url": "https://files.pythonhosted.org/packages/gridoptim.whl",
                 "digests": {"sha256": "abc123"},
             }
@@ -188,7 +188,7 @@ class InspectPackageTests(unittest.TestCase):
                 )
 
         self.assertEqual(report.project, "gridoptim")
-        self.assertEqual(report.version, "1.2.3")
+        self.assertEqual(report.version, "2.2.0")
         self.assertEqual(report.recommendation, "verified")
         self.assertEqual(
             report.declared_repository_urls,
@@ -223,7 +223,7 @@ class InspectPackageTests(unittest.TestCase):
         client = FakeClient(
             project_payload=payload,
             provenance_errors={
-                "gridoptim-1.2.3-py3-none-any.whl": PypiClientError("resource not found")
+                "gridoptim-2.2.0-py3-none-any.whl": PypiClientError("resource not found")
             },
         )
 
@@ -238,7 +238,7 @@ class InspectPackageTests(unittest.TestCase):
         client = FakeClient(
             project_payload=payload,
             provenance_errors={
-                "gridoptim-1.2.3-py3-none-any.whl": PypiClientError(
+                "gridoptim-2.2.0-py3-none-any.whl": PypiClientError(
                     "PyPI returned HTTP 503 for provenance"
                 )
             },
@@ -276,12 +276,12 @@ class InspectPackageTests(unittest.TestCase):
         payload = make_project_payload(
             urls=[
                 {
-                    "filename": "gridoptim-1.2.3-py3-none-any.whl",
+                    "filename": "gridoptim-2.2.0-py3-none-any.whl",
                     "url": "https://files.pythonhosted.org/packages/gridoptim.whl",
                     "digests": {"sha256": "abc123"},
                 },
                 {
-                    "filename": "gridoptim-1.2.3.tar.gz",
+                    "filename": "gridoptim-2.2.0.tar.gz",
                     "url": "https://files.pythonhosted.org/packages/gridoptim.tar.gz",
                     "digests": {"sha256": "def456"},
                 },
@@ -306,8 +306,8 @@ class InspectPackageTests(unittest.TestCase):
                 report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertEqual([file.filename for file in report.files], payload["urls"][0:2][0:2] and [
-            "gridoptim-1.2.3-py3-none-any.whl",
-            "gridoptim-1.2.3.tar.gz",
+            "gridoptim-2.2.0-py3-none-any.whl",
+            "gridoptim-2.2.0.tar.gz",
         ])
         self.assertTrue(all(file.verified for file in report.files))
 
@@ -315,12 +315,12 @@ class InspectPackageTests(unittest.TestCase):
         payload = make_project_payload(
             urls=[
                 {
-                    "filename": "gridoptim-1.2.3-py3-none-any.whl",
+                    "filename": "gridoptim-2.2.0-py3-none-any.whl",
                     "url": "https://files.pythonhosted.org/packages/gridoptim.whl",
                     "digests": {"sha256": "abc123"},
                 },
                 {
-                    "filename": "gridoptim-1.2.3.tar.gz",
+                    "filename": "gridoptim-2.2.0.tar.gz",
                     "url": "https://files.pythonhosted.org/packages/gridoptim.tar.gz",
                     "digests": {"sha256": "def456"},
                 },
@@ -332,7 +332,7 @@ class InspectPackageTests(unittest.TestCase):
                 "https://files.pythonhosted.org/packages/gridoptim.whl": b"wheel",
                 "https://files.pythonhosted.org/packages/gridoptim.tar.gz": b"sdist",
             },
-            provenance_errors={"gridoptim-1.2.3.tar.gz": PypiClientError("resource not found")},
+            provenance_errors={"gridoptim-2.2.0.tar.gz": PypiClientError("resource not found")},
         )
         provenance = make_provenance()
 
@@ -353,12 +353,12 @@ class InspectPackageTests(unittest.TestCase):
         payload = make_project_payload(
             urls=[
                 {
-                    "filename": "gridoptim-1.2.3-py3-none-any.whl",
+                    "filename": "gridoptim-2.2.0-py3-none-any.whl",
                     "url": "https://files.pythonhosted.org/packages/gridoptim.whl",
                     "digests": {"sha256": "abc123"},
                 },
                 {
-                    "filename": "gridoptim-1.2.3.tar.gz",
+                    "filename": "gridoptim-2.2.0.tar.gz",
                     "url": "https://files.pythonhosted.org/packages/gridoptim.tar.gz",
                     "digests": {"sha256": "def456"},
                 },
@@ -397,12 +397,12 @@ class InspectPackageTests(unittest.TestCase):
         payload = make_project_payload(
             urls=[
                 {
-                    "filename": "gridoptim-1.2.3-py3-none-any.whl",
+                    "filename": "gridoptim-2.2.0-py3-none-any.whl",
                     "url": "https://files.pythonhosted.org/packages/gridoptim.whl",
                     "digests": {"sha256": "abc123"},
                 },
                 {
-                    "filename": "gridoptim-1.2.3.tar.gz",
+                    "filename": "gridoptim-2.2.0.tar.gz",
                     "url": "https://files.pythonhosted.org/packages/gridoptim.tar.gz",
                     "digests": {"sha256": "def456"},
                 },
@@ -447,15 +447,15 @@ class InspectPackageTests(unittest.TestCase):
 
     def test_release_drift_is_reported_against_previous_version(self) -> None:
         current_payload = make_project_payload(
-            version="1.2.3",
-            releases={"1.2.2": [], "1.2.3": []},
+            version="2.2.0",
+            releases={"2.1.0": [], "2.2.0": []},
         )
-        previous_release_payload = make_project_payload(version="1.2.2")
+        previous_release_payload = make_project_payload(version="2.1.0")
         client = FakeClient(
             project_payload=current_payload,
             release_payloads={
-                "1.2.2": previous_release_payload,
-                "1.2.3": current_payload,
+                "2.1.0": previous_release_payload,
+                "2.2.0": current_payload,
             },
         )
         current_provenance = make_provenance(
@@ -483,11 +483,11 @@ class InspectPackageTests(unittest.TestCase):
                 ]
                 report = inspect_package(
                     "gridoptim",
-                    version="1.2.3",
+                    version="2.2.0",
                     client=cast(Any, client),
                 )
 
-        self.assertEqual(report.release_drift.compared_to_version, "1.2.2")
+        self.assertEqual(report.release_drift.compared_to_version, "2.1.0")
         self.assertTrue(report.release_drift.publisher_repository_drift)
         self.assertTrue(report.release_drift.publisher_workflow_drift)
         self.assertIn("publisher_repository_drift", {flag.code for flag in report.risk_flags})
@@ -659,9 +659,9 @@ class InspectPackageTests(unittest.TestCase):
         )
         high_risk = TrustReport(
             project="gridoptim",
-            version="1.2.3",
+            version="2.2.0",
             summary=None,
-            package_url="https://pypi.org/project/gridoptim/1.2.3/",
+            package_url="https://pypi.org/project/gridoptim/2.2.0/",
             risk_flags=[
                 RiskFlag(
                     code="unverified_provenance",

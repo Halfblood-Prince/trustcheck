@@ -187,7 +187,7 @@ class PypiClientTests(unittest.TestCase):
             return_value=FakeResponse(json.dumps({"attestation_bundles": {}}).encode()),
         ):
             with self.assertRaisesRegex(PypiClientError, "unexpected provenance response shape"):
-                client.get_provenance("gridoptim", "1.2.3", "gridoptim.whl")
+                client.get_provenance("gridoptim", "2.2.0", "gridoptim.whl")
 
     def test_json_requests_are_cached(self) -> None:
         calls: list[str] = []

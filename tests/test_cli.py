@@ -29,9 +29,9 @@ from trustcheck.pypi import PypiClientError
 def make_report() -> TrustReport:
     return TrustReport(
         project="gridoptim",
-        version="1.2.3",
+        version="2.2.0",
         summary="gridoptim package",
-        package_url="https://pypi.org/project/gridoptim/1.2.3/",
+        package_url="https://pypi.org/project/gridoptim/2.2.0/",
         declared_repository_urls=["https://github.com/Halfblood-Prince/gridoptim"],
         repository_urls=["https://github.com/Halfblood-Prince/gridoptim"],
         expected_repository="https://github.com/Halfblood-Prince/gridoptim",
@@ -42,7 +42,7 @@ def make_report() -> TrustReport:
         vulnerabilities=[],
         files=[
             FileProvenance(
-                filename="gridoptim-1.2.3-py3-none-any.whl",
+                filename="gridoptim-2.2.0-py3-none-any.whl",
                 url="https://files.pythonhosted.org/packages/gridoptim.whl",
                 sha256="abc123",
                 observed_sha256="abc123",
@@ -89,7 +89,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertEqual(stderr.getvalue(), "")
-        self.assertIn("trustcheck report for gridoptim 1.2.3", stdout.getvalue())
+        self.assertIn("trustcheck report for gridoptim 2.2.0", stdout.getvalue())
         self.assertIn("summary:", stdout.getvalue())
         self.assertIn("recommendation: verified", stdout.getvalue())
         self.assertIn("why this result: cryptographic verification succeeded", stdout.getvalue())
