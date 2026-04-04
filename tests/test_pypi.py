@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import socket
+import ssl
 import unittest
 from io import BytesIO
+from unittest.mock import patch
 from urllib import error
 
 from trustcheck import __version__
@@ -48,7 +51,7 @@ class PypiClientTests(unittest.TestCase):
 
         client = PypiClient(max_retries=2, backoff_factor=0.1, sleep=sleeps.append)
 
-        with unittest.mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             payload = client.get_project("demo")
 
         self.assertEqual(payload["info"]["version"], "1.0.0")
@@ -70,7 +73,7 @@ class PypiClientTests(unittest.TestCase):
 
         client = PypiClient(max_retries=3, sleep=lambda delay: None)
 
-        with unittest.mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             with self.assertRaisesRegex(PypiClientError, "retrying is unlikely to help"):
                 client.get_project("demo")
 
@@ -79,17 +82,87 @@ class PypiClientTests(unittest.TestCase):
     def test_url_errors_report_retry_hint(self) -> None:
         client = PypiClient(max_retries=0, sleep=lambda delay: None)
 
-        with unittest.mock.patch(
+        with patch(
             "urllib.request.urlopen",
             side_effect=error.URLError("temporary failure in name resolution"),
         ):
             with self.assertRaisesRegex(PypiClientError, "retrying may help"):
                 client.get_project("demo")
 
+    def test_direct_socket_timeout_is_treated_as_transient(self) -> None:
+        attempts: list[int] = []
+
+        def fake_urlopen(req: object, timeout: float) -> FakeResponse:
+            attempts.append(1)
+            raise socket.timeout("timed out")
+
+        client = PypiClient(max_retries=1, sleep=lambda delay: None)
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with self.assertRaisesRegex(PypiClientError, "retrying may help"):
+                client.get_project("demo")
+
+        self.assertEqual(len(attempts), 2)
+
+    def test_permanent_url_error_string_is_not_retried(self) -> None:
+        attempts: list[int] = []
+
+        def fake_urlopen(req: object, timeout: float) -> FakeResponse:
+            attempts.append(1)
+            raise error.URLError("connection refused")
+
+        client = PypiClient(max_retries=3, sleep=lambda delay: None)
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with self.assertRaisesRegex(PypiClientError, "retrying is unlikely to help"):
+                client.get_project("demo")
+
+        self.assertEqual(len(attempts), 1)
+
+    def test_tls_errors_are_classified_as_permanent(self) -> None:
+        client = PypiClient(max_retries=2, sleep=lambda delay: None)
+
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=error.URLError(ssl.SSLError("certificate verify failed")),
+        ):
+            with self.assertRaisesRegex(PypiClientError, "retrying is unlikely to help"):
+                client.get_project("demo")
+
+    def test_temporary_dns_error_is_retried(self) -> None:
+        attempts: list[int] = []
+
+        def fake_urlopen(req: object, timeout: float) -> FakeResponse:
+            attempts.append(1)
+            raise error.URLError(socket.gaierror(socket.EAI_AGAIN, "temporary failure"))
+
+        client = PypiClient(max_retries=1, sleep=lambda delay: None)
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with self.assertRaisesRegex(PypiClientError, "retrying may help"):
+                client.get_project("demo")
+
+        self.assertEqual(len(attempts), 2)
+
+    def test_non_temporary_dns_error_is_not_retried(self) -> None:
+        attempts: list[int] = []
+
+        def fake_urlopen(req: object, timeout: float) -> FakeResponse:
+            attempts.append(1)
+            raise error.URLError(socket.gaierror(socket.EAI_NONAME, "name or service not known"))
+
+        client = PypiClient(max_retries=2, sleep=lambda delay: None)
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with self.assertRaisesRegex(PypiClientError, "retrying is unlikely to help"):
+                client.get_project("demo")
+
+        self.assertEqual(len(attempts), 1)
+
     def test_malformed_json_is_permanent(self) -> None:
         client = PypiClient(max_retries=2, sleep=lambda delay: None)
 
-        with unittest.mock.patch(
+        with patch(
             "urllib.request.urlopen",
             return_value=FakeResponse(b"{not-json"),
         ):
@@ -99,7 +172,7 @@ class PypiClientTests(unittest.TestCase):
     def test_unexpected_project_shape_is_handled_gracefully(self) -> None:
         client = PypiClient(max_retries=0, sleep=lambda delay: None)
 
-        with unittest.mock.patch(
+        with patch(
             "urllib.request.urlopen",
             return_value=FakeResponse(json.dumps({"info": {"project_urls": []}}).encode()),
         ):
@@ -109,7 +182,7 @@ class PypiClientTests(unittest.TestCase):
     def test_unexpected_provenance_shape_is_handled_gracefully(self) -> None:
         client = PypiClient(max_retries=0, sleep=lambda delay: None)
 
-        with unittest.mock.patch(
+        with patch(
             "urllib.request.urlopen",
             return_value=FakeResponse(json.dumps({"attestation_bundles": {}}).encode()),
         ):
@@ -125,7 +198,7 @@ class PypiClientTests(unittest.TestCase):
 
         client = PypiClient()
 
-        with unittest.mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             first = client.get_project("demo")
             second = client.get_project("demo")
 
@@ -141,7 +214,7 @@ class PypiClientTests(unittest.TestCase):
 
         client = PypiClient()
 
-        with unittest.mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             first = client.download_distribution("https://files.pythonhosted.org/packages/demo.whl")
             second = client.download_distribution("https://files.pythonhosted.org/packages/demo.whl")
 
@@ -162,7 +235,7 @@ class PypiClientTests(unittest.TestCase):
             request_hook=lambda event, payload: events.append((event, payload)),
         )
 
-        with unittest.mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             with self.assertRaises(PypiClientError):
                 client.get_project("demo")
 

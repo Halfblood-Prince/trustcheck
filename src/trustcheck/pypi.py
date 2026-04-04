@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
+import ssl
 import time
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -16,6 +17,30 @@ PYPI_BASE_URL = "https://pypi.org"
 JSON_ACCEPT = "application/json"
 INTEGRITY_ACCEPT = "application/vnd.pypi.integrity.v1+json"
 TRANSIENT_HTTP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+TRANSIENT_OS_ERROR_CODES = {
+    getattr(socket, "EAI_AGAIN", None),
+}
+TRANSIENT_ERROR_TEXT = (
+    "temporary failure",
+    "temporarily unavailable",
+    "timed out",
+    "timeout",
+    "connection reset",
+    "connection aborted",
+    "remote end closed connection",
+    "service unavailable",
+    "try again",
+)
+PERMANENT_ERROR_TEXT = (
+    "name or service not known",
+    "nodename nor servname provided",
+    "no address associated with hostname",
+    "certificate verify failed",
+    "wrong version number",
+    "unknown ca",
+    "handshake failure",
+    "connection refused",
+)
 try:
     _PACKAGE_VERSION = version("trustcheck")
 except PackageNotFoundError:
@@ -131,6 +156,8 @@ class PypiClient:
                         status=getattr(response, "status", None),
                     )
                     return payload
+            except (TimeoutError, socket.timeout) as exc:
+                client_error = self._timeout_error(exc, url)
             except error.HTTPError as exc:
                 client_error = self._http_error(exc, url)
             except error.URLError as exc:
@@ -168,17 +195,61 @@ class PypiClient:
             url=url,
         )
 
+    def _timeout_error(self, exc: BaseException, url: str) -> PypiClientError:
+        return PypiClientError(
+            f"unable to reach PyPI: {exc}; retrying may help",
+            transient=True,
+            url=url,
+        )
+
     def _url_error(self, exc: error.URLError, url: str) -> PypiClientError:
-        reason = exc.reason
-        transient = isinstance(reason, (TimeoutError, socket.timeout, OSError, str))
+        reason = self._unwrap_url_error_reason(exc.reason)
+        transient = self._is_transient_network_reason(reason)
+        reason_text = self._format_network_reason(reason)
         return PypiClientError(
             (
-                f"unable to reach PyPI: {reason}; "
+                f"unable to reach PyPI: {reason_text}; "
                 f"{'retrying may help' if transient else 'retrying is unlikely to help'}"
             ),
             transient=transient,
             url=url,
         )
+
+    def _unwrap_url_error_reason(self, reason: object) -> object:
+        current = reason
+        seen: set[int] = set()
+        while hasattr(current, "reason") and id(current) not in seen:
+            seen.add(id(current))
+            nested = getattr(current, "reason", None)
+            if nested is None:
+                break
+            current = nested
+        return current
+
+    def _is_transient_network_reason(self, reason: object) -> bool:
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return True
+        if isinstance(reason, ssl.SSLError):
+            return False
+        if isinstance(reason, socket.gaierror):
+            return reason.errno in TRANSIENT_OS_ERROR_CODES
+        if isinstance(reason, OSError):
+            if reason.errno in TRANSIENT_OS_ERROR_CODES:
+                return True
+            return self._classify_reason_text(str(reason))
+        if isinstance(reason, str):
+            return self._classify_reason_text(reason)
+        return False
+
+    def _classify_reason_text(self, text: str) -> bool:
+        normalized = text.strip().lower()
+        if any(pattern in normalized for pattern in PERMANENT_ERROR_TEXT):
+            return False
+        return any(pattern in normalized for pattern in TRANSIENT_ERROR_TEXT)
+
+    def _format_network_reason(self, reason: object) -> str:
+        text = str(reason).strip()
+        return text or reason.__class__.__name__
 
     def _emit(self, event: str, **payload: Any) -> None:
         if self.request_hook is not None:
