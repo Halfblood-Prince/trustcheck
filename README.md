@@ -39,7 +39,7 @@ trustcheck inspect sampleproject --format json
 - Provenance / attestation availability per file
 - Verification status per file
 - Trusted Publisher identity information extracted from provenance bundles
-- Risk flags and an overall recommendation tier
+- Risk flags and an evidence-based status tier: `verified`, `metadata-only`, `review-required`, or `high-risk`
 
 ## Roadmap
 

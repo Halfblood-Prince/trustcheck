@@ -40,7 +40,7 @@ def inspect_package(
         files=files,
     )
     report.risk_flags = _build_risk_flags(report)
-    report.recommendation = _recommendation_for(report.risk_flags)
+    report.recommendation = _recommendation_for(report)
     return report
 
 
@@ -251,12 +251,14 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
     return flags
 
 
-def _recommendation_for(flags: list[RiskFlag]) -> str:
-    if any(flag.severity == "high" for flag in flags):
-        return "do-not-trust-without-review"
-    if any(flag.severity == "medium" for flag in flags):
-        return "review"
-    return "looks-good"
+def _recommendation_for(report: TrustReport) -> str:
+    if any(flag.severity == "high" for flag in report.risk_flags):
+        return "high-risk"
+    if report.files and all(file.verified for file in report.files):
+        return "verified"
+    if any(flag.severity == "medium" for flag in report.risk_flags):
+        return "review-required"
+    return "metadata-only"
 
 
 def _normalize_repo_url(url: str | None) -> str:

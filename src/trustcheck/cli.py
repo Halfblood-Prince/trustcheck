@@ -54,6 +54,7 @@ def _render_text_report(report) -> str:
     lines: list[str] = [
         f"trustcheck report for {report.project} {report.version}",
         f"recommendation: {report.recommendation}",
+        f"evidence: {_evidence_summary(report)}",
         f"package: {report.package_url}",
     ]
 
@@ -106,3 +107,11 @@ def _render_text_report(report) -> str:
     else:
         lines.append("risk flags: none")
     return "\n".join(lines)
+
+
+def _evidence_summary(report) -> str:
+    if report.files and all(file.verified for file in report.files):
+        return "cryptographic verification succeeded for all discovered release artifacts"
+    if any(file.verified for file in report.files):
+        return "mixed evidence; some release artifacts verified cryptographically, others did not"
+    return "heuristic metadata and provenance signals only; no cryptographically verified artifact set"

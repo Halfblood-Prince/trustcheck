@@ -59,6 +59,27 @@ class NoProvClient(FakeClient):
         raise PypiClientError("resource not found")
 
 
+class MetadataOnlyClient(FakeClient):
+    def get_project(self, project):
+        payload = super().get_project(project)
+        payload["urls"] = []
+        return payload
+
+
+class MissingRepoClient(FakeClient):
+    def get_project(self, project):
+        payload = super().get_project(project)
+        payload["info"]["project_urls"] = {}
+        return payload
+
+
+class NoRepoMetadataOnlyClient(MetadataOnlyClient):
+    def get_project(self, project):
+        payload = super().get_project(project)
+        payload["info"]["project_urls"] = {}
+        return payload
+
+
 class InspectPackageTests(unittest.TestCase):
     def test_inspect_package_happy_path(self):
         publisher = SimpleNamespace(
@@ -89,7 +110,7 @@ class InspectPackageTests(unittest.TestCase):
 
         self.assertEqual(report.project, "demo")
         self.assertEqual(report.version, "1.2.3")
-        self.assertEqual(report.recommendation, "looks-good")
+        self.assertEqual(report.recommendation, "verified")
         self.assertEqual(report.repository_urls, ["https://github.com/example/demo"])
         self.assertTrue(report.files[0].has_provenance)
         self.assertTrue(report.files[0].verified)
@@ -112,7 +133,7 @@ class InspectPackageTests(unittest.TestCase):
         self.assertIn("no_provenance", flag_codes)
         self.assertIn("provenance_verification_failed", flag_codes)
         self.assertIn("unverified_provenance", flag_codes)
-        self.assertEqual(report.recommendation, "do-not-trust-without-review")
+        self.assertEqual(report.recommendation, "high-risk")
 
     def test_inspect_package_rejects_tampered_artifact(self):
         publisher = SimpleNamespace(
@@ -184,3 +205,16 @@ class InspectPackageTests(unittest.TestCase):
 
         self.assertFalse(report.files[0].verified)
         self.assertIn("Trusted Publisher", report.files[0].error)
+
+    def test_inspect_package_uses_metadata_only_when_no_crypto_evidence_exists(self):
+        report = inspect_package("demo", client=MetadataOnlyClient())
+
+        self.assertEqual(report.recommendation, "metadata-only")
+        self.assertEqual(report.risk_flags, [])
+
+    def test_inspect_package_uses_review_required_for_medium_severity_metadata_concerns(self):
+        report = inspect_package("demo", client=NoRepoMetadataOnlyClient())
+
+        flag_codes = {flag.code for flag in report.risk_flags}
+        self.assertIn("missing_repository_url", flag_codes)
+        self.assertEqual(report.recommendation, "review-required")

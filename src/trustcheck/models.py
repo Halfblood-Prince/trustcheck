@@ -56,7 +56,7 @@ class TrustReport:
     vulnerabilities: list[VulnerabilityRecord] = field(default_factory=list)
     files: list[FileProvenance] = field(default_factory=list)
     risk_flags: list[RiskFlag] = field(default_factory=list)
-    recommendation: str = "review"
+    recommendation: str = "metadata-only"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
