@@ -4,10 +4,16 @@ import hashlib
 from typing import Any
 from urllib.parse import urlparse
 
-from pypi_attestations import Provenance, VerificationError
 from pypi_attestations import Distribution as AttestedDistribution
+from pypi_attestations import Provenance, VerificationError
 
-from .models import FileProvenance, PublisherIdentity, RiskFlag, TrustReport, VulnerabilityRecord
+from .models import (
+    FileProvenance,
+    PublisherIdentity,
+    RiskFlag,
+    TrustReport,
+    VulnerabilityRecord,
+)
 from .pypi import PypiClient, PypiClientError
 
 
@@ -144,7 +150,11 @@ def _parse_publisher_identities(bundles: list[Any]) -> list[PublisherIdentity]:
         raw = publisher.model_dump() if hasattr(publisher, "model_dump") else {}
         kind = str(getattr(publisher, "kind", None) or raw.get("issuer") or "unknown")
         repository = _publisher_repository_url(kind, getattr(publisher, "repository", None))
-        workflow = getattr(publisher, "workflow", None) or getattr(publisher, "workflow_filepath", None)
+        workflow = getattr(publisher, "workflow", None) or getattr(
+            publisher,
+            "workflow_filepath",
+            None,
+        )
         environment = getattr(publisher, "environment", None)
         identities.append(
             PublisherIdentity(
@@ -166,7 +176,10 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
             RiskFlag(
                 code="known_vulnerabilities",
                 severity="high",
-                message=f"PyPI reports {len(report.vulnerabilities)} known vulnerability record(s) for this release.",
+                message=(
+                    f"PyPI reports {len(report.vulnerabilities)} known "
+                    "vulnerability record(s) for this release."
+                ),
             )
         )
 
@@ -175,7 +188,10 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
             RiskFlag(
                 code="missing_repository_url",
                 severity="medium",
-                message="The package does not expose an obvious repository URL in project metadata.",
+                message=(
+                    "The package does not expose an obvious repository URL "
+                    "in project metadata."
+                ),
             )
         )
 
@@ -200,7 +216,10 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                 RiskFlag(
                     code="expected_repository_mismatch",
                     severity="high",
-                    message="The expected repository does not match declared project metadata or observed publisher identity hints.",
+                    message=(
+                        "The expected repository does not match declared "
+                        "project metadata or observed publisher identity hints."
+                    ),
                 )
             )
         elif report.files and not verified_publisher_matches:
@@ -208,7 +227,10 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                 RiskFlag(
                     code="expected_repository_unverified",
                     severity="high",
-                    message="No verified attestation binds the release artifact to the expected repository.",
+                    message=(
+                        "No verified attestation binds the release artifact "
+                        "to the expected repository."
+                    ),
                 )
             )
 
@@ -217,7 +239,10 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
             RiskFlag(
                 code="no_provenance",
                 severity="high",
-                message="No provenance bundles were found for the release files on PyPI, so the artifacts cannot be verified.",
+                message=(
+                    "No provenance bundles were found for the release files "
+                    "on PyPI, so the artifacts cannot be verified."
+                ),
             )
         )
 
@@ -235,7 +260,10 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
             RiskFlag(
                 code="unverified_provenance",
                 severity="high",
-                message="Every release artifact must have a valid attestation bound to its exact digest and publisher identity.",
+                message=(
+                    "Every release artifact must have a valid attestation "
+                    "bound to its exact digest and publisher identity."
+                ),
             )
         )
 
@@ -244,7 +272,10 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
             RiskFlag(
                 code="missing_publisher_identity",
                 severity="high",
-                message="No Trusted Publisher identity information was recovered from the provenance bundles.",
+                message=(
+                    "No Trusted Publisher identity information was recovered "
+                    "from the provenance bundles."
+                ),
             )
         )
 
@@ -279,7 +310,14 @@ def _normalize_repo_url(url: str | None) -> str:
         segments = [segment for segment in path.split("/") if segment]
         path = "/" + "/".join(segments[:2])
 
-    normalized = parsed._replace(scheme=scheme, netloc=netloc, path=path, params="", query="", fragment="")
+    normalized = parsed._replace(
+        scheme=scheme,
+        netloc=netloc,
+        path=path,
+        params="",
+        query="",
+        fragment="",
+    )
     return normalized.geturl()
 
 

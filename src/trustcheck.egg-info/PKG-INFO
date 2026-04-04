@@ -1,3 +1,27 @@
+Metadata-Version: 2.4
+Name: trustcheck
+Version: 0.0.post1.dev15
+Summary: Package trust and provenance verification for PyPI consumers.
+License: BSD 3-Clause License
+Keywords: pypi,security,supply-chain,provenance,attestations
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: BSD 3-Clause License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Programming Language :: Python :: 3.14
+Classifier: Topic :: Security
+Classifier: Topic :: Software Development :: Build Tools
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: pypi-attestations<1,>=0.0.29
+Dynamic: license-file
+
 # trustcheck
 
 `trustcheck` is a small Python package and CLI for checking PyPI package trust signals before installation.

@@ -6,6 +6,7 @@ import sys
 import traceback
 from typing import Sequence
 
+from .models import TrustReport
 from .pypi import PypiClientError
 from .service import inspect_package
 
@@ -89,7 +90,7 @@ def _handle_error(message: str, exit_code: int, *, debug: bool) -> int:
     return exit_code
 
 
-def _render_text_report(report) -> str:
+def _render_text_report(report: TrustReport) -> str:
     lines: list[str] = [
         f"trustcheck report for {report.project} {report.version}",
         f"recommendation: {report.recommendation}",
@@ -134,7 +135,10 @@ def _render_text_report(report) -> str:
         if file.publisher_identities:
             for identity in file.publisher_identities:
                 lines.append(
-                    f"    publisher: kind={identity.kind} repository={identity.repository or '-'} workflow={identity.workflow or '-'}"
+                    "    publisher: "
+                    f"kind={identity.kind} "
+                    f"repository={identity.repository or '-'} "
+                    f"workflow={identity.workflow or '-'}"
                 )
         if file.error:
             lines.append(f"    note: {file.error}")
@@ -148,9 +152,12 @@ def _render_text_report(report) -> str:
     return "\n".join(lines)
 
 
-def _evidence_summary(report) -> str:
+def _evidence_summary(report: TrustReport) -> str:
     if report.files and all(file.verified for file in report.files):
         return "cryptographic verification succeeded for all discovered release artifacts"
     if any(file.verified for file in report.files):
         return "mixed evidence; some release artifacts verified cryptographically, others did not"
-    return "heuristic metadata and provenance signals only; no cryptographically verified artifact set"
+    return (
+        "heuristic metadata and provenance signals only; "
+        "no cryptographically verified artifact set"
+    )

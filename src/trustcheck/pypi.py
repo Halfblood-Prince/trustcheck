@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any
 from urllib import error, parse, request
 
-
 PYPI_BASE_URL = "https://pypi.org"
 JSON_ACCEPT = "application/json"
 INTEGRITY_ACCEPT = "application/vnd.pypi.integrity.v1+json"
@@ -40,9 +39,11 @@ class PypiClient:
 
         try:
             with request.urlopen(req, timeout=self.timeout) as response:
-                return response.read()
+                return bytes(response.read())
         except error.HTTPError as exc:
-            raise PypiClientError(f"artifact download failed with HTTP {exc.code} for {url}") from exc
+            raise PypiClientError(
+                f"artifact download failed with HTTP {exc.code} for {url}"
+            ) from exc
         except error.URLError as exc:
             raise PypiClientError(f"unable to download artifact: {exc.reason}") from exc
 
@@ -52,7 +53,10 @@ class PypiClient:
 
         try:
             with request.urlopen(req, timeout=self.timeout) as response:
-                return json.load(response)
+                payload = json.load(response)
+                if not isinstance(payload, dict):
+                    raise PypiClientError(f"PyPI returned a non-object JSON response for {url}")
+                return payload
         except error.HTTPError as exc:
             if exc.code == 404:
                 raise PypiClientError(f"resource not found: {url}") from exc

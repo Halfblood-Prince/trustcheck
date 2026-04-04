@@ -1,0 +1,2 @@
+[console_scripts]
+trustcheck = trustcheck.cli:main
