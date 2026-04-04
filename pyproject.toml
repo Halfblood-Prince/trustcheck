@@ -8,12 +8,12 @@ dynamic = ["version"]
 description = "Package trust and provenance verification for PyPI consumers."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "BSD 3-Clause License" }
+license = "BSD-3-Clause"
 keywords = ["pypi", "security", "supply-chain", "provenance", "attestations"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: BSD 3-Clause License",
+  "License :: OSI Approved :: BSD License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.12",
