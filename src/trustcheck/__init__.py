@@ -1,5 +1,3 @@
-"""trustcheck package."""
-
 from importlib.metadata import PackageNotFoundError, version
 
 from .models import TrustReport
