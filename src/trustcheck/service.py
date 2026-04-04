@@ -5,12 +5,17 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
+from packaging.version import InvalidVersion, Version
 from pypi_attestations import Distribution as AttestedDistribution
 from pypi_attestations import Provenance, VerificationError
 
 from .models import (
+    CoverageSummary,
     FileProvenance,
+    ProvenanceConsistency,
     PublisherIdentity,
+    PublisherTrustSummary,
+    ReleaseDriftSummary,
     RiskFlag,
     TrustReport,
     VulnerabilityRecord,
@@ -46,6 +51,15 @@ def inspect_package(
         ownership=ownership,
         vulnerabilities=vulnerabilities,
         files=files,
+        coverage=_build_coverage_summary(files),
+        publisher_trust=_build_publisher_trust_summary(files),
+        provenance_consistency=_build_provenance_consistency(files),
+        release_drift=_build_release_drift_summary(
+            project,
+            selected_version,
+            client,
+            current_files=files,
+        ),
     )
     report.risk_flags = _build_risk_flags(report)
     report.recommendation = _recommendation_for(report)
@@ -251,6 +265,18 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
             )
         )
 
+    if report.coverage.status == "partial":
+        flags.append(
+            RiskFlag(
+                code="partial_provenance_coverage",
+                severity="high",
+                message=(
+                    "Only some release artifacts have provenance or successful "
+                    "verification coverage."
+                ),
+            )
+        )
+
     if any(file.error for file in report.files):
         flags.append(
             RiskFlag(
@@ -280,6 +306,42 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                 message=(
                     "No Trusted Publisher identity information was recovered "
                     "from the provenance bundles."
+                ),
+            )
+        )
+
+    if report.provenance_consistency.sdist_wheel_consistent is False:
+        flags.append(
+            RiskFlag(
+                code="sdist_wheel_provenance_mismatch",
+                severity="high",
+                message=(
+                    "Verified sdist and wheel provenance do not agree on the "
+                    "publisher repository or workflow."
+                ),
+            )
+        )
+
+    if report.release_drift.publisher_repository_drift:
+        flags.append(
+            RiskFlag(
+                code="publisher_repository_drift",
+                severity="high",
+                message=(
+                    "Verified publisher repository differs from the previous "
+                    "release, which may warrant review."
+                ),
+            )
+        )
+
+    if report.release_drift.publisher_workflow_drift:
+        flags.append(
+            RiskFlag(
+                code="publisher_workflow_drift",
+                severity="medium",
+                message=(
+                    "Verified publisher workflow differs from the previous "
+                    "release."
                 ),
             )
         )
@@ -375,3 +437,201 @@ def _normalize_supported_forge_url(host: str, path: str) -> str:
         return f"https://gitlab.com/{namespace}"
 
     return ""
+
+
+def _build_coverage_summary(files: list[FileProvenance]) -> CoverageSummary:
+    total_files = len(files)
+    files_with_provenance = sum(1 for file in files if file.has_provenance)
+    verified_files = sum(1 for file in files if file.verified)
+
+    if total_files == 0:
+        status = "none"
+    elif verified_files == total_files:
+        status = "all-verified"
+    elif files_with_provenance == total_files:
+        status = "all-attested"
+    elif files_with_provenance > 0 or verified_files > 0:
+        status = "partial"
+    else:
+        status = "none"
+
+    return CoverageSummary(
+        total_files=total_files,
+        files_with_provenance=files_with_provenance,
+        verified_files=verified_files,
+        status=status,
+    )
+
+
+def _build_publisher_trust_summary(files: list[FileProvenance]) -> PublisherTrustSummary:
+    verified_publishers: set[str] = set()
+    repositories: set[str] = set()
+    workflows: set[str] = set()
+
+    for file in files:
+        if not file.verified:
+            continue
+        for identity in file.publisher_identities:
+            publisher_key = ":".join(
+                [
+                    identity.kind or "unknown",
+                    identity.repository or "-",
+                    identity.workflow or "-",
+                ]
+            )
+            verified_publishers.add(publisher_key)
+            if identity.repository:
+                repositories.add(identity.repository)
+            if identity.workflow:
+                workflows.add(identity.workflow)
+
+    depth_score = 0
+    if any(file.has_provenance for file in files):
+        depth_score += 1
+    if any(file.verified for file in files):
+        depth_score += 2
+    if repositories:
+        depth_score += 1
+    if workflows:
+        depth_score += 1
+
+    if depth_score >= 5:
+        depth_label = "strong"
+    elif depth_score >= 3:
+        depth_label = "moderate"
+    elif depth_score >= 1:
+        depth_label = "weak"
+    else:
+        depth_label = "none"
+
+    return PublisherTrustSummary(
+        depth_score=depth_score,
+        depth_label=depth_label,
+        verified_publishers=sorted(verified_publishers),
+        unique_verified_repositories=sorted(repositories),
+        unique_verified_workflows=sorted(workflows),
+    )
+
+
+def _build_provenance_consistency(files: list[FileProvenance]) -> ProvenanceConsistency:
+    sdist_files = [file for file in files if _is_sdist(file.filename) and file.verified]
+    wheel_files = [file for file in files if _is_wheel(file.filename) and file.verified]
+
+    if not sdist_files or not wheel_files:
+        return ProvenanceConsistency(
+            has_sdist=bool([file for file in files if _is_sdist(file.filename)]),
+            has_wheel=bool([file for file in files if _is_wheel(file.filename)]),
+            sdist_wheel_consistent=None,
+        )
+
+    sdist_repositories = _collect_verified_identity_values(sdist_files, "repository")
+    wheel_repositories = _collect_verified_identity_values(wheel_files, "repository")
+    sdist_workflows = _collect_verified_identity_values(sdist_files, "workflow")
+    wheel_workflows = _collect_verified_identity_values(wheel_files, "workflow")
+
+    repository_overlap = sorted(sdist_repositories & wheel_repositories)
+    workflow_overlap = sorted(sdist_workflows & wheel_workflows)
+    consistent = bool(repository_overlap) and (
+        not sdist_workflows and not wheel_workflows or bool(workflow_overlap)
+    )
+
+    return ProvenanceConsistency(
+        has_sdist=True,
+        has_wheel=True,
+        sdist_wheel_consistent=consistent,
+        consistent_repositories=repository_overlap,
+        consistent_workflows=workflow_overlap,
+    )
+
+
+def _build_release_drift_summary(
+    project: str,
+    version: str,
+    client: PypiClient,
+    *,
+    current_files: list[FileProvenance],
+) -> ReleaseDriftSummary:
+    previous_version = _previous_release_version(project, version, client)
+    if not previous_version:
+        return ReleaseDriftSummary()
+
+    try:
+        previous_payload = client.get_release(project, previous_version)
+        previous_files = _collect_files(project, previous_version, previous_payload, client)
+    except PypiClientError:
+        return ReleaseDriftSummary(compared_to_version=previous_version)
+
+    current_repositories = _collect_verified_identity_values(current_files, "repository")
+    current_workflows = _collect_verified_identity_values(current_files, "workflow")
+    previous_repositories = _collect_verified_identity_values(previous_files, "repository")
+    previous_workflows = _collect_verified_identity_values(previous_files, "workflow")
+
+    repository_drift = None
+    workflow_drift = None
+    if current_repositories and previous_repositories:
+        repository_drift = current_repositories != previous_repositories
+    if current_workflows and previous_workflows:
+        workflow_drift = current_workflows != previous_workflows
+
+    return ReleaseDriftSummary(
+        compared_to_version=previous_version,
+        publisher_repository_drift=repository_drift,
+        publisher_workflow_drift=workflow_drift,
+        previous_repositories=sorted(previous_repositories),
+        previous_workflows=sorted(previous_workflows),
+    )
+
+
+def _previous_release_version(project: str, version: str, client: PypiClient) -> str | None:
+    try:
+        project_payload = client.get_project(project)
+    except PypiClientError:
+        return None
+
+    releases = project_payload.get("releases") or {}
+    if not isinstance(releases, dict):
+        return None
+
+    try:
+        current_version = Version(version)
+    except InvalidVersion:
+        return None
+
+    candidates: list[Version] = []
+    version_map: dict[Version, str] = {}
+    for release_version in releases:
+        try:
+            parsed = Version(str(release_version))
+        except InvalidVersion:
+            continue
+        if parsed < current_version:
+            candidates.append(parsed)
+            version_map[parsed] = str(release_version)
+
+    if not candidates:
+        return None
+    previous = max(candidates)
+    return version_map[previous]
+
+
+def _collect_verified_identity_values(
+    files: list[FileProvenance],
+    attribute: str,
+) -> set[str]:
+    values: set[str] = set()
+    for file in files:
+        if not file.verified:
+            continue
+        for identity in file.publisher_identities:
+            value = getattr(identity, attribute, None)
+            if value:
+                values.add(str(value))
+    return values
+
+
+def _is_sdist(filename: str) -> bool:
+    return filename.endswith((".tar.gz", ".zip"))
+
+
+def _is_wheel(filename: str) -> bool:
+    return filename.endswith(".whl")

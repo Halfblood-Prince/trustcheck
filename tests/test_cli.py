@@ -7,7 +7,16 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from trustcheck.cli import EXIT_DATA_ERROR, EXIT_OK, EXIT_UPSTREAM_FAILURE, main
-from trustcheck.models import JSON_SCHEMA_VERSION, FileProvenance, RiskFlag, TrustReport
+from trustcheck.models import (
+    JSON_SCHEMA_VERSION,
+    CoverageSummary,
+    FileProvenance,
+    ProvenanceConsistency,
+    PublisherTrustSummary,
+    ReleaseDriftSummary,
+    RiskFlag,
+    TrustReport,
+)
 from trustcheck.pypi import PypiClientError
 
 
@@ -37,6 +46,25 @@ def make_report() -> TrustReport:
                 verified_attestation_count=1,
             )
         ],
+        coverage=CoverageSummary(
+            total_files=1,
+            files_with_provenance=1,
+            verified_files=1,
+            status="all-verified",
+        ),
+        publisher_trust=PublisherTrustSummary(
+            depth_score=5,
+            depth_label="strong",
+            verified_publishers=["GitHub:https://github.com/example/demo:release.yml"],
+            unique_verified_repositories=["https://github.com/example/demo"],
+            unique_verified_workflows=["release.yml"],
+        ),
+        provenance_consistency=ProvenanceConsistency(
+            has_sdist=False,
+            has_wheel=True,
+            sdist_wheel_consistent=None,
+        ),
+        release_drift=ReleaseDriftSummary(),
         risk_flags=[],
         recommendation="verified",
     )
@@ -56,6 +84,8 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("trustcheck report for demo 1.2.3", stdout.getvalue())
         self.assertIn("recommendation: verified", stdout.getvalue())
         self.assertIn("evidence: cryptographic verification succeeded", stdout.getvalue())
+        self.assertIn("coverage: all-verified", stdout.getvalue())
+        self.assertIn("publisher trust: strong", stdout.getvalue())
 
     def test_cli_success_json_output_contract(self) -> None:
         stdout = io.StringIO()
@@ -74,13 +104,17 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(
             sorted(report.keys()),
             [
+                "coverage",
                 "declared_repository_urls",
                 "expected_repository",
                 "files",
                 "ownership",
                 "package_url",
                 "project",
+                "provenance_consistency",
+                "publisher_trust",
                 "recommendation",
+                "release_drift",
                 "repository_urls",
                 "risk_flags",
                 "summary",
@@ -95,6 +129,8 @@ class CliBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(report["files"][0]["verified"], True)
         self.assertEqual(report["files"][0]["observed_sha256"], "abc123")
+        self.assertEqual(report["coverage"]["status"], "all-verified")
+        self.assertEqual(report["publisher_trust"]["depth_label"], "strong")
 
     def test_cli_text_output_shows_file_errors(self) -> None:
         report = make_report()

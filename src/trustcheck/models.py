@@ -47,6 +47,41 @@ class FileProvenance:
 
 
 @dataclass(slots=True)
+class CoverageSummary:
+    total_files: int = 0
+    files_with_provenance: int = 0
+    verified_files: int = 0
+    status: str = "none"
+
+
+@dataclass(slots=True)
+class PublisherTrustSummary:
+    depth_score: int = 0
+    depth_label: str = "none"
+    verified_publishers: list[str] = field(default_factory=list)
+    unique_verified_repositories: list[str] = field(default_factory=list)
+    unique_verified_workflows: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ProvenanceConsistency:
+    has_sdist: bool = False
+    has_wheel: bool = False
+    sdist_wheel_consistent: bool | None = None
+    consistent_repositories: list[str] = field(default_factory=list)
+    consistent_workflows: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ReleaseDriftSummary:
+    compared_to_version: str | None = None
+    publisher_repository_drift: bool | None = None
+    publisher_workflow_drift: bool | None = None
+    previous_repositories: list[str] = field(default_factory=list)
+    previous_workflows: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class TrustReport:
     project: str
     version: str
@@ -58,6 +93,10 @@ class TrustReport:
     ownership: dict[str, Any] = field(default_factory=dict)
     vulnerabilities: list[VulnerabilityRecord] = field(default_factory=list)
     files: list[FileProvenance] = field(default_factory=list)
+    coverage: CoverageSummary = field(default_factory=CoverageSummary)
+    publisher_trust: PublisherTrustSummary = field(default_factory=PublisherTrustSummary)
+    provenance_consistency: ProvenanceConsistency = field(default_factory=ProvenanceConsistency)
+    release_drift: ReleaseDriftSummary = field(default_factory=ReleaseDriftSummary)
     risk_flags: list[RiskFlag] = field(default_factory=list)
     recommendation: str = "metadata-only"
 

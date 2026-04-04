@@ -58,6 +58,7 @@ class ProjectResponsePayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     info: ProjectInfoPayload = Field(default_factory=ProjectInfoPayload)
+    releases: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     urls: list[ReleaseFilePayload] = Field(default_factory=list)
     vulnerabilities: list[VulnerabilityPayload] = Field(default_factory=list)
 

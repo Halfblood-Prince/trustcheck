@@ -25,6 +25,7 @@ def make_project_payload(
     project_urls: dict[str, str] | None = None,
     urls: list[dict[str, object]] | None = None,
     vulnerabilities: list[dict[str, object]] | None = None,
+    releases: dict[str, list[dict[str, object]]] | None = None,
 ) -> dict[str, object]:
     return {
         "info": {
@@ -50,6 +51,7 @@ def make_project_payload(
                 "digests": {"sha256": "abc123"},
             }
         ],
+        "releases": releases or {version: []},
         "vulnerabilities": vulnerabilities or [],
     }
 
@@ -111,6 +113,7 @@ class FakeClient:
         *,
         project_payload: dict[str, object] | None = None,
         release_payload: dict[str, object] | None = None,
+        release_payloads: dict[str, dict[str, object]] | None = None,
         provenance_payload: dict[str, object] | None = None,
         download_map: dict[str, bytes] | None = None,
         project_error: Exception | None = None,
@@ -119,6 +122,7 @@ class FakeClient:
     ) -> None:
         self.project_payload = project_payload or make_project_payload()
         self.release_payload = release_payload or make_project_payload()
+        self.release_payloads = release_payloads or {}
         self.provenance_payload = provenance_payload or {
             "attestation_bundles": [
                 {
@@ -148,6 +152,8 @@ class FakeClient:
         assert project == "demo"
         if self.release_error is not None:
             raise self.release_error
+        if version in self.release_payloads:
+            return self.release_payloads[version]
         return self.release_payload
 
     def get_provenance(
@@ -192,6 +198,8 @@ class InspectPackageTests(unittest.TestCase):
         self.assertTrue(report.files[0].has_provenance)
         self.assertTrue(report.files[0].verified)
         self.assertEqual(report.files[0].verified_attestation_count, 1)
+        self.assertEqual(report.coverage.status, "all-verified")
+        self.assertEqual(report.publisher_trust.depth_label, "strong")
         self.assertEqual(
             report.files[0].publisher_identities[0].repository,
             "https://github.com/example/demo",
@@ -338,6 +346,142 @@ class InspectPackageTests(unittest.TestCase):
         self.assertFalse(report.files[1].verified)
         self.assertEqual(report.recommendation, "high-risk")
         self.assertEqual(report.files[1].error, "resource not found")
+        self.assertEqual(report.coverage.status, "partial")
+        self.assertIn("partial_provenance_coverage", {flag.code for flag in report.risk_flags})
+
+    def test_sdist_and_wheel_provenance_consistency_is_reported(self) -> None:
+        payload = make_project_payload(
+            urls=[
+                {
+                    "filename": "demo-1.2.3-py3-none-any.whl",
+                    "url": "https://files.pythonhosted.org/packages/demo.whl",
+                    "digests": {"sha256": "abc123"},
+                },
+                {
+                    "filename": "demo-1.2.3.tar.gz",
+                    "url": "https://files.pythonhosted.org/packages/demo.tar.gz",
+                    "digests": {"sha256": "def456"},
+                },
+            ]
+        )
+        client = FakeClient(
+            project_payload=payload,
+            download_map={
+                "https://files.pythonhosted.org/packages/demo.whl": b"wheel",
+                "https://files.pythonhosted.org/packages/demo.tar.gz": b"sdist",
+            },
+        )
+        provenance = make_provenance(
+            publisher=make_publisher(repository="example/demo", workflow="release.yml")
+        )
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = provenance
+            with patch("trustcheck.service.hashlib.sha256") as sha256:
+                sha256.side_effect = [
+                    SimpleNamespace(hexdigest=lambda: "abc123"),
+                    SimpleNamespace(hexdigest=lambda: "def456"),
+                ]
+                report = inspect_package("demo", client=cast(Any, client))
+
+        self.assertTrue(report.provenance_consistency.sdist_wheel_consistent)
+        self.assertEqual(
+            report.provenance_consistency.consistent_repositories,
+            ["https://github.com/example/demo"],
+        )
+
+    def test_sdist_and_wheel_provenance_mismatch_is_flagged(self) -> None:
+        payload = make_project_payload(
+            urls=[
+                {
+                    "filename": "demo-1.2.3-py3-none-any.whl",
+                    "url": "https://files.pythonhosted.org/packages/demo.whl",
+                    "digests": {"sha256": "abc123"},
+                },
+                {
+                    "filename": "demo-1.2.3.tar.gz",
+                    "url": "https://files.pythonhosted.org/packages/demo.tar.gz",
+                    "digests": {"sha256": "def456"},
+                },
+            ]
+        )
+        client = FakeClient(
+            project_payload=payload,
+            download_map={
+                "https://files.pythonhosted.org/packages/demo.whl": b"wheel",
+                "https://files.pythonhosted.org/packages/demo.tar.gz": b"sdist",
+            },
+        )
+        provenance_model_results = [
+            make_provenance(
+                publisher=make_publisher(
+                    repository="example/demo",
+                    workflow="release.yml",
+                )
+            ),
+            make_provenance(
+                publisher=make_publisher(
+                    repository="other/demo",
+                    workflow="release.yml",
+                )
+            ),
+        ]
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.side_effect = provenance_model_results
+            with patch("trustcheck.service.hashlib.sha256") as sha256:
+                sha256.side_effect = [
+                    SimpleNamespace(hexdigest=lambda: "abc123"),
+                    SimpleNamespace(hexdigest=lambda: "def456"),
+                ]
+                report = inspect_package("demo", client=cast(Any, client))
+
+        self.assertFalse(report.provenance_consistency.sdist_wheel_consistent)
+        self.assertIn(
+            "sdist_wheel_provenance_mismatch",
+            {flag.code for flag in report.risk_flags},
+        )
+
+    def test_release_drift_is_reported_against_previous_version(self) -> None:
+        current_payload = make_project_payload(
+            version="1.2.3",
+            releases={"1.2.2": [], "1.2.3": []},
+        )
+        previous_release_payload = make_project_payload(version="1.2.2")
+        client = FakeClient(
+            project_payload=current_payload,
+            release_payloads={
+                "1.2.2": previous_release_payload,
+                "1.2.3": current_payload,
+            },
+        )
+        current_provenance = make_provenance(
+            publisher=make_publisher(repository="example/demo", workflow="release.yml")
+        )
+        previous_provenance = make_provenance(
+            publisher=make_publisher(repository="example/renamed-demo", workflow="old-release.yml")
+        )
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.side_effect = [
+                current_provenance,
+                previous_provenance,
+            ]
+            with patch("trustcheck.service.hashlib.sha256") as sha256:
+                sha256.side_effect = [
+                    SimpleNamespace(hexdigest=lambda: "abc123"),
+                    SimpleNamespace(hexdigest=lambda: "abc123"),
+                ]
+                report = inspect_package(
+                    "demo",
+                    version="1.2.3",
+                    client=cast(Any, client),
+                )
+
+        self.assertEqual(report.release_drift.compared_to_version, "1.2.2")
+        self.assertTrue(report.release_drift.publisher_repository_drift)
+        self.assertTrue(report.release_drift.publisher_workflow_drift)
+        self.assertIn("publisher_repository_drift", {flag.code for flag in report.risk_flags})
 
     def test_vulnerability_parsing_uses_fallbacks(self) -> None:
         client = FakeClient(

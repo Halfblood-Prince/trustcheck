@@ -108,6 +108,32 @@ def _render_text_report(report: TrustReport) -> str:
     if report.expected_repository:
         lines.append(f"expected repository: {report.expected_repository}")
 
+    lines.append(
+        "coverage: "
+        f"{report.coverage.status} "
+        f"({report.coverage.verified_files}/{report.coverage.total_files} verified files)"
+    )
+    lines.append(
+        "publisher trust: "
+        f"{report.publisher_trust.depth_label} "
+        f"(score={report.publisher_trust.depth_score})"
+    )
+    if report.provenance_consistency.sdist_wheel_consistent is not None:
+        consistency_label = (
+            "consistent"
+            if report.provenance_consistency.sdist_wheel_consistent
+            else "mismatch"
+        )
+        lines.append(
+            "sdist/wheel provenance consistency: "
+            f"{consistency_label}"
+        )
+    if report.release_drift.compared_to_version:
+        lines.append(
+            "release drift baseline: "
+            f"{report.release_drift.compared_to_version}"
+        )
+
     ownership = report.ownership or {}
     roles = ownership.get("roles") or []
     organization = ownership.get("organization")
