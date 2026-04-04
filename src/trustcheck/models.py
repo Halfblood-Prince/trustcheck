@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+JSON_SCHEMA_VERSION = "1"
+
 
 @dataclass(slots=True)
 class RiskFlag:
@@ -60,4 +62,7 @@ class TrustReport:
     recommendation: str = "metadata-only"
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "schema_version": JSON_SCHEMA_VERSION,
+            "report": asdict(self),
+        }

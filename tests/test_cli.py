@@ -7,7 +7,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from trustcheck.cli import EXIT_DATA_ERROR, EXIT_OK, EXIT_UPSTREAM_FAILURE, main
-from trustcheck.models import FileProvenance, RiskFlag, TrustReport
+from trustcheck.models import JSON_SCHEMA_VERSION, FileProvenance, RiskFlag, TrustReport
 from trustcheck.pypi import PypiClientError
 
 
@@ -68,8 +68,11 @@ class CliBehaviorTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(exit_code, EXIT_OK)
         self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(sorted(payload.keys()), ["report", "schema_version"])
+        self.assertEqual(payload["schema_version"], JSON_SCHEMA_VERSION)
+        report = payload["report"]
         self.assertEqual(
-            sorted(payload.keys()),
+            sorted(report.keys()),
             [
                 "declared_repository_urls",
                 "expected_repository",
@@ -85,13 +88,13 @@ class CliBehaviorTests(unittest.TestCase):
                 "vulnerabilities",
             ],
         )
-        self.assertEqual(payload["project"], "demo")
+        self.assertEqual(report["project"], "demo")
         self.assertEqual(
-            payload["declared_repository_urls"],
+            report["declared_repository_urls"],
             ["https://github.com/example/demo"],
         )
-        self.assertEqual(payload["files"][0]["verified"], True)
-        self.assertEqual(payload["files"][0]["observed_sha256"], "abc123")
+        self.assertEqual(report["files"][0]["verified"], True)
+        self.assertEqual(report["files"][0]["observed_sha256"], "abc123")
 
     def test_cli_text_output_shows_file_errors(self) -> None:
         report = make_report()
