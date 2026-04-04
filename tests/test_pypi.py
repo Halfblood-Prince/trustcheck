@@ -41,7 +41,7 @@ class PypiClientTests(unittest.TestCase):
             attempts.append(1)
             if len(attempts) < 3:
                 raise error.HTTPError(
-                    "https://pypi.org/pypi/demo/json",
+                    "https://pypi.org/pypi/gridoptim/json",
                     503,
                     "service unavailable",
                     hdrs=None,
@@ -52,7 +52,7 @@ class PypiClientTests(unittest.TestCase):
         client = PypiClient(max_retries=2, backoff_factor=0.1, sleep=sleeps.append)
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            payload = client.get_project("demo")
+            payload = client.get_project("gridoptim")
 
         self.assertEqual(payload["info"]["version"], "1.0.0")
         self.assertEqual(len(attempts), 3)
@@ -64,7 +64,7 @@ class PypiClientTests(unittest.TestCase):
         def fake_urlopen(req: object, timeout: float) -> FakeResponse:
             attempts.append(1)
             raise error.HTTPError(
-                "https://pypi.org/pypi/demo/json",
+                "https://pypi.org/pypi/gridoptim/json",
                 404,
                 "not found",
                 hdrs=None,
@@ -75,7 +75,7 @@ class PypiClientTests(unittest.TestCase):
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             with self.assertRaisesRegex(PypiClientError, "retrying is unlikely to help"):
-                client.get_project("demo")
+                client.get_project("gridoptim")
 
         self.assertEqual(len(attempts), 1)
 
@@ -87,7 +87,7 @@ class PypiClientTests(unittest.TestCase):
             side_effect=error.URLError("temporary failure in name resolution"),
         ):
             with self.assertRaisesRegex(PypiClientError, "retrying may help"):
-                client.get_project("demo")
+                client.get_project("gridoptim")
 
     def test_direct_socket_timeout_is_treated_as_transient(self) -> None:
         attempts: list[int] = []
@@ -100,7 +100,7 @@ class PypiClientTests(unittest.TestCase):
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             with self.assertRaisesRegex(PypiClientError, "retrying may help"):
-                client.get_project("demo")
+                client.get_project("gridoptim")
 
         self.assertEqual(len(attempts), 2)
 
@@ -115,7 +115,7 @@ class PypiClientTests(unittest.TestCase):
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             with self.assertRaisesRegex(PypiClientError, "retrying is unlikely to help"):
-                client.get_project("demo")
+                client.get_project("gridoptim")
 
         self.assertEqual(len(attempts), 1)
 
@@ -127,7 +127,7 @@ class PypiClientTests(unittest.TestCase):
             side_effect=error.URLError(ssl.SSLError("certificate verify failed")),
         ):
             with self.assertRaisesRegex(PypiClientError, "retrying is unlikely to help"):
-                client.get_project("demo")
+                client.get_project("gridoptim")
 
     def test_temporary_dns_error_is_retried(self) -> None:
         attempts: list[int] = []
@@ -140,7 +140,7 @@ class PypiClientTests(unittest.TestCase):
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             with self.assertRaisesRegex(PypiClientError, "retrying may help"):
-                client.get_project("demo")
+                client.get_project("gridoptim")
 
         self.assertEqual(len(attempts), 2)
 
@@ -155,7 +155,7 @@ class PypiClientTests(unittest.TestCase):
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             with self.assertRaisesRegex(PypiClientError, "retrying is unlikely to help"):
-                client.get_project("demo")
+                client.get_project("gridoptim")
 
         self.assertEqual(len(attempts), 1)
 
@@ -167,7 +167,7 @@ class PypiClientTests(unittest.TestCase):
             return_value=FakeResponse(b"{not-json"),
         ):
             with self.assertRaisesRegex(PypiClientError, "malformed JSON"):
-                client.get_project("demo")
+                client.get_project("gridoptim")
 
     def test_unexpected_project_shape_is_handled_gracefully(self) -> None:
         client = PypiClient(max_retries=0, sleep=lambda delay: None)
@@ -177,7 +177,7 @@ class PypiClientTests(unittest.TestCase):
             return_value=FakeResponse(json.dumps({"info": {"project_urls": []}}).encode()),
         ):
             with self.assertRaisesRegex(PypiClientError, "unexpected project response shape"):
-                client.get_project("demo")
+                client.get_project("gridoptim")
 
     def test_unexpected_provenance_shape_is_handled_gracefully(self) -> None:
         client = PypiClient(max_retries=0, sleep=lambda delay: None)
@@ -187,7 +187,7 @@ class PypiClientTests(unittest.TestCase):
             return_value=FakeResponse(json.dumps({"attestation_bundles": {}}).encode()),
         ):
             with self.assertRaisesRegex(PypiClientError, "unexpected provenance response shape"):
-                client.get_provenance("demo", "1.2.3", "demo.whl")
+                client.get_provenance("gridoptim", "1.2.3", "gridoptim.whl")
 
     def test_json_requests_are_cached(self) -> None:
         calls: list[str] = []
@@ -199,8 +199,8 @@ class PypiClientTests(unittest.TestCase):
         client = PypiClient()
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            first = client.get_project("demo")
-            second = client.get_project("demo")
+            first = client.get_project("gridoptim")
+            second = client.get_project("gridoptim")
 
         self.assertEqual(first, second)
         self.assertEqual(calls, ["hit"])
@@ -215,8 +215,12 @@ class PypiClientTests(unittest.TestCase):
         client = PypiClient()
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            first = client.download_distribution("https://files.pythonhosted.org/packages/demo.whl")
-            second = client.download_distribution("https://files.pythonhosted.org/packages/demo.whl")
+            first = client.download_distribution(
+                "https://files.pythonhosted.org/packages/gridoptim.whl"
+            )
+            second = client.download_distribution(
+                "https://files.pythonhosted.org/packages/gridoptim.whl"
+            )
 
         self.assertEqual(first, b"wheel-bytes")
         self.assertEqual(second, b"wheel-bytes")
@@ -237,7 +241,7 @@ class PypiClientTests(unittest.TestCase):
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             with self.assertRaises(PypiClientError):
-                client.get_project("demo")
+                client.get_project("gridoptim")
 
         event_names = [event for event, _ in events]
         self.assertIn("request", event_names)

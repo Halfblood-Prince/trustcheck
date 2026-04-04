@@ -28,22 +28,22 @@ from trustcheck.pypi import PypiClientError
 
 def make_report() -> TrustReport:
     return TrustReport(
-        project="demo",
+        project="gridoptim",
         version="1.2.3",
-        summary="Demo package",
-        package_url="https://pypi.org/project/demo/1.2.3/",
-        declared_repository_urls=["https://github.com/example/demo"],
-        repository_urls=["https://github.com/example/demo"],
-        expected_repository="https://github.com/example/demo",
+        summary="gridoptim package",
+        package_url="https://pypi.org/project/gridoptim/1.2.3/",
+        declared_repository_urls=["https://github.com/Halfblood-Prince/gridoptim"],
+        repository_urls=["https://github.com/Halfblood-Prince/gridoptim"],
+        expected_repository="https://github.com/Halfblood-Prince/gridoptim",
         ownership={
-            "organization": "example-org",
-            "roles": [{"role": "Owner", "user": "alice"}],
+            "organization": "Halfblood-Prince",
+            "roles": [{"role": "Owner", "user": "Halfblood-Prince"}],
         },
         vulnerabilities=[],
         files=[
             FileProvenance(
-                filename="demo-1.2.3-py3-none-any.whl",
-                url="https://files.pythonhosted.org/packages/demo.whl",
+                filename="gridoptim-1.2.3-py3-none-any.whl",
+                url="https://files.pythonhosted.org/packages/gridoptim.whl",
                 sha256="abc123",
                 observed_sha256="abc123",
                 has_provenance=True,
@@ -61,8 +61,10 @@ def make_report() -> TrustReport:
         publisher_trust=PublisherTrustSummary(
             depth_score=5,
             depth_label="strong",
-            verified_publishers=["GitHub:https://github.com/example/demo:release.yml"],
-            unique_verified_repositories=["https://github.com/example/demo"],
+            verified_publishers=[
+                "GitHub:https://github.com/Halfblood-Prince/gridoptim:release.yml"
+            ],
+            unique_verified_repositories=["https://github.com/Halfblood-Prince/gridoptim"],
             unique_verified_workflows=["release.yml"],
         ),
         provenance_consistency=ProvenanceConsistency(
@@ -83,11 +85,11 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch("trustcheck.cli.inspect_package", return_value=make_report()):
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                exit_code = main(["inspect", "demo"])
+                exit_code = main(["inspect", "gridoptim"])
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertEqual(stderr.getvalue(), "")
-        self.assertIn("trustcheck report for demo 1.2.3", stdout.getvalue())
+        self.assertIn("trustcheck report for gridoptim 1.2.3", stdout.getvalue())
         self.assertIn("summary:", stdout.getvalue())
         self.assertIn("recommendation: verified", stdout.getvalue())
         self.assertIn("why this result: cryptographic verification succeeded", stdout.getvalue())
@@ -100,7 +102,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch("trustcheck.cli.inspect_package", return_value=make_report()):
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                exit_code = main(["inspect", "demo", "--format", "json"])
+                exit_code = main(["inspect", "gridoptim", "--format", "json"])
 
         payload = json.loads(stdout.getvalue())
         self.assertEqual(exit_code, EXIT_OK)
@@ -129,10 +131,10 @@ class CliBehaviorTests(unittest.TestCase):
                 "vulnerabilities",
             ],
         )
-        self.assertEqual(report["project"], "demo")
+        self.assertEqual(report["project"], "gridoptim")
         self.assertEqual(
             report["declared_repository_urls"],
-            ["https://github.com/example/demo"],
+            ["https://github.com/Halfblood-Prince/gridoptim"],
         )
         self.assertEqual(report["files"][0]["verified"], True)
         self.assertEqual(report["files"][0]["observed_sha256"], "abc123")
@@ -157,7 +159,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch("trustcheck.cli.inspect_package", return_value=report):
             with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                exit_code = main(["inspect", "demo", "--verbose"])
+                exit_code = main(["inspect", "gridoptim", "--verbose"])
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertIn("note: resource not found", stdout.getvalue())
@@ -171,7 +173,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch("trustcheck.cli.inspect_package", return_value=report):
             with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                exit_code = main(["inspect", "demo"])
+                exit_code = main(["inspect", "gridoptim"])
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertNotIn("files:", stdout.getvalue())
@@ -187,7 +189,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch("trustcheck.cli.inspect_package", return_value=report):
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                exit_code = main(["inspect", "demo", "--strict"])
+                exit_code = main(["inspect", "gridoptim", "--strict"])
 
         self.assertEqual(exit_code, EXIT_POLICY_FAILURE)
         self.assertEqual(stderr.getvalue(), "")
@@ -198,7 +200,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch("trustcheck.cli.inspect_package", return_value=make_report()):
             with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                exit_code = main(["inspect", "demo", "--strict"])
+                exit_code = main(["inspect", "gridoptim", "--strict"])
 
         self.assertEqual(exit_code, EXIT_OK)
 
@@ -211,7 +213,7 @@ class CliBehaviorTests(unittest.TestCase):
             side_effect=PypiClientError("unable to reach PyPI: timed out"),
         ):
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                exit_code = main(["inspect", "demo"])
+                exit_code = main(["inspect", "gridoptim"])
 
         self.assertEqual(exit_code, EXIT_UPSTREAM_FAILURE)
         self.assertEqual(stdout.getvalue(), "")
@@ -225,11 +227,11 @@ class CliBehaviorTests(unittest.TestCase):
         with patch(
             "trustcheck.cli.inspect_package",
             side_effect=PypiClientError(
-                "resource not found: https://pypi.org/pypi/demo/json"
+                "resource not found: https://pypi.org/pypi/gridoptim/json"
             ),
         ):
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                exit_code = main(["inspect", "demo", "--version", "9.9.9"])
+                exit_code = main(["inspect", "gridoptim", "--version", "9.9.9"])
 
         self.assertEqual(exit_code, EXIT_UPSTREAM_FAILURE)
         self.assertEqual(stdout.getvalue(), "")
@@ -245,7 +247,7 @@ class CliBehaviorTests(unittest.TestCase):
             side_effect=ValueError("missing required provenance fields"),
         ):
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                exit_code = main(["inspect", "demo"])
+                exit_code = main(["inspect", "gridoptim"])
 
         self.assertEqual(exit_code, EXIT_DATA_ERROR)
         self.assertEqual(stdout.getvalue(), "")
@@ -262,7 +264,7 @@ class CliBehaviorTests(unittest.TestCase):
             side_effect=RuntimeError("unexpected explosion"),
         ):
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                exit_code = main(["inspect", "demo"])
+                exit_code = main(["inspect", "gridoptim"])
 
         self.assertEqual(exit_code, EXIT_DATA_ERROR)
         self.assertEqual(stdout.getvalue(), "")
@@ -275,7 +277,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch("trustcheck.cli.inspect_package", side_effect=ValueError("broken payload")):
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                exit_code = main(["--debug", "inspect", "demo"])
+                exit_code = main(["--debug", "inspect", "gridoptim"])
 
         self.assertEqual(exit_code, EXIT_DATA_ERROR)
         self.assertIn("Traceback", stderr.getvalue())

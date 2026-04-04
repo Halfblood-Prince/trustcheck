@@ -30,24 +30,24 @@ def make_project_payload(
     return {
         "info": {
             "version": version,
-            "summary": "Demo package",
+            "summary": "gridoptim package",
             "project_urls": project_urls
             if project_urls is not None
             else {
-                "Homepage": "https://github.com/example/demo",
-                "Documentation": "https://docs.example.com/demo",
+                "Homepage": "https://github.com/Halfblood-Prince/gridoptim",
+                "Documentation": "https://docs.example.com/gridoptim",
             },
             "ownership": {
-                "organization": "example-org",
-                "roles": [{"role": "Owner", "user": "alice"}],
+                "organization": "Halfblood-Prince",
+                "roles": [{"role": "Owner", "user": "Halfblood-Prince"}],
             },
         },
         "urls": urls
         if urls is not None
         else [
             {
-                "filename": "demo-1.2.3-py3-none-any.whl",
-                "url": "https://files.pythonhosted.org/packages/demo.whl",
+                "filename": "gridoptim-1.2.3-py3-none-any.whl",
+                "url": "https://files.pythonhosted.org/packages/gridoptim.whl",
                 "digests": {"sha256": "abc123"},
             }
         ],
@@ -59,7 +59,7 @@ def make_project_payload(
 def make_publisher(
     *,
     kind: str = "GitHub",
-    repository: str = "example/demo",
+    repository: str = "Halfblood-Prince/gridoptim",
     workflow: str = "release.yml",
     environment: str | None = None,
 ) -> SimpleNamespace:
@@ -128,7 +128,7 @@ class FakeClient:
                 {
                     "publisher": {
                         "kind": "GitHub",
-                        "repository": "example/demo",
+                        "repository": "Halfblood-Prince/gridoptim",
                         "workflow": "release.yml",
                     },
                     "attestations": [{"kind": "publish"}],
@@ -136,20 +136,20 @@ class FakeClient:
             ]
         }
         self.download_map = download_map or {
-            "https://files.pythonhosted.org/packages/demo.whl": b"demo-wheel",
+            "https://files.pythonhosted.org/packages/gridoptim.whl": b"gridoptim-wheel",
         }
         self.project_error = project_error
         self.release_error = release_error
         self.provenance_errors = provenance_errors or {}
 
     def get_project(self, project: str) -> dict[str, object]:
-        assert project == "demo"
+        assert project == "gridoptim"
         if self.project_error is not None:
             raise self.project_error
         return self.project_payload
 
     def get_release(self, project: str, version: str) -> dict[str, object]:
-        assert project == "demo"
+        assert project == "gridoptim"
         if self.release_error is not None:
             raise self.release_error
         if version in self.release_payloads:
@@ -162,7 +162,7 @@ class FakeClient:
         version: str,
         filename: str,
     ) -> dict[str, object]:
-        assert project == "demo"
+        assert project == "gridoptim"
         assert version
         if filename in self.provenance_errors:
             raise self.provenance_errors[filename]
@@ -182,17 +182,17 @@ class InspectPackageTests(unittest.TestCase):
             with patch("trustcheck.service.hashlib.sha256") as sha256:
                 sha256.return_value.hexdigest.return_value = "abc123"
                 report = inspect_package(
-                    "demo",
-                    expected_repository="https://github.com/example/demo",
+                    "gridoptim",
+                    expected_repository="https://github.com/Halfblood-Prince/gridoptim",
                     client=cast(Any, client),
                 )
 
-        self.assertEqual(report.project, "demo")
+        self.assertEqual(report.project, "gridoptim")
         self.assertEqual(report.version, "1.2.3")
         self.assertEqual(report.recommendation, "verified")
         self.assertEqual(
             report.declared_repository_urls,
-            ["https://github.com/example/demo"],
+            ["https://github.com/halfblood-prince/gridoptim"],
         )
         self.assertEqual(report.repository_urls, report.declared_repository_urls)
         self.assertTrue(report.files[0].has_provenance)
@@ -202,7 +202,7 @@ class InspectPackageTests(unittest.TestCase):
         self.assertEqual(report.publisher_trust.depth_label, "strong")
         self.assertEqual(
             report.files[0].publisher_identities[0].repository,
-            "https://github.com/example/demo",
+            "https://github.com/halfblood-prince/gridoptim",
         )
         self.assertEqual(report.risk_flags, [])
 
@@ -210,24 +210,24 @@ class InspectPackageTests(unittest.TestCase):
         client = FakeClient(project_error=PypiClientError("unable to reach PyPI: timed out"))
 
         with self.assertRaisesRegex(PypiClientError, "timed out"):
-            inspect_package("demo", client=cast(Any, client))
+            inspect_package("gridoptim", client=cast(Any, client))
 
     def test_release_lookup_failure_bubbles_up(self) -> None:
         client = FakeClient(release_error=PypiClientError("resource not found"))
 
         with self.assertRaisesRegex(PypiClientError, "resource not found"):
-            inspect_package("demo", version="9.9.9", client=cast(Any, client))
+            inspect_package("gridoptim", version="9.9.9", client=cast(Any, client))
 
     def test_provenance_404_marks_file_as_unverified(self) -> None:
         payload = make_project_payload()
         client = FakeClient(
             project_payload=payload,
             provenance_errors={
-                "demo-1.2.3-py3-none-any.whl": PypiClientError("resource not found")
+                "gridoptim-1.2.3-py3-none-any.whl": PypiClientError("resource not found")
             },
         )
 
-        report = inspect_package("demo", client=cast(Any, client))
+        report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertEqual(report.files[0].error, "resource not found")
         self.assertIn("no_provenance", {flag.code for flag in report.risk_flags})
@@ -238,13 +238,13 @@ class InspectPackageTests(unittest.TestCase):
         client = FakeClient(
             project_payload=payload,
             provenance_errors={
-                "demo-1.2.3-py3-none-any.whl": PypiClientError(
+                "gridoptim-1.2.3-py3-none-any.whl": PypiClientError(
                     "PyPI returned HTTP 503 for provenance"
                 )
             },
         )
 
-        report = inspect_package("demo", client=cast(Any, client))
+        report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertEqual(report.files[0].error, "PyPI returned HTTP 503 for provenance")
         self.assertIn(
@@ -255,7 +255,7 @@ class InspectPackageTests(unittest.TestCase):
     def test_malformed_provenance_payload_is_reported(self) -> None:
         client = FakeClient(provenance_payload={"oops": []})
 
-        report = inspect_package("demo", client=cast(Any, client))
+        report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertFalse(report.files[0].verified)
         assert report.files[0].error is not None
@@ -264,7 +264,7 @@ class InspectPackageTests(unittest.TestCase):
     def test_missing_project_fields_fall_back_cleanly(self) -> None:
         client = FakeClient(project_payload={"urls": [], "vulnerabilities": []})
 
-        report = inspect_package("demo", client=cast(Any, client))
+        report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertEqual(report.version, "unknown")
         self.assertIsNone(report.summary)
@@ -276,13 +276,13 @@ class InspectPackageTests(unittest.TestCase):
         payload = make_project_payload(
             urls=[
                 {
-                    "filename": "demo-1.2.3-py3-none-any.whl",
-                    "url": "https://files.pythonhosted.org/packages/demo.whl",
+                    "filename": "gridoptim-1.2.3-py3-none-any.whl",
+                    "url": "https://files.pythonhosted.org/packages/gridoptim.whl",
                     "digests": {"sha256": "abc123"},
                 },
                 {
-                    "filename": "demo-1.2.3.tar.gz",
-                    "url": "https://files.pythonhosted.org/packages/demo.tar.gz",
+                    "filename": "gridoptim-1.2.3.tar.gz",
+                    "url": "https://files.pythonhosted.org/packages/gridoptim.tar.gz",
                     "digests": {"sha256": "def456"},
                 },
             ]
@@ -290,8 +290,8 @@ class InspectPackageTests(unittest.TestCase):
         client = FakeClient(
             project_payload=payload,
             download_map={
-                "https://files.pythonhosted.org/packages/demo.whl": b"wheel",
-                "https://files.pythonhosted.org/packages/demo.tar.gz": b"sdist",
+                "https://files.pythonhosted.org/packages/gridoptim.whl": b"wheel",
+                "https://files.pythonhosted.org/packages/gridoptim.tar.gz": b"sdist",
             },
         )
         provenance = make_provenance()
@@ -303,11 +303,11 @@ class InspectPackageTests(unittest.TestCase):
                     SimpleNamespace(hexdigest=lambda: "abc123"),
                     SimpleNamespace(hexdigest=lambda: "def456"),
                 ]
-                report = inspect_package("demo", client=cast(Any, client))
+                report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertEqual([file.filename for file in report.files], payload["urls"][0:2][0:2] and [
-            "demo-1.2.3-py3-none-any.whl",
-            "demo-1.2.3.tar.gz",
+            "gridoptim-1.2.3-py3-none-any.whl",
+            "gridoptim-1.2.3.tar.gz",
         ])
         self.assertTrue(all(file.verified for file in report.files))
 
@@ -315,13 +315,13 @@ class InspectPackageTests(unittest.TestCase):
         payload = make_project_payload(
             urls=[
                 {
-                    "filename": "demo-1.2.3-py3-none-any.whl",
-                    "url": "https://files.pythonhosted.org/packages/demo.whl",
+                    "filename": "gridoptim-1.2.3-py3-none-any.whl",
+                    "url": "https://files.pythonhosted.org/packages/gridoptim.whl",
                     "digests": {"sha256": "abc123"},
                 },
                 {
-                    "filename": "demo-1.2.3.tar.gz",
-                    "url": "https://files.pythonhosted.org/packages/demo.tar.gz",
+                    "filename": "gridoptim-1.2.3.tar.gz",
+                    "url": "https://files.pythonhosted.org/packages/gridoptim.tar.gz",
                     "digests": {"sha256": "def456"},
                 },
             ]
@@ -329,10 +329,10 @@ class InspectPackageTests(unittest.TestCase):
         client = FakeClient(
             project_payload=payload,
             download_map={
-                "https://files.pythonhosted.org/packages/demo.whl": b"wheel",
-                "https://files.pythonhosted.org/packages/demo.tar.gz": b"sdist",
+                "https://files.pythonhosted.org/packages/gridoptim.whl": b"wheel",
+                "https://files.pythonhosted.org/packages/gridoptim.tar.gz": b"sdist",
             },
-            provenance_errors={"demo-1.2.3.tar.gz": PypiClientError("resource not found")},
+            provenance_errors={"gridoptim-1.2.3.tar.gz": PypiClientError("resource not found")},
         )
         provenance = make_provenance()
 
@@ -340,7 +340,7 @@ class InspectPackageTests(unittest.TestCase):
             provenance_model.model_validate.return_value = provenance
             with patch("trustcheck.service.hashlib.sha256") as sha256:
                 sha256.return_value.hexdigest.return_value = "abc123"
-                report = inspect_package("demo", client=cast(Any, client))
+                report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertTrue(report.files[0].verified)
         self.assertFalse(report.files[1].verified)
@@ -353,13 +353,13 @@ class InspectPackageTests(unittest.TestCase):
         payload = make_project_payload(
             urls=[
                 {
-                    "filename": "demo-1.2.3-py3-none-any.whl",
-                    "url": "https://files.pythonhosted.org/packages/demo.whl",
+                    "filename": "gridoptim-1.2.3-py3-none-any.whl",
+                    "url": "https://files.pythonhosted.org/packages/gridoptim.whl",
                     "digests": {"sha256": "abc123"},
                 },
                 {
-                    "filename": "demo-1.2.3.tar.gz",
-                    "url": "https://files.pythonhosted.org/packages/demo.tar.gz",
+                    "filename": "gridoptim-1.2.3.tar.gz",
+                    "url": "https://files.pythonhosted.org/packages/gridoptim.tar.gz",
                     "digests": {"sha256": "def456"},
                 },
             ]
@@ -367,12 +367,15 @@ class InspectPackageTests(unittest.TestCase):
         client = FakeClient(
             project_payload=payload,
             download_map={
-                "https://files.pythonhosted.org/packages/demo.whl": b"wheel",
-                "https://files.pythonhosted.org/packages/demo.tar.gz": b"sdist",
+                "https://files.pythonhosted.org/packages/gridoptim.whl": b"wheel",
+                "https://files.pythonhosted.org/packages/gridoptim.tar.gz": b"sdist",
             },
         )
         provenance = make_provenance(
-            publisher=make_publisher(repository="example/demo", workflow="release.yml")
+            publisher=make_publisher(
+                repository="Halfblood-Prince/gridoptim",
+                workflow="release.yml",
+            )
         )
 
         with patch("trustcheck.service.Provenance") as provenance_model:
@@ -382,25 +385,25 @@ class InspectPackageTests(unittest.TestCase):
                     SimpleNamespace(hexdigest=lambda: "abc123"),
                     SimpleNamespace(hexdigest=lambda: "def456"),
                 ]
-                report = inspect_package("demo", client=cast(Any, client))
+                report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertTrue(report.provenance_consistency.sdist_wheel_consistent)
         self.assertEqual(
             report.provenance_consistency.consistent_repositories,
-            ["https://github.com/example/demo"],
+            ["https://github.com/halfblood-prince/gridoptim"],
         )
 
     def test_sdist_and_wheel_provenance_mismatch_is_flagged(self) -> None:
         payload = make_project_payload(
             urls=[
                 {
-                    "filename": "demo-1.2.3-py3-none-any.whl",
-                    "url": "https://files.pythonhosted.org/packages/demo.whl",
+                    "filename": "gridoptim-1.2.3-py3-none-any.whl",
+                    "url": "https://files.pythonhosted.org/packages/gridoptim.whl",
                     "digests": {"sha256": "abc123"},
                 },
                 {
-                    "filename": "demo-1.2.3.tar.gz",
-                    "url": "https://files.pythonhosted.org/packages/demo.tar.gz",
+                    "filename": "gridoptim-1.2.3.tar.gz",
+                    "url": "https://files.pythonhosted.org/packages/gridoptim.tar.gz",
                     "digests": {"sha256": "def456"},
                 },
             ]
@@ -408,20 +411,20 @@ class InspectPackageTests(unittest.TestCase):
         client = FakeClient(
             project_payload=payload,
             download_map={
-                "https://files.pythonhosted.org/packages/demo.whl": b"wheel",
-                "https://files.pythonhosted.org/packages/demo.tar.gz": b"sdist",
+                "https://files.pythonhosted.org/packages/gridoptim.whl": b"wheel",
+                "https://files.pythonhosted.org/packages/gridoptim.tar.gz": b"sdist",
             },
         )
         provenance_model_results = [
             make_provenance(
                 publisher=make_publisher(
-                    repository="example/demo",
+                    repository="Halfblood-Prince/gridoptim",
                     workflow="release.yml",
                 )
             ),
             make_provenance(
                 publisher=make_publisher(
-                    repository="other/demo",
+                    repository="other/gridoptim",
                     workflow="release.yml",
                 )
             ),
@@ -434,7 +437,7 @@ class InspectPackageTests(unittest.TestCase):
                     SimpleNamespace(hexdigest=lambda: "abc123"),
                     SimpleNamespace(hexdigest=lambda: "def456"),
                 ]
-                report = inspect_package("demo", client=cast(Any, client))
+                report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertFalse(report.provenance_consistency.sdist_wheel_consistent)
         self.assertIn(
@@ -456,10 +459,16 @@ class InspectPackageTests(unittest.TestCase):
             },
         )
         current_provenance = make_provenance(
-            publisher=make_publisher(repository="example/demo", workflow="release.yml")
+            publisher=make_publisher(
+                repository="Halfblood-Prince/gridoptim",
+                workflow="release.yml",
+            )
         )
         previous_provenance = make_provenance(
-            publisher=make_publisher(repository="example/renamed-demo", workflow="old-release.yml")
+            publisher=make_publisher(
+                repository="Halfblood-Prince/gridoptim-legacy",
+                workflow="old-release.yml",
+            )
         )
 
         with patch("trustcheck.service.Provenance") as provenance_model:
@@ -473,7 +482,7 @@ class InspectPackageTests(unittest.TestCase):
                     SimpleNamespace(hexdigest=lambda: "abc123"),
                 ]
                 report = inspect_package(
-                    "demo",
+                    "gridoptim",
                     version="1.2.3",
                     client=cast(Any, client),
                 )
@@ -504,7 +513,7 @@ class InspectPackageTests(unittest.TestCase):
             )
         )
 
-        report = inspect_package("demo", client=cast(Any, client))
+        report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertEqual(report.vulnerabilities[0].id, "unknown")
         self.assertEqual(report.vulnerabilities[0].summary, "Detailed advisory text")
@@ -515,12 +524,12 @@ class InspectPackageTests(unittest.TestCase):
 
     def test_repo_normalization_handles_common_edge_cases(self) -> None:
         self.assertEqual(
-            _normalize_repo_url("git+https://github.com/Example/Demo.git?ref=main"),
-            "https://github.com/example/demo",
+            _normalize_repo_url("git+https://github.com/Halfblood-Prince/Gridoptim.git?ref=main"),
+            "https://github.com/halfblood-prince/gridoptim",
         )
         self.assertEqual(
-            _normalize_repo_url("git@github.com:Example/Demo.git"),
-            "https://github.com/example/demo",
+            _normalize_repo_url("git@github.com:Halfblood-Prince/Gridoptim.git"),
+            "https://github.com/halfblood-prince/gridoptim",
         )
         self.assertEqual(
             _normalize_repo_url("ssh://git@gitlab.com/Group/SubGroup/Repo.git"),
@@ -531,23 +540,25 @@ class InspectPackageTests(unittest.TestCase):
             "https://gitlab.com/group/subgroup/repo",
         )
         self.assertEqual(
-            _normalize_repo_url("example/demo"),
-            "https://github.com/example/demo",
+            _normalize_repo_url("Halfblood-Prince/gridoptim"),
+            "https://github.com/halfblood-prince/gridoptim",
         )
         self.assertEqual(
-            _normalize_repo_url("https://docs.example.com/demo"),
+            _normalize_repo_url("https://docs.example.com/gridoptim"),
             "",
         )
         self.assertEqual(
-            _normalize_repo_url("https://github.com/example/demo/issues/1"),
-            "https://github.com/example/demo",
+            _normalize_repo_url("https://github.com/Halfblood-Prince/gridoptim/issues/1"),
+            "https://github.com/halfblood-prince/gridoptim",
         )
         self.assertEqual(
             _normalize_repo_url("https://github.com/orgs/example/repositories"),
             "",
         )
         self.assertEqual(
-            _normalize_repo_url("https://github.com/example/demo/archive/refs/tags/v1.0.0.zip"),
+            _normalize_repo_url(
+                "https://github.com/Halfblood-Prince/gridoptim/archive/refs/tags/v1.0.0.zip"
+            ),
             "",
         )
         self.assertEqual(
@@ -561,7 +572,7 @@ class InspectPackageTests(unittest.TestCase):
 
     def test_expected_repository_matches_slug_style_publisher_identity(self) -> None:
         provenance = make_provenance(
-            publisher=make_publisher(repository="example/demo")
+            publisher=make_publisher(repository="Halfblood-Prince/gridoptim")
         )
         client = FakeClient()
 
@@ -570,8 +581,8 @@ class InspectPackageTests(unittest.TestCase):
             with patch("trustcheck.service.hashlib.sha256") as sha256:
                 sha256.return_value.hexdigest.return_value = "abc123"
                 report = inspect_package(
-                    "demo",
-                    expected_repository="https://github.com/example/demo",
+                    "gridoptim",
+                    expected_repository="https://github.com/Halfblood-Prince/gridoptim",
                     client=cast(Any, client),
                 )
 
@@ -583,13 +594,13 @@ class InspectPackageTests(unittest.TestCase):
             project_payload=make_project_payload(
                 urls=[],
                 project_urls={
-                    "Homepage": "https://docs.example.com/demo",
+                    "Homepage": "https://docs.example.com/gridoptim",
                     "Documentation": "https://example.com/docs",
                 },
             )
         )
 
-        report = inspect_package("demo", client=cast(Any, client))
+        report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertEqual(report.declared_repository_urls, [])
         self.assertIn("missing_repository_url", {flag.code for flag in report.risk_flags})
@@ -599,15 +610,18 @@ class InspectPackageTests(unittest.TestCase):
             project_payload=make_project_payload(
                 urls=[],
                 project_urls={
-                    "Homepage": "https://github.com/example/docs-site",
-                    "Source": "git@github.com:Example/Demo.git",
+                    "Homepage": "https://github.com/Halfblood-Prince/gridoptim-docs",
+                    "Source": "git@github.com:Halfblood-Prince/gridoptim.git",
                 },
             )
         )
 
-        report = inspect_package("demo", client=cast(Any, client))
+        report = inspect_package("gridoptim", client=cast(Any, client))
 
-        self.assertEqual(report.declared_repository_urls, ["https://github.com/example/demo"])
+        self.assertEqual(
+            report.declared_repository_urls,
+            ["https://github.com/halfblood-prince/gridoptim"],
+        )
 
     def test_invalid_expected_repository_is_reported_explicitly(self) -> None:
         client = FakeClient()
@@ -618,7 +632,7 @@ class InspectPackageTests(unittest.TestCase):
             with patch("trustcheck.service.hashlib.sha256") as sha256:
                 sha256.return_value.hexdigest.return_value = "abc123"
                 report = inspect_package(
-                    "demo",
+                    "gridoptim",
                     expected_repository="https://github.com/orgs/example/repositories",
                     client=cast(Any, client),
                 )
@@ -628,11 +642,11 @@ class InspectPackageTests(unittest.TestCase):
 
     def test_recommendation_mapping_behavior(self) -> None:
         metadata_only = inspect_package(
-            "demo",
+            "gridoptim",
             client=cast(Any, FakeClient(project_payload={"info": {}, "urls": []})),
         )
         review_required = inspect_package(
-            "demo",
+            "gridoptim",
             client=cast(
                 Any,
                 FakeClient(
@@ -644,10 +658,10 @@ class InspectPackageTests(unittest.TestCase):
             ),
         )
         high_risk = TrustReport(
-            project="demo",
+            project="gridoptim",
             version="1.2.3",
             summary=None,
-            package_url="https://pypi.org/project/demo/1.2.3/",
+            package_url="https://pypi.org/project/gridoptim/1.2.3/",
             risk_flags=[
                 RiskFlag(
                     code="unverified_provenance",
@@ -657,7 +671,7 @@ class InspectPackageTests(unittest.TestCase):
             ],
         )
         metadata_only_files = inspect_package(
-            "demo",
+            "gridoptim",
             client=cast(
                 Any,
                 FakeClient(project_payload=make_project_payload(urls=[])),
@@ -668,7 +682,7 @@ class InspectPackageTests(unittest.TestCase):
         self.assertEqual(review_required.recommendation, "review-required")
         with self.assertRaisesRegex(PypiClientError, "boom"):
             inspect_package(
-                "demo",
+                "gridoptim",
                 client=cast(Any, FakeClient(project_error=PypiClientError("boom"))),
             )
         self.assertEqual(_recommendation_for(review_required), "review-required")
@@ -684,7 +698,7 @@ class InspectPackageTests(unittest.TestCase):
             provenance_model.model_validate.return_value = provenance
             with patch("trustcheck.service.hashlib.sha256") as sha256:
                 sha256.return_value.hexdigest.return_value = "tampered"
-                report = inspect_package("demo", client=cast(Any, client))
+                report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertFalse(report.files[0].verified)
         assert report.files[0].error is not None
@@ -701,7 +715,7 @@ class InspectPackageTests(unittest.TestCase):
             provenance_model.model_validate.return_value = provenance
             with patch("trustcheck.service.hashlib.sha256") as sha256:
                 sha256.return_value.hexdigest.return_value = "abc123"
-                report = inspect_package("demo", client=cast(Any, client))
+                report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertFalse(report.files[0].verified)
         assert report.files[0].error is not None
@@ -720,7 +734,7 @@ class InspectPackageTests(unittest.TestCase):
             provenance_model.model_validate.return_value = provenance
             with patch("trustcheck.service.hashlib.sha256") as sha256:
                 sha256.return_value.hexdigest.return_value = "abc123"
-                report = inspect_package("demo", client=cast(Any, client))
+                report = inspect_package("gridoptim", client=cast(Any, client))
 
         self.assertFalse(report.files[0].verified)
         assert report.files[0].error is not None
