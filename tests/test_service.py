@@ -538,6 +538,26 @@ class InspectPackageTests(unittest.TestCase):
             _normalize_repo_url("https://docs.example.com/demo"),
             "",
         )
+        self.assertEqual(
+            _normalize_repo_url("https://github.com/example/demo/issues/1"),
+            "https://github.com/example/demo",
+        )
+        self.assertEqual(
+            _normalize_repo_url("https://github.com/orgs/example/repositories"),
+            "",
+        )
+        self.assertEqual(
+            _normalize_repo_url("https://github.com/example/demo/archive/refs/tags/v1.0.0.zip"),
+            "",
+        )
+        self.assertEqual(
+            _normalize_repo_url("https://gitlab.com/group/subgroup/repo/-/issues/1"),
+            "https://gitlab.com/group/subgroup/repo",
+        )
+        self.assertEqual(
+            _normalize_repo_url("https://gitlab.com/group/subgroup/repo/issues/1"),
+            "",
+        )
 
     def test_expected_repository_matches_slug_style_publisher_identity(self) -> None:
         provenance = make_provenance(
@@ -588,6 +608,23 @@ class InspectPackageTests(unittest.TestCase):
         report = inspect_package("demo", client=cast(Any, client))
 
         self.assertEqual(report.declared_repository_urls, ["https://github.com/example/demo"])
+
+    def test_invalid_expected_repository_is_reported_explicitly(self) -> None:
+        client = FakeClient()
+        provenance = make_provenance()
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = provenance
+            with patch("trustcheck.service.hashlib.sha256") as sha256:
+                sha256.return_value.hexdigest.return_value = "abc123"
+                report = inspect_package(
+                    "demo",
+                    expected_repository="https://github.com/orgs/example/repositories",
+                    client=cast(Any, client),
+                )
+
+        self.assertIn("expected_repository_invalid", {flag.code for flag in report.risk_flags})
+        self.assertEqual(report.recommendation, "high-risk")
 
     def test_recommendation_mapping_behavior(self) -> None:
         metadata_only = inspect_package(

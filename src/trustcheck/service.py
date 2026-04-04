@@ -22,6 +22,61 @@ from .models import (
 )
 from .pypi import PypiClient, PypiClientError
 
+GITHUB_RESERVED_SEGMENTS = {
+    "about",
+    "account",
+    "apps",
+    "blog",
+    "collections",
+    "contact",
+    "customer-stories",
+    "enterprise",
+    "events",
+    "explore",
+    "features",
+    "gist",
+    "git-guides",
+    "github",
+    "images",
+    "issues",
+    "join",
+    "login",
+    "marketplace",
+    "new",
+    "notifications",
+    "orgs",
+    "organizations",
+    "pricing",
+    "pulls",
+    "search",
+    "security",
+    "settings",
+    "site",
+    "sponsors",
+    "team",
+    "teams",
+    "topics",
+    "trending",
+    "users",
+}
+GITHUB_REPO_SUBPATHS = {
+    "actions",
+    "blob",
+    "commit",
+    "commits",
+    "compare",
+    "discussions",
+    "issues",
+    "packages",
+    "projects",
+    "pull",
+    "pulls",
+    "releases",
+    "security",
+    "tags",
+    "tree",
+    "wiki",
+}
 
 def inspect_package(
     project: str,
@@ -245,62 +300,86 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
 
     if report.expected_repository:
         expected = _normalize_repo_url(report.expected_repository)
-        repo_matches = any(url == expected for url in report.declared_repository_urls)
-        publisher_matches = any(
-            _normalize_repo_url(identity.repository) == expected
-            for file in report.files
-            for identity in file.publisher_identities
-            if identity.repository
-        )
-        verified_publisher_matches = any(
-            _normalize_repo_url(identity.repository) == expected
-            for file in report.files
-            if file.verified
-            for identity in file.publisher_identities
-            if identity.repository
-        )
-        if not repo_matches and not publisher_matches:
+        if not expected:
             flags.append(
                 RiskFlag(
-                    code="expected_repository_mismatch",
+                    code="expected_repository_invalid",
                     severity="high",
                     message=(
-                        "The expected repository does not match declared "
-                        "project metadata or observed publisher identity hints."
+                        "The expected repository could not be normalized to a "
+                        "supported GitHub or GitLab repository URL."
                     ),
                     why=[
-                        f"Expected repository: {expected}",
-                        "No declared repository URL or publisher identity "
-                        "matched that expectation.",
+                        f"Original expected repository input: {report.expected_repository}",
+                        "Repository matching only supports canonical GitHub "
+                        "and GitLab repository URLs or equivalent git remotes.",
                     ],
                     remediation=[
-                        "Stop and confirm the package name and expected repository.",
-                        "Check whether the project moved to a new repository before proceeding.",
+                        "Provide a repository root URL such as "
+                        "https://github.com/owner/repo.",
+                        "Avoid issue pages, profile pages, documentation "
+                        "sites, and unsupported forge URLs.",
                     ],
                 )
             )
-        elif report.files and not verified_publisher_matches:
-            flags.append(
-                RiskFlag(
-                    code="expected_repository_unverified",
-                    severity="high",
-                    message=(
-                        "No verified attestation binds the release artifact "
-                        "to the expected repository."
-                    ),
-                    why=[
-                        f"Expected repository: {expected}",
-                        "Matching repository hints may exist, but none were "
-                        "backed by a verified attestation.",
-                    ],
-                    remediation=[
-                        "Treat the release as unverified until a matching "
-                        "verified attestation exists.",
-                        "Confirm the release was produced from the expected "
-                        "repository and workflow.",
-                    ],
-                )
+        else:
+            repo_matches = any(url == expected for url in report.declared_repository_urls)
+            publisher_matches = any(
+                _normalize_repo_url(identity.repository) == expected
+                for file in report.files
+                for identity in file.publisher_identities
+                if identity.repository
             )
+            verified_publisher_matches = any(
+                _normalize_repo_url(identity.repository) == expected
+                for file in report.files
+                if file.verified
+                for identity in file.publisher_identities
+                if identity.repository
+            )
+            if not repo_matches and not publisher_matches:
+                flags.append(
+                    RiskFlag(
+                        code="expected_repository_mismatch",
+                        severity="high",
+                        message=(
+                            "The expected repository does not match declared "
+                            "project metadata or observed publisher identity hints."
+                        ),
+                        why=[
+                            f"Expected repository: {expected}",
+                            "No declared repository URL or publisher identity "
+                            "matched that expectation.",
+                        ],
+                        remediation=[
+                            "Stop and confirm the package name and expected repository.",
+                            "Check whether the project moved to a new "
+                            "repository before proceeding.",
+                        ],
+                    )
+                )
+            elif report.files and not verified_publisher_matches:
+                flags.append(
+                    RiskFlag(
+                        code="expected_repository_unverified",
+                        severity="high",
+                        message=(
+                            "No verified attestation binds the release artifact "
+                            "to the expected repository."
+                        ),
+                        why=[
+                            f"Expected repository: {expected}",
+                            "Matching repository hints may exist, but none were "
+                            "backed by a verified attestation.",
+                        ],
+                        remediation=[
+                            "Treat the release as unverified until a matching "
+                            "verified attestation exists.",
+                            "Confirm the release was produced from the expected "
+                            "repository and workflow.",
+                        ],
+                    )
+                )
 
     if report.files and all(not file.has_provenance for file in report.files):
         flags.append(
@@ -555,14 +634,21 @@ def _normalize_supported_forge_url(host: str, path: str) -> str:
         segments = [segment for segment in cleaned_path.split("/") if segment]
         if len(segments) < 2:
             return ""
+        if segments[0].lower() in GITHUB_RESERVED_SEGMENTS:
+            return ""
+        if len(segments) > 2 and segments[2].lower() not in GITHUB_REPO_SUBPATHS:
+            return ""
         owner, repo = segments[0].lower(), segments[1].lower()
         return f"https://github.com/{owner}/{repo}"
 
     if host_normalized == "gitlab.com":
-        if "/-/" in cleaned_path:
+        had_gitlab_subpath = "/-/" in cleaned_path
+        if had_gitlab_subpath:
             cleaned_path = cleaned_path.split("/-/", maxsplit=1)[0]
         segments = [segment for segment in cleaned_path.split("/") if segment]
         if len(segments) < 2:
+            return ""
+        if not had_gitlab_subpath and len(segments) > 3:
             return ""
         namespace = "/".join(segment.lower() for segment in segments)
         return f"https://gitlab.com/{namespace}"
