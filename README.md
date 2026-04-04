@@ -9,21 +9,6 @@
 
 It combines PyPI metadata, vulnerability records, provenance availability, cryptographic attestation verification, Trusted Publisher identity hints, and repository matching into a single operator-friendly report.
 
-## Why use it
-
-`pip install` answers whether a package can be installed.
-
-`trustcheck` helps answer whether a release should be trusted.
-
-It is designed for maintainers, platform teams, security reviewers, CI pipelines, and anyone who wants a fast local check for questions like:
-
-- Does this release publish provenance on PyPI?
-- Do the attestations verify for the exact artifact digest I would consume?
-- Does the publisher identity line up with the repository I expect?
-- Are sdist and wheel provenance signals consistent?
-- Did the verified publisher repository or workflow drift from the previous release?
-- Does PyPI already report known vulnerabilities for this version?
-
 ## What it checks
 
 For a selected package version, `trustcheck` can:
