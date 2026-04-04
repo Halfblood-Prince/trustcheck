@@ -1,5 +1,7 @@
 # trustcheck
 
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/trustcheck?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/trustcheck)
+
 `trustcheck` is a small Python package and CLI for checking PyPI package trust signals before installation.
 
 The immediate goal is pragmatic: answer questions like these in one local command:
