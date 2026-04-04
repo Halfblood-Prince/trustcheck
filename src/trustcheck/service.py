@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 from urllib.parse import urlparse
+
+from pypi_attestations import Provenance, VerificationError
+from pypi_attestations import Distribution as AttestedDistribution
 
 from .models import FileProvenance, PublisherIdentity, RiskFlag, TrustReport, VulnerabilityRecord
 from .pypi import PypiClient, PypiClientError
@@ -59,16 +63,34 @@ def _collect_files(
         )
         try:
             prov_payload = client.get_provenance(project, version, filename)
-            bundles = prov_payload.get("attestation_bundles") or []
+            attestation_provenance = Provenance.model_validate(prov_payload)
+            bundles = attestation_provenance.attestation_bundles
             provenance.has_provenance = bool(bundles)
-            provenance.attestation_count = sum(
-                len(bundle.get("attestations") or [])
-                for bundle in bundles
-                if isinstance(bundle, dict)
-            )
+            provenance.attestation_count = sum(len(bundle.attestations) for bundle in bundles)
             provenance.publisher_identities = _parse_publisher_identities(bundles)
+
+            artifact_bytes = client.download_distribution(provenance.url)
+            provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+            if provenance.sha256 and provenance.observed_sha256 != provenance.sha256:
+                raise VerificationError("downloaded artifact digest does not match PyPI metadata")
+
+            dist = AttestedDistribution(name=filename, digest=provenance.observed_sha256)
+            for bundle in bundles:
+                for attestation in bundle.attestations:
+                    attestation.verify(bundle.publisher, dist)
+                    provenance.verified_attestation_count += 1
+
+            provenance.verified = provenance.has_provenance and (
+                provenance.verified_attestation_count == provenance.attestation_count
+            )
+            if provenance.has_provenance and not provenance.verified:
+                raise VerificationError("no attestations were successfully verified")
         except PypiClientError as exc:
             provenance.error = str(exc)
+        except VerificationError as exc:
+            provenance.error = str(exc)
+        except Exception as exc:
+            provenance.error = f"attestation verification failed: {exc}"
         results.append(provenance)
     return results
 
@@ -111,34 +133,26 @@ def _extract_repository_urls(project_urls: dict[str, str]) -> list[str]:
     return deduped
 
 
-def _parse_publisher_identities(bundles: list[dict[str, Any]]) -> list[PublisherIdentity]:
+def _parse_publisher_identities(bundles: list[Any]) -> list[PublisherIdentity]:
     identities: list[PublisherIdentity] = []
 
     for bundle in bundles:
-        publisher = bundle.get("publisher") or bundle.get("verification_material", {}).get("publisher")
-        if not isinstance(publisher, dict):
+        publisher = getattr(bundle, "publisher", None)
+        if publisher is None:
             continue
 
-        kind = str(publisher.get("kind") or publisher.get("issuer") or "unknown")
-        repository = (
-            publisher.get("repository")
-            or publisher.get("repository_url")
-            or publisher.get("repo")
-            or publisher.get("sub")
-        )
-        workflow = (
-            publisher.get("workflow")
-            or publisher.get("workflow_ref")
-            or publisher.get("job_workflow_ref")
-        )
-        environment = publisher.get("environment")
+        raw = publisher.model_dump() if hasattr(publisher, "model_dump") else {}
+        kind = str(getattr(publisher, "kind", None) or raw.get("issuer") or "unknown")
+        repository = _publisher_repository_url(kind, getattr(publisher, "repository", None))
+        workflow = getattr(publisher, "workflow", None) or getattr(publisher, "workflow_filepath", None)
+        environment = getattr(publisher, "environment", None)
         identities.append(
             PublisherIdentity(
                 kind=kind,
                 repository=repository,
                 workflow=workflow,
                 environment=environment,
-                raw=publisher,
+                raw=raw,
             )
         )
     return identities
@@ -174,6 +188,13 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
             for identity in file.publisher_identities
             if identity.repository
         )
+        verified_publisher_matches = any(
+            _normalize_repo_url(identity.repository) == expected
+            for file in report.files
+            if file.verified
+            for identity in file.publisher_identities
+            if identity.repository
+        )
         if not repo_matches and not publisher_matches:
             flags.append(
                 RiskFlag(
@@ -182,22 +203,39 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     message="The expected repository does not match declared project metadata or observed publisher identity hints.",
                 )
             )
+        elif report.files and not verified_publisher_matches:
+            flags.append(
+                RiskFlag(
+                    code="expected_repository_unverified",
+                    severity="high",
+                    message="No verified attestation binds the release artifact to the expected repository.",
+                )
+            )
 
     if report.files and all(not file.has_provenance for file in report.files):
         flags.append(
             RiskFlag(
                 code="no_provenance",
-                severity="medium",
-                message="No provenance bundles were found for the release files on PyPI.",
+                severity="high",
+                message="No provenance bundles were found for the release files on PyPI, so the artifacts cannot be verified.",
             )
         )
 
-    if any(file.error for file in report.files) and not any(file.has_provenance for file in report.files):
+    if any(file.error for file in report.files):
         flags.append(
             RiskFlag(
-                code="provenance_lookup_failed",
-                severity="low",
-                message="PyPI provenance lookups failed for one or more files, so attestation coverage may be incomplete.",
+                code="provenance_verification_failed",
+                severity="high",
+                message="One or more release files have invalid or unverifiable provenance.",
+            )
+        )
+
+    if report.files and not all(file.verified for file in report.files):
+        flags.append(
+            RiskFlag(
+                code="unverified_provenance",
+                severity="high",
+                message="Every release artifact must have a valid attestation bound to its exact digest and publisher identity.",
             )
         )
 
@@ -205,8 +243,8 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
         flags.append(
             RiskFlag(
                 code="missing_publisher_identity",
-                severity="medium",
-                message="No Trusted Publisher identity hints were recovered from the provenance bundles.",
+                severity="high",
+                message="No Trusted Publisher identity information was recovered from the provenance bundles.",
             )
         )
 
@@ -226,6 +264,10 @@ def _normalize_repo_url(url: str | None) -> str:
         return ""
 
     parsed = urlparse(url)
+    if not parsed.scheme and not parsed.netloc:
+        if url.count("/") == 1:
+            return _normalize_repo_url(f"https://github.com/{url}")
+        return url.rstrip("/")
     scheme = parsed.scheme.lower() or "https"
     netloc = parsed.netloc.lower()
     path = parsed.path.rstrip("/")
@@ -237,3 +279,16 @@ def _normalize_repo_url(url: str | None) -> str:
 
     normalized = parsed._replace(scheme=scheme, netloc=netloc, path=path, params="", query="", fragment="")
     return normalized.geturl()
+
+
+def _publisher_repository_url(kind: str, repository: str | None) -> str | None:
+    if not repository:
+        return repository
+    if repository.startswith(("http://", "https://")):
+        return repository
+    kind_normalized = kind.lower()
+    if "github" in kind_normalized:
+        return f"https://github.com/{repository}"
+    if "gitlab" in kind_normalized:
+        return f"https://gitlab.com/{repository}"
+    return repository

@@ -36,7 +36,10 @@ class FileProvenance:
     url: str
     sha256: str | None
     has_provenance: bool
+    verified: bool = False
     attestation_count: int = 0
+    verified_attestation_count: int = 0
+    observed_sha256: str | None = None
     publisher_identities: list[PublisherIdentity] = field(default_factory=list)
     error: str | None = None
 
@@ -57,4 +60,3 @@ class TrustReport:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-

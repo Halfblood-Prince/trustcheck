@@ -24,6 +24,9 @@ classifiers = [
   "Topic :: Security",
   "Topic :: Software Development :: Build Tools",
 ]
+dependencies = [
+  "pypi-attestations>=0.0.29,<1",
+]
 
 [project.scripts]
 trustcheck = "trustcheck.cli:main"

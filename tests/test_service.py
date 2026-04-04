@@ -1,5 +1,8 @@
 from trustcheck.pypi import PypiClientError
 from trustcheck.service import inspect_package
+from pypi_attestations import VerificationError
+from types import SimpleNamespace
+from unittest.mock import patch
 import unittest
 
 
@@ -37,14 +40,18 @@ class FakeClient:
             "attestation_bundles": [
                 {
                     "publisher": {
-                        "kind": "GitHub Actions",
-                        "repository": "https://github.com/example/demo",
+                        "kind": "GitHub",
+                        "repository": "example/demo",
                         "workflow": "release.yml",
                     },
                     "attestations": [{"kind": "publish"}],
                 }
             ]
         }
+
+    def download_distribution(self, url):
+        assert url == "https://files.pythonhosted.org/packages/demo.whl"
+        return b"demo-wheel"
 
 
 class NoProvClient(FakeClient):
@@ -54,17 +61,39 @@ class NoProvClient(FakeClient):
 
 class InspectPackageTests(unittest.TestCase):
     def test_inspect_package_happy_path(self):
-        report = inspect_package(
-            "demo",
-            expected_repository="https://github.com/example/demo",
-            client=FakeClient(),
+        publisher = SimpleNamespace(
+            kind="GitHub",
+            repository="example/demo",
+            workflow="release.yml",
+            environment=None,
+            model_dump=lambda: {
+                "kind": "GitHub",
+                "repository": "example/demo",
+                "workflow": "release.yml",
+                "environment": None,
+            },
         )
+        attestation = SimpleNamespace()
+        attestation.verify = lambda identity, dist: ("https://docs.pypi.org/attestations/publish/v1", None)
+        provenance = SimpleNamespace(attestation_bundles=[SimpleNamespace(publisher=publisher, attestations=[attestation])])
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = provenance
+            with patch("trustcheck.service.hashlib.sha256") as sha256:
+                sha256.return_value.hexdigest.return_value = "abc123"
+                report = inspect_package(
+                    "demo",
+                    expected_repository="https://github.com/example/demo",
+                    client=FakeClient(),
+                )
 
         self.assertEqual(report.project, "demo")
         self.assertEqual(report.version, "1.2.3")
         self.assertEqual(report.recommendation, "looks-good")
         self.assertEqual(report.repository_urls, ["https://github.com/example/demo"])
         self.assertTrue(report.files[0].has_provenance)
+        self.assertTrue(report.files[0].verified)
+        self.assertEqual(report.files[0].verified_attestation_count, 1)
         self.assertEqual(
             report.files[0].publisher_identities[0].repository,
             "https://github.com/example/demo",
@@ -81,5 +110,77 @@ class InspectPackageTests(unittest.TestCase):
         flag_codes = {flag.code for flag in report.risk_flags}
         self.assertIn("expected_repository_mismatch", flag_codes)
         self.assertIn("no_provenance", flag_codes)
-        self.assertIn("provenance_lookup_failed", flag_codes)
+        self.assertIn("provenance_verification_failed", flag_codes)
+        self.assertIn("unverified_provenance", flag_codes)
         self.assertEqual(report.recommendation, "do-not-trust-without-review")
+
+    def test_inspect_package_rejects_tampered_artifact(self):
+        publisher = SimpleNamespace(
+            kind="GitHub",
+            repository="example/demo",
+            workflow="release.yml",
+            environment=None,
+            model_dump=lambda: {"kind": "GitHub", "repository": "example/demo", "workflow": "release.yml"},
+        )
+        attestation = SimpleNamespace()
+        attestation.verify = lambda identity, dist: ("https://docs.pypi.org/attestations/publish/v1", None)
+        provenance = SimpleNamespace(attestation_bundles=[SimpleNamespace(publisher=publisher, attestations=[attestation])])
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = provenance
+            with patch("trustcheck.service.hashlib.sha256") as sha256:
+                sha256.return_value.hexdigest.return_value = "tampered"
+                report = inspect_package("demo", client=FakeClient())
+
+        self.assertFalse(report.files[0].verified)
+        self.assertIn("does not match PyPI metadata", report.files[0].error)
+
+    def test_inspect_package_rejects_mismatched_attestation(self):
+        publisher = SimpleNamespace(
+            kind="GitHub",
+            repository="example/demo",
+            workflow="release.yml",
+            environment=None,
+            model_dump=lambda: {"kind": "GitHub", "repository": "example/demo", "workflow": "release.yml"},
+        )
+        attestation = SimpleNamespace()
+
+        def reject(identity, dist):
+            raise VerificationError("subject does not match distribution digest")
+
+        attestation.verify = reject
+        provenance = SimpleNamespace(attestation_bundles=[SimpleNamespace(publisher=publisher, attestations=[attestation])])
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = provenance
+            with patch("trustcheck.service.hashlib.sha256") as sha256:
+                sha256.return_value.hexdigest.return_value = "abc123"
+                report = inspect_package("demo", client=FakeClient())
+
+        self.assertFalse(report.files[0].verified)
+        self.assertIn("subject does not match distribution digest", report.files[0].error)
+
+    def test_inspect_package_rejects_wrong_publisher_identity(self):
+        publisher = SimpleNamespace(
+            kind="GitHub",
+            repository="example/demo",
+            workflow="release.yml",
+            environment=None,
+            model_dump=lambda: {"kind": "GitHub", "repository": "example/demo", "workflow": "release.yml"},
+        )
+        attestation = SimpleNamespace()
+
+        def reject(identity, dist):
+            raise VerificationError("Certificate's Build Config URI does not match expected Trusted Publisher")
+
+        attestation.verify = reject
+        provenance = SimpleNamespace(attestation_bundles=[SimpleNamespace(publisher=publisher, attestations=[attestation])])
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = provenance
+            with patch("trustcheck.service.hashlib.sha256") as sha256:
+                sha256.return_value.hexdigest.return_value = "abc123"
+                report = inspect_package("demo", client=FakeClient())
+
+        self.assertFalse(report.files[0].verified)
+        self.assertIn("Trusted Publisher", report.files[0].error)

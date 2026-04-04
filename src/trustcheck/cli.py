@@ -86,8 +86,11 @@ def _render_text_report(report) -> str:
     for file in report.files:
         lines.append(f"  - {file.filename}")
         lines.append(f"    provenance: {'yes' if file.has_provenance else 'no'}")
+        lines.append(f"    verified: {'yes' if file.verified else 'no'}")
         if file.sha256:
             lines.append(f"    sha256: {file.sha256}")
+        if file.observed_sha256:
+            lines.append(f"    observed sha256: {file.observed_sha256}")
         if file.publisher_identities:
             for identity in file.publisher_identities:
                 lines.append(
@@ -102,7 +105,4 @@ def _render_text_report(report) -> str:
             lines.append(f"  - [{flag.severity}] {flag.code}: {flag.message}")
     else:
         lines.append("risk flags: none")
-
-    lines.append("note: provenance presence is a useful signal, but this MVP does not yet perform cryptographic attestation verification.")
     return "\n".join(lines)
-

@@ -35,6 +35,17 @@ class PypiClient:
         path = f"/integrity/{project_q}/{version_q}/{filename_q}/provenance"
         return self._get_json(path, accept=INTEGRITY_ACCEPT)
 
+    def download_distribution(self, url: str) -> bytes:
+        req = request.Request(url, headers={"User-Agent": "trustcheck/0.1"})
+
+        try:
+            with request.urlopen(req, timeout=self.timeout) as response:
+                return response.read()
+        except error.HTTPError as exc:
+            raise PypiClientError(f"artifact download failed with HTTP {exc.code} for {url}") from exc
+        except error.URLError as exc:
+            raise PypiClientError(f"unable to download artifact: {exc.reason}") from exc
+
     def _get_json(self, path: str, *, accept: str) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         req = request.Request(url, headers={"Accept": accept, "User-Agent": "trustcheck/0.1"})
@@ -48,4 +59,3 @@ class PypiClient:
             raise PypiClientError(f"PyPI returned HTTP {exc.code} for {url}") from exc
         except error.URLError as exc:
             raise PypiClientError(f"unable to reach PyPI: {exc.reason}") from exc
-

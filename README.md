@@ -5,17 +5,14 @@
 The immediate goal is pragmatic: answer questions like these in one local command:
 
 - Does this release expose PyPI provenance / attestation data?
-- Was it published through a Trusted Publisher flow?
+- Does the attestation verify cryptographically for the exact artifact I would install?
+- Was it published through the expected Trusted Publisher identity?
 - Which repository URLs does the package claim?
 - Do those URLs match the repository I expected?
 - Are there known PyPI vulnerability records for the selected release?
 - Are there obvious risk flags worth reviewing before install?
 
-This MVP is intentionally conservative:
-
-- It fetches metadata from PyPI's JSON API and provenance objects from PyPI's Integrity API.
-- It surfaces publisher identity hints from provenance bundles when available.
-- It does not yet perform full cryptographic attestation verification. That should be added in a later release via Sigstore / `pypi-attestations` style verification.
+`trustcheck` now verifies PyPI attestations with `pypi-attestations` / Sigstore, checks that the attested subject matches the downloaded artifact filename and SHA-256 digest, and fails closed when provenance is missing, invalid, or bound to the wrong publisher identity.
 
 ## Install
 
@@ -40,12 +37,12 @@ trustcheck inspect sampleproject --format json
 - Known vulnerabilities from PyPI
 - Distribution file hashes
 - Provenance / attestation availability per file
-- Trusted Publisher identity hints extracted from provenance bundles
+- Verification status per file
+- Trusted Publisher identity information extracted from provenance bundles
 - Risk flags and an overall recommendation tier
 
 ## Roadmap
 
-- Full cryptographic verification of PyPI attestations
 - Stronger repository canonicalization and source matching
 - Policy files for CI and org-level enforcement
 - Support for lockfiles and dependency trees
