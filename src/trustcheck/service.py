@@ -205,7 +205,9 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     "vulnerability record(s) for this release."
                 ),
                 why=[
-                    f"PyPI returned {len(report.vulnerabilities)} vulnerability record(s) for this version.",
+                    "PyPI returned "
+                    f"{len(report.vulnerabilities)} vulnerability record(s) "
+                    "for this version.",
                     *[
                         f"{vuln.id}: {vuln.summary}"
                         for vuln in report.vulnerabilities[:3]
@@ -230,10 +232,12 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                 ),
                 why=[
                     "No supported source repository URL was found in the package metadata.",
-                    "That makes it harder to compare project metadata with publisher identity evidence.",
+                    "That makes it harder to compare project metadata with "
+                    "publisher identity evidence.",
                 ],
                 remediation=[
-                    "Look for an official source repository outside PyPI before trusting the release.",
+                    "Look for an official source repository outside PyPI "
+                    "before trusting the release.",
                     "Prefer packages that publish a clear repository URL in project metadata.",
                 ],
             )
@@ -266,7 +270,8 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     ),
                     why=[
                         f"Expected repository: {expected}",
-                        "No declared repository URL or publisher identity matched that expectation.",
+                        "No declared repository URL or publisher identity "
+                        "matched that expectation.",
                     ],
                     remediation=[
                         "Stop and confirm the package name and expected repository.",
@@ -285,11 +290,14 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     ),
                     why=[
                         f"Expected repository: {expected}",
-                        "Matching repository hints may exist, but none were backed by a verified attestation.",
+                        "Matching repository hints may exist, but none were "
+                        "backed by a verified attestation.",
                     ],
                     remediation=[
-                        "Treat the release as unverified until a matching verified attestation exists.",
-                        "Confirm the release was produced from the expected repository and workflow.",
+                        "Treat the release as unverified until a matching "
+                        "verified attestation exists.",
+                        "Confirm the release was produced from the expected "
+                        "repository and workflow.",
                     ],
                 )
             )
@@ -304,12 +312,14 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     "on PyPI, so the artifacts cannot be verified."
                 ),
                 why=[
-                    f"Discovered {total_files} release artifact(s), and none exposed provenance bundles.",
+                    f"Discovered {total_files} release artifact(s), and none "
+                    "exposed provenance bundles.",
                     "Without provenance, cryptographic verification cannot be performed.",
                 ],
                 remediation=[
                     "Prefer a release that publishes Trusted Publishing provenance.",
-                    "If you must proceed, pin exact hashes and perform manual review outside this tool.",
+                    "If you must proceed, pin exact hashes and perform manual "
+                    "review outside this tool.",
                 ],
             )
         )
@@ -353,7 +363,8 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     ][:3],
                 ],
                 remediation=[
-                    "Review the file-level errors to determine whether this is tampering, bad metadata, or a transient upstream problem.",
+                    "Review the file-level errors to determine whether this "
+                    "is tampering, bad metadata, or a transient upstream problem.",
                     "Do not treat the affected artifacts as verified.",
                 ],
             )
@@ -373,7 +384,8 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     f"Coverage status: {report.coverage.status}.",
                 ],
                 remediation=[
-                    "Require cryptographic verification for every artifact before promotion or deployment.",
+                    "Require cryptographic verification for every artifact "
+                    "before promotion or deployment.",
                     "Use `--strict` in automation so missing verification fails the run.",
                 ],
             )
@@ -389,11 +401,13 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     "from the provenance bundles."
                 ),
                 why=[
-                    "Provenance was present, but it did not yield repository or workflow identity details.",
+                    "Provenance was present, but it did not yield repository "
+                    "or workflow identity details.",
                     "That prevents source-to-artifact attribution.",
                 ],
                 remediation=[
-                    "Prefer releases whose provenance exposes publisher repository and workflow identity.",
+                    "Prefer releases whose provenance exposes publisher "
+                    "repository and workflow identity.",
                     "Review maintainer publishing configuration before trusting the artifacts.",
                 ],
             )
@@ -409,11 +423,13 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     "publisher repository or workflow."
                 ),
                 why=[
-                    "The verified sdist and wheel do not overlap on repository or workflow identity.",
+                    "The verified sdist and wheel do not overlap on "
+                    "repository or workflow identity.",
                 ],
                 remediation=[
                     "Inspect both artifacts separately before installation.",
-                    "Ask the maintainer why different build sources or workflows produced the release files.",
+                    "Ask the maintainer why different build sources or "
+                    "workflows produced the release files.",
                 ],
             )
         )
@@ -429,7 +445,8 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                 ),
                 why=[
                     f"Current release was compared to {report.release_drift.compared_to_version}.",
-                    f"Previous verified repositories: {', '.join(report.release_drift.previous_repositories) or 'unknown'}",
+                    "Previous verified repositories: "
+                    f"{', '.join(report.release_drift.previous_repositories) or 'unknown'}",
                 ],
                 remediation=[
                     "Confirm that a repository transfer, rename, or fork was intentional.",
@@ -449,10 +466,12 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                 ),
                 why=[
                     f"Current release was compared to {report.release_drift.compared_to_version}.",
-                    f"Previous verified workflows: {', '.join(report.release_drift.previous_workflows) or 'unknown'}",
+                    "Previous verified workflows: "
+                    f"{', '.join(report.release_drift.previous_workflows) or 'unknown'}",
                 ],
                 remediation=[
-                    "Review the workflow change to confirm it is an expected release pipeline update.",
+                    "Review the workflow change to confirm it is an expected "
+                    "release pipeline update.",
                     "Require an explicit approval step for packages with publisher workflow drift.",
                 ],
             )

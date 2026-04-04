@@ -232,7 +232,10 @@ def _recommendation_reasons(report: TrustReport) -> list[str]:
         reasons.extend(flag.message for flag in report.risk_flags[:3])
     if report.files and not all(file.verified for file in report.files):
         reasons.append(
-            f"Only {report.coverage.verified_files} of {report.coverage.total_files} discovered artifact(s) verified successfully."
+            "Only "
+            f"{report.coverage.verified_files} of "
+            f"{report.coverage.total_files} discovered artifact(s) "
+            "verified successfully."
         )
     elif report.files:
         reasons.append("Every discovered release artifact verified successfully.")
