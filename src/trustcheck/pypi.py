@@ -8,6 +8,10 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Callable
 from urllib import error, parse, request
 
+from pydantic import ValidationError
+
+from .schemas import ProjectResponsePayload, ProvenanceEnvelopePayload
+
 PYPI_BASE_URL = "https://pypi.org"
 JSON_ACCEPT = "application/json"
 INTEGRITY_ACCEPT = "application/vnd.pypi.integrity.v1+json"
@@ -55,19 +59,23 @@ class PypiClient:
             self._bytes_cache = {}
 
     def get_project(self, project: str) -> dict[str, Any]:
-        return self._get_json(f"/pypi/{parse.quote(project)}/json", accept=JSON_ACCEPT)
+        payload = self._get_json(f"/pypi/{parse.quote(project)}/json", accept=JSON_ACCEPT)
+        return self._validate_project_payload(payload, f"/pypi/{parse.quote(project)}/json")
 
     def get_release(self, project: str, version: str) -> dict[str, Any]:
         project_q = parse.quote(project)
         version_q = parse.quote(version)
-        return self._get_json(f"/pypi/{project_q}/{version_q}/json", accept=JSON_ACCEPT)
+        path = f"/pypi/{project_q}/{version_q}/json"
+        payload = self._get_json(path, accept=JSON_ACCEPT)
+        return self._validate_project_payload(payload, path)
 
     def get_provenance(self, project: str, version: str, filename: str) -> dict[str, Any]:
         project_q = parse.quote(project)
         version_q = parse.quote(version)
         filename_q = parse.quote(filename)
         path = f"/integrity/{project_q}/{version_q}/{filename_q}/provenance"
-        return self._get_json(path, accept=INTEGRITY_ACCEPT)
+        payload = self._get_json(path, accept=INTEGRITY_ACCEPT)
+        return self._validate_provenance_payload(payload, path)
 
     def download_distribution(self, url: str) -> bytes:
         if self._bytes_cache is not None and url in self._bytes_cache:
@@ -175,3 +183,27 @@ class PypiClient:
     def _emit(self, event: str, **payload: Any) -> None:
         if self.request_hook is not None:
             self.request_hook(event, payload)
+
+    def _validate_project_payload(self, payload: dict[str, Any], path: str) -> dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        try:
+            return ProjectResponsePayload.model_validate(payload).model_dump()
+        except ValidationError as exc:
+            raise PypiClientError(
+                f"PyPI returned an unexpected project response shape for {url}; "
+                "retrying is unlikely to help",
+                transient=False,
+                url=url,
+            ) from exc
+
+    def _validate_provenance_payload(self, payload: dict[str, Any], path: str) -> dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        try:
+            return ProvenanceEnvelopePayload.model_validate(payload).model_dump()
+        except ValidationError as exc:
+            raise PypiClientError(
+                f"PyPI returned an unexpected provenance response shape for {url}; "
+                "retrying is unlikely to help",
+                transient=False,
+                url=url,
+            ) from exc

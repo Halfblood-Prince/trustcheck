@@ -96,6 +96,26 @@ class PypiClientTests(unittest.TestCase):
             with self.assertRaisesRegex(PypiClientError, "malformed JSON"):
                 client.get_project("demo")
 
+    def test_unexpected_project_shape_is_handled_gracefully(self) -> None:
+        client = PypiClient(max_retries=0, sleep=lambda delay: None)
+
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            return_value=FakeResponse(json.dumps({"info": {"project_urls": []}}).encode()),
+        ):
+            with self.assertRaisesRegex(PypiClientError, "unexpected project response shape"):
+                client.get_project("demo")
+
+    def test_unexpected_provenance_shape_is_handled_gracefully(self) -> None:
+        client = PypiClient(max_retries=0, sleep=lambda delay: None)
+
+        with unittest.mock.patch(
+            "urllib.request.urlopen",
+            return_value=FakeResponse(json.dumps({"attestation_bundles": {}}).encode()),
+        ):
+            with self.assertRaisesRegex(PypiClientError, "unexpected provenance response shape"):
+                client.get_provenance("demo", "1.2.3", "demo.whl")
+
     def test_json_requests_are_cached(self) -> None:
         calls: list[str] = []
 
