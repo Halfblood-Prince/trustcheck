@@ -11,6 +11,8 @@ class RiskFlag:
     code: str
     severity: str
     message: str
+    why: list[str] = field(default_factory=list)
+    remediation: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

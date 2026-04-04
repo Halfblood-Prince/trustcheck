@@ -189,6 +189,11 @@ def _parse_publisher_identities(bundles: list[Any]) -> list[PublisherIdentity]:
 
 def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
     flags: list[RiskFlag] = []
+    total_files = report.coverage.total_files
+    verified_files = report.coverage.verified_files
+    files_with_errors = [file.filename for file in report.files if file.error]
+    files_without_provenance = [file.filename for file in report.files if not file.has_provenance]
+    unverified_files = [file.filename for file in report.files if not file.verified]
 
     if report.vulnerabilities:
         flags.append(
@@ -199,6 +204,18 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     f"PyPI reports {len(report.vulnerabilities)} known "
                     "vulnerability record(s) for this release."
                 ),
+                why=[
+                    f"PyPI returned {len(report.vulnerabilities)} vulnerability record(s) for this version.",
+                    *[
+                        f"{vuln.id}: {vuln.summary}"
+                        for vuln in report.vulnerabilities[:3]
+                    ],
+                ],
+                remediation=[
+                    "Review the linked advisories before installation.",
+                    "Prefer a fixed release if one is available.",
+                    "Isolate or block this package until the vulnerability status is understood.",
+                ],
             )
         )
 
@@ -211,6 +228,14 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     "The package does not expose an obvious repository URL "
                     "in project metadata."
                 ),
+                why=[
+                    "No supported source repository URL was found in the package metadata.",
+                    "That makes it harder to compare project metadata with publisher identity evidence.",
+                ],
+                remediation=[
+                    "Look for an official source repository outside PyPI before trusting the release.",
+                    "Prefer packages that publish a clear repository URL in project metadata.",
+                ],
             )
         )
 
@@ -239,6 +264,14 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                         "The expected repository does not match declared "
                         "project metadata or observed publisher identity hints."
                     ),
+                    why=[
+                        f"Expected repository: {expected}",
+                        "No declared repository URL or publisher identity matched that expectation.",
+                    ],
+                    remediation=[
+                        "Stop and confirm the package name and expected repository.",
+                        "Check whether the project moved to a new repository before proceeding.",
+                    ],
                 )
             )
         elif report.files and not verified_publisher_matches:
@@ -250,6 +283,14 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                         "No verified attestation binds the release artifact "
                         "to the expected repository."
                     ),
+                    why=[
+                        f"Expected repository: {expected}",
+                        "Matching repository hints may exist, but none were backed by a verified attestation.",
+                    ],
+                    remediation=[
+                        "Treat the release as unverified until a matching verified attestation exists.",
+                        "Confirm the release was produced from the expected repository and workflow.",
+                    ],
                 )
             )
 
@@ -262,6 +303,14 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     "No provenance bundles were found for the release files "
                     "on PyPI, so the artifacts cannot be verified."
                 ),
+                why=[
+                    f"Discovered {total_files} release artifact(s), and none exposed provenance bundles.",
+                    "Without provenance, cryptographic verification cannot be performed.",
+                ],
+                remediation=[
+                    "Prefer a release that publishes Trusted Publishing provenance.",
+                    "If you must proceed, pin exact hashes and perform manual review outside this tool.",
+                ],
             )
         )
 
@@ -274,6 +323,18 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     "Only some release artifacts have provenance or successful "
                     "verification coverage."
                 ),
+                why=[
+                    f"Verified {verified_files} of {total_files} discovered artifact(s).",
+                    *(
+                        [f"Missing provenance: {', '.join(files_without_provenance[:3])}"]
+                        if files_without_provenance
+                        else []
+                    ),
+                ],
+                remediation=[
+                    "Install only artifacts that verified successfully.",
+                    "Ask the maintainer to publish provenance for every release artifact.",
+                ],
             )
         )
 
@@ -283,6 +344,18 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                 code="provenance_verification_failed",
                 severity="high",
                 message="One or more release files have invalid or unverifiable provenance.",
+                why=[
+                    f"Verification failed for {len(files_with_errors)} artifact(s).",
+                    *[
+                        f"{file.filename}: {file.error}"
+                        for file in report.files
+                        if file.error
+                    ][:3],
+                ],
+                remediation=[
+                    "Review the file-level errors to determine whether this is tampering, bad metadata, or a transient upstream problem.",
+                    "Do not treat the affected artifacts as verified.",
+                ],
             )
         )
 
@@ -295,6 +368,14 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     "Every release artifact must have a valid attestation "
                     "bound to its exact digest and publisher identity."
                 ),
+                why=[
+                    f"{len(unverified_files)} artifact(s) were not fully verified.",
+                    f"Coverage status: {report.coverage.status}.",
+                ],
+                remediation=[
+                    "Require cryptographic verification for every artifact before promotion or deployment.",
+                    "Use `--strict` in automation so missing verification fails the run.",
+                ],
             )
         )
 
@@ -307,6 +388,14 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     "No Trusted Publisher identity information was recovered "
                     "from the provenance bundles."
                 ),
+                why=[
+                    "Provenance was present, but it did not yield repository or workflow identity details.",
+                    "That prevents source-to-artifact attribution.",
+                ],
+                remediation=[
+                    "Prefer releases whose provenance exposes publisher repository and workflow identity.",
+                    "Review maintainer publishing configuration before trusting the artifacts.",
+                ],
             )
         )
 
@@ -319,6 +408,13 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     "Verified sdist and wheel provenance do not agree on the "
                     "publisher repository or workflow."
                 ),
+                why=[
+                    "The verified sdist and wheel do not overlap on repository or workflow identity.",
+                ],
+                remediation=[
+                    "Inspect both artifacts separately before installation.",
+                    "Ask the maintainer why different build sources or workflows produced the release files.",
+                ],
             )
         )
 
@@ -331,6 +427,14 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     "Verified publisher repository differs from the previous "
                     "release, which may warrant review."
                 ),
+                why=[
+                    f"Current release was compared to {report.release_drift.compared_to_version}.",
+                    f"Previous verified repositories: {', '.join(report.release_drift.previous_repositories) or 'unknown'}",
+                ],
+                remediation=[
+                    "Confirm that a repository transfer, rename, or fork was intentional.",
+                    "Review release notes and maintainer communications before upgrading.",
+                ],
             )
         )
 
@@ -343,6 +447,14 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     "Verified publisher workflow differs from the previous "
                     "release."
                 ),
+                why=[
+                    f"Current release was compared to {report.release_drift.compared_to_version}.",
+                    f"Previous verified workflows: {', '.join(report.release_drift.previous_workflows) or 'unknown'}",
+                ],
+                remediation=[
+                    "Review the workflow change to confirm it is an expected release pipeline update.",
+                    "Require an explicit approval step for packages with publisher workflow drift.",
+                ],
             )
         )
 
