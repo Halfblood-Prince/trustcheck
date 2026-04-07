@@ -1,15 +1,12 @@
 Trustcheck Personal Use License
 
-Copyright (c) 2026 The Author
+Copyright (c) 2026 Halfblood-Prince
 All rights reserved.
 
 1. Grant of License
 
 Permission is granted to any individual to use this software for personal,
-private, non-commercial purposes only.
-
-For personal projects, this permission includes importing, installing, and
-using the unmodified software as a dependency.
+private, non-commercial purposes only. 
 
 2. Personal Use Restrictions
 
@@ -19,14 +16,8 @@ Personal use does not include any right to:
 - publish, sublicense, sell, rent, lease, or otherwise make the software
   available to any third party;
 - modify the software and distribute the modified version;
-- copy, paste, transplant, or embed source code from the software into a
-  personal project;
 - embed the software, or any substantial portion of its source code, into
   another project that is distributed to others.
-
-Any personal project that uses this software must retain this copyright
-statement and license notice in all copies of the software kept with that
-project.
 
 3. Commercial Use
 
