@@ -289,4 +289,4 @@ mypy src
 
 ## License
 
-BSD 3-Clause License
+[Trustcheck Personal Use License](LICENSE)
