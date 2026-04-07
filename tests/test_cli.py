@@ -95,6 +95,32 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("why this result: cryptographic verification succeeded", stdout.getvalue())
         self.assertIn("verification: 1/1 artifact(s) verified (all-verified)", stdout.getvalue())
         self.assertIn("publisher trust: strong", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_cli_text_output_emits_progress_to_stderr(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        def fake_inspect_package(*args, **kwargs):
+            progress_callback = kwargs["progress_callback"]
+            progress_callback("gridoptim-2.2.0-py3-none-any.whl", 1, 2)
+            progress_callback("gridoptim-2.2.0.tar.gz", 2, 2)
+            return make_report()
+
+        with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                exit_code = main(["inspect", "gridoptim"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertIn(
+            "[progress] verifying artifact 1/2: gridoptim-2.2.0-py3-none-any.whl",
+            stderr.getvalue(),
+        )
+        self.assertIn(
+            "[progress] verifying artifact 2/2: gridoptim-2.2.0.tar.gz",
+            stderr.getvalue(),
+        )
+        self.assertIn("trustcheck report for gridoptim 2.2.0", stdout.getvalue())
 
     def test_cli_success_json_output_contract(self) -> None:
         stdout = io.StringIO()
@@ -140,6 +166,23 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(report["files"][0]["observed_sha256"], "abc123")
         self.assertEqual(report["coverage"]["status"], "all-verified")
         self.assertEqual(report["publisher_trust"]["depth_label"], "strong")
+
+    def test_cli_json_output_does_not_emit_progress(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        def fake_inspect_package(*args, **kwargs):
+            self.assertIsNone(kwargs["progress_callback"])
+            return make_report()
+
+        with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                exit_code = main(["inspect", "gridoptim", "--format", "json"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertEqual(stderr.getvalue(), "")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["report"]["project"], "gridoptim")
 
     def test_cli_text_output_shows_file_errors_in_verbose_mode(self) -> None:
         report = make_report()

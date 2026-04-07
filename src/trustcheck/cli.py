@@ -61,10 +61,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if args.command == "inspect":
+            progress_callback = None
+            if args.format == "text":
+                progress_callback = _build_progress_callback()
             report = inspect_package(
                 args.project,
                 version=args.version,
                 expected_repository=args.expected_repo,
+                progress_callback=progress_callback,
             )
             if args.format == "json":
                 print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
@@ -101,6 +105,17 @@ def _handle_error(message: str, exit_code: int, *, debug: bool) -> int:
     if debug:
         traceback.print_exc(file=sys.stderr)
     return exit_code
+
+
+def _build_progress_callback():
+    def emit(filename: str, current: int, total: int) -> None:
+        print(
+            f"[progress] verifying artifact {current}/{total}: {filename}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    return emit
 
 
 def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:

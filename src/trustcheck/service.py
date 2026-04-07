@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
@@ -78,12 +79,16 @@ GITHUB_REPO_SUBPATHS = {
     "wiki",
 }
 
+ProgressCallback = Callable[[str, int, int], None]
+
+
 def inspect_package(
     project: str,
     *,
     version: str | None = None,
     expected_repository: str | None = None,
     client: PypiClient | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> TrustReport:
     client = client or PypiClient()
 
@@ -93,7 +98,13 @@ def inspect_package(
     declared_repository_urls = _extract_repository_urls(info.get("project_urls") or {})
     vulnerabilities = _parse_vulnerabilities(payload.get("vulnerabilities") or [])
     ownership = info.get("ownership") or {}
-    files = _collect_files(project, selected_version, payload, client)
+    files = _collect_files(
+        project,
+        selected_version,
+        payload,
+        client,
+        progress_callback=progress_callback,
+    )
 
     report = TrustReport(
         project=project,
@@ -126,12 +137,17 @@ def _collect_files(
     version: str,
     payload: dict[str, Any],
     client: PypiClient,
+    *,
+    progress_callback: ProgressCallback | None = None,
 ) -> list[FileProvenance]:
     urls = payload.get("urls") or []
     results: list[FileProvenance] = []
 
-    for item in urls:
+    total_files = len(urls)
+    for index, item in enumerate(urls, start=1):
         filename = item.get("filename") or ""
+        if progress_callback is not None:
+            progress_callback(filename, index, total_files)
         provenance = FileProvenance(
             filename=filename,
             url=item.get("url") or "",

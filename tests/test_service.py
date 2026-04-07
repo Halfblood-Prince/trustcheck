@@ -311,6 +311,66 @@ class InspectPackageTests(unittest.TestCase):
         ])
         self.assertTrue(all(file.verified for file in report.files))
 
+    def test_inspect_package_reports_progress_for_each_primary_artifact(self) -> None:
+        payload = make_project_payload(
+            urls=[
+                {
+                    "filename": "gridoptim-2.2.0-py3-none-any.whl",
+                    "url": "https://files.pythonhosted.org/packages/gridoptim.whl",
+                    "digests": {"sha256": "abc123"},
+                },
+                {
+                    "filename": "gridoptim-2.2.0.tar.gz",
+                    "url": "https://files.pythonhosted.org/packages/gridoptim.tar.gz",
+                    "digests": {"sha256": "def456"},
+                },
+            ],
+            releases={"2.1.0": [], "2.2.0": []},
+        )
+        previous_payload = make_project_payload(version="2.1.0")
+        client = FakeClient(
+            project_payload=payload,
+            release_payloads={
+                "2.1.0": previous_payload,
+                "2.2.0": payload,
+            },
+            download_map={
+                "https://files.pythonhosted.org/packages/gridoptim.whl": b"wheel",
+                "https://files.pythonhosted.org/packages/gridoptim.tar.gz": b"sdist",
+            },
+        )
+        provenance = make_provenance()
+        progress_events: list[tuple[str, int, int]] = []
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.side_effect = [
+                provenance,
+                provenance,
+                provenance,
+            ]
+            with patch("trustcheck.service.hashlib.sha256") as sha256:
+                sha256.side_effect = [
+                    SimpleNamespace(hexdigest=lambda: "abc123"),
+                    SimpleNamespace(hexdigest=lambda: "def456"),
+                    SimpleNamespace(hexdigest=lambda: "abc123"),
+                ]
+                inspect_package(
+                    "gridoptim",
+                    version="2.2.0",
+                    client=cast(Any, client),
+                    progress_callback=lambda filename, current, total: progress_events.append(
+                        (filename, current, total)
+                    ),
+                )
+
+        self.assertEqual(
+            progress_events,
+            [
+                ("gridoptim-2.2.0-py3-none-any.whl", 1, 2),
+                ("gridoptim-2.2.0.tar.gz", 2, 2),
+            ],
+        )
+
     def test_partial_provenance_coverage_is_high_risk(self) -> None:
         payload = make_project_payload(
             urls=[
