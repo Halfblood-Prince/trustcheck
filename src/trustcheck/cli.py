@@ -8,7 +8,7 @@ from typing import Sequence
 
 from .models import TrustReport
 from .pypi import PypiClientError
-from .service import inspect_package
+from .service import ProgressCallback, inspect_package
 
 EXIT_OK = 0
 EXIT_UPSTREAM_FAILURE = 1
@@ -107,7 +107,7 @@ def _handle_error(message: str, exit_code: int, *, debug: bool) -> int:
     return exit_code
 
 
-def _build_progress_callback():
+def _build_progress_callback() -> ProgressCallback:
     def emit(filename: str, current: int, total: int) -> None:
         print(
             f"[progress] verifying artifact {current}/{total}: {filename}",
