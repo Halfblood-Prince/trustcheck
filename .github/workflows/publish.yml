@@ -183,6 +183,11 @@ jobs:
           name: dist-${{ github.sha }}
           path: dist
 
+      - name: Prepare package upload directory
+        run: |
+          mkdir -p dist/packages
+          find dist -maxdepth 1 -type f \( -name "*.whl" -o -name "*.tar.gz" \) -exec cp {} dist/packages/ \;
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
