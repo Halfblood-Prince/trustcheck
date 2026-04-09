@@ -8,11 +8,11 @@ from unittest.mock import patch
 
 from pypi_attestations import VerificationError
 
-from trustcheck.models import RiskFlag, TrustReport
+from trustcheck.models import PolicyViolation, RiskFlag, TrustReport
+from trustcheck.policy import advisory_evaluation_for
 from trustcheck.pypi import PypiClientError
 from trustcheck.service import (
     _normalize_repo_url,
-    _recommendation_for,
     inspect_package,
 )
 
@@ -745,10 +745,18 @@ class InspectPackageTests(unittest.TestCase):
                 "gridoptim",
                 client=cast(Any, FakeClient(project_error=PypiClientError("boom"))),
             )
-        self.assertEqual(_recommendation_for(review_required), "review-required")
-        self.assertEqual(_recommendation_for(metadata_only), "review-required")
-        self.assertEqual(_recommendation_for(high_risk), "high-risk")
-        self.assertEqual(_recommendation_for(metadata_only_files), "metadata-only")
+        self.assertEqual(advisory_evaluation_for(review_required).violations[0].severity, "medium")
+        self.assertEqual(review_required.recommendation, "review-required")
+        self.assertEqual(metadata_only.recommendation, "review-required")
+        self.assertEqual(advisory_evaluation_for(high_risk).violations, [
+            PolicyViolation(
+                code="unverified_provenance",
+                severity="high",
+                message="artifact verification failed",
+            )
+        ])
+        self.assertEqual(high_risk.recommendation, "high-risk")
+        self.assertEqual(metadata_only_files.recommendation, "metadata-only")
 
     def test_inspect_package_rejects_tampered_artifact(self) -> None:
         client = FakeClient()

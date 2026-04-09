@@ -74,9 +74,10 @@ class PypiClientTests(unittest.TestCase):
         client = PypiClient(max_retries=3, sleep=lambda delay: None)
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            with self.assertRaisesRegex(PypiClientError, "retrying is unlikely to help"):
+            with self.assertRaises(PypiClientError) as ctx:
                 client.get_project("gridoptim")
 
+        self.assertEqual(ctx.exception.subcode, "http_not_found")
         self.assertEqual(len(attempts), 1)
 
     def test_url_errors_report_retry_hint(self) -> None:
@@ -126,8 +127,10 @@ class PypiClientTests(unittest.TestCase):
             "urllib.request.urlopen",
             side_effect=error.URLError(ssl.SSLError("certificate verify failed")),
         ):
-            with self.assertRaisesRegex(PypiClientError, "retrying is unlikely to help"):
+            with self.assertRaises(PypiClientError) as ctx:
                 client.get_project("gridoptim")
+
+        self.assertEqual(ctx.exception.subcode, "network_tls")
 
     def test_temporary_dns_error_is_retried(self) -> None:
         attempts: list[int] = []
@@ -166,8 +169,10 @@ class PypiClientTests(unittest.TestCase):
             "urllib.request.urlopen",
             return_value=FakeResponse(b"{not-json"),
         ):
-            with self.assertRaisesRegex(PypiClientError, "malformed JSON"):
+            with self.assertRaises(PypiClientError) as ctx:
                 client.get_project("gridoptim")
+
+        self.assertEqual(ctx.exception.subcode, "json_malformed")
 
     def test_unexpected_project_shape_is_handled_gracefully(self) -> None:
         client = PypiClient(max_retries=0, sleep=lambda delay: None)
@@ -247,3 +252,46 @@ class PypiClientTests(unittest.TestCase):
         self.assertIn("request", event_names)
         self.assertIn("failure", event_names)
         self.assertIn("retry", event_names)
+
+    def test_disk_cache_supports_offline_mode(self) -> None:
+        cache_store: dict[tuple[str, str | None], bytes] = {}
+
+        def read_cache(self: PypiClient, url: str, *, accept: str | None) -> bytes | None:
+            return cache_store.get((url, accept))
+
+        def write_cache(
+            self: PypiClient,
+            url: str,
+            payload: bytes,
+            *,
+            accept: str | None,
+        ) -> None:
+            cache_store[(url, accept)] = payload
+
+        with patch.object(PypiClient, "_read_disk_cache", read_cache), patch.object(
+            PypiClient,
+            "_write_disk_cache",
+            write_cache,
+        ):
+            client = PypiClient(cache_dir=".cache/test-cache")
+            with patch(
+                "urllib.request.urlopen",
+                return_value=FakeResponse(json.dumps({"info": {"version": "1.0.0"}}).encode()),
+            ):
+                payload = client.get_project("gridoptim")
+
+            self.assertEqual(payload["info"]["version"], "1.0.0")
+            self.assertTrue(cache_store)
+
+            offline_client = PypiClient(cache_dir=".cache/test-cache", offline=True)
+            offline_payload = offline_client.get_project("gridoptim")
+            self.assertEqual(offline_payload["info"]["version"], "1.0.0")
+
+    def test_offline_mode_reports_cache_miss_subcode(self) -> None:
+        with patch.object(PypiClient, "_read_disk_cache", return_value=None):
+            client = PypiClient(cache_dir=".cache/test-cache", offline=True)
+
+            with self.assertRaises(PypiClientError) as ctx:
+                client.get_project("gridoptim")
+
+        self.assertEqual(ctx.exception.subcode, "offline_cache_miss")

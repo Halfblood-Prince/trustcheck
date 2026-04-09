@@ -1,0 +1,9 @@
+{
+  "network": {
+    "timeout": 3.5,
+    "retries": 4,
+    "backoff_factor": 0.75,
+    "offline": true,
+    "cache_dir": ".cache/trustcheck"
+  }
+}

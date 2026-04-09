@@ -1,0 +1,138 @@
+{
+  "report": {
+    "coverage": {
+      "files_with_provenance": 1,
+      "status": "all-verified",
+      "total_files": 1,
+      "verified_files": 1
+    },
+    "declared_repository_urls": [
+      "https://github.com/example/demo"
+    ],
+    "diagnostics": {
+      "artifact_failures": [],
+      "backoff_factor": 0.25,
+      "cache_dir": null,
+      "cache_hit_count": 0,
+      "max_retries": 2,
+      "offline": false,
+      "request_count": 0,
+      "request_failures": [],
+      "retry_count": 0,
+      "timeout": 10.0
+    },
+    "expected_repository": "https://github.com/example/demo",
+    "files": [
+      {
+        "attestation_count": 1,
+        "error": null,
+        "filename": "demo-1.2.3-py3-none-any.whl",
+        "has_provenance": true,
+        "observed_sha256": "abc123",
+        "publisher_identities": [
+          {
+            "environment": "release",
+            "kind": "GitHub",
+            "raw": {
+              "repository": "example/demo"
+            },
+            "repository": "https://github.com/example/demo",
+            "workflow": ".github/workflows/release.yml"
+          }
+        ],
+        "sha256": "abc123",
+        "url": "https://files.pythonhosted.org/packages/demo.whl",
+        "verified": true,
+        "verified_attestation_count": 1
+      }
+    ],
+    "ownership": {
+      "organization": "example-org",
+      "roles": [
+        {
+          "role": "Owner",
+          "user": "maintainer"
+        }
+      ],
+      "support": "security@example.com"
+    },
+    "package_url": "https://pypi.org/project/demo/1.2.3/",
+    "policy": {
+      "allow_metadata_only": true,
+      "enforced": false,
+      "fail_on_severity": "none",
+      "passed": true,
+      "profile": "default",
+      "require_expected_repository_match": false,
+      "require_verified_provenance": "none",
+      "violations": [],
+      "vulnerability_mode": "ignore"
+    },
+    "project": "demo",
+    "provenance_consistency": {
+      "consistent_repositories": [],
+      "consistent_workflows": [],
+      "has_sdist": false,
+      "has_wheel": true,
+      "sdist_wheel_consistent": null
+    },
+    "publisher_trust": {
+      "depth_label": "strong",
+      "depth_score": 5,
+      "unique_verified_repositories": [
+        "https://github.com/example/demo"
+      ],
+      "unique_verified_workflows": [
+        ".github/workflows/release.yml"
+      ],
+      "verified_publishers": [
+        "GitHub:https://github.com/example/demo:.github/workflows/release.yml"
+      ]
+    },
+    "recommendation": "review-required",
+    "release_drift": {
+      "compared_to_version": "1.2.2",
+      "previous_repositories": [
+        "https://github.com/example/demo"
+      ],
+      "previous_workflows": [
+        ".github/workflows/release.yml"
+      ],
+      "publisher_repository_drift": false,
+      "publisher_workflow_drift": false
+    },
+    "repository_urls": [
+      "https://github.com/example/demo"
+    ],
+    "risk_flags": [
+      {
+        "code": "manual_review",
+        "message": "Review publisher change window.",
+        "remediation": [
+          "Require reviewer sign-off."
+        ],
+        "severity": "medium",
+        "why": [
+          "Change landed recently."
+        ]
+      }
+    ],
+    "summary": "Demo package",
+    "version": "1.2.3",
+    "vulnerabilities": [
+      {
+        "aliases": [
+          "CVE-2026-0001"
+        ],
+        "fixed_in": [
+          "1.2.4"
+        ],
+        "id": "PYSEC-2026-1",
+        "link": "https://example.com/advisory",
+        "source": "PyPI",
+        "summary": "Example vuln"
+      }
+    ]
+  },
+  "schema_version": "1.2.0"
+}

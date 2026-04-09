@@ -46,3 +46,15 @@ files = ["src"]
 strict = true
 warn_unused_configs = true
 pretty = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["trustcheck"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true

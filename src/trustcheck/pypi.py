@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import socket
 import ssl
 import time
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Any, Callable
 from urllib import error, parse, request
 
@@ -58,11 +60,15 @@ class PypiClientError(RuntimeError):
         transient: bool = False,
         status_code: int | None = None,
         url: str | None = None,
+        code: str = "upstream",
+        subcode: str = "unknown",
     ) -> None:
         super().__init__(message)
         self.transient = transient
         self.status_code = status_code
         self.url = url
+        self.code = code
+        self.subcode = subcode
 
 
 @dataclass(slots=True)
@@ -73,6 +79,8 @@ class PypiClient:
     max_retries: int = 2
     backoff_factor: float = 0.25
     enable_cache: bool = True
+    cache_dir: str | None = None
+    offline: bool = False
     request_hook: Callable[[str, dict[str, Any]], None] | None = None
     sleep: Callable[[float], None] = time.sleep
     _json_cache: dict[tuple[str, str], dict[str, Any]] | None = None
@@ -82,6 +90,8 @@ class PypiClient:
         if self.enable_cache:
             self._json_cache = {}
             self._bytes_cache = {}
+        if self.cache_dir:
+            Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
 
     def get_project(self, project: str) -> dict[str, Any]:
         payload = self._get_json(f"/pypi/{parse.quote(project)}/json", accept=JSON_ACCEPT)
@@ -118,27 +128,33 @@ class PypiClient:
         if self._json_cache is not None and cache_key in self._json_cache:
             self._emit("cache_hit", url=url, kind="json")
             return self._json_cache[cache_key]
+        disk_cached = self._read_disk_cache(url, accept=accept)
+        if disk_cached is not None:
+            payload = self._decode_json_payload(disk_cached, url)
+            if self._json_cache is not None:
+                self._json_cache[cache_key] = payload
+            return payload
 
         payload_bytes = self._request_bytes(url, accept=accept)
-        try:
-            payload = json.loads(payload_bytes)
-        except json.JSONDecodeError as exc:
-            raise PypiClientError(
-                f"PyPI returned malformed JSON for {url}; retrying is unlikely to help",
-                transient=False,
-                url=url,
-            ) from exc
-        if not isinstance(payload, dict):
-            raise PypiClientError(
-                f"PyPI returned a non-object JSON response for {url}; retrying is unlikely to help",
-                transient=False,
-                url=url,
-            )
+        payload = self._decode_json_payload(payload_bytes, url)
         if self._json_cache is not None:
             self._json_cache[cache_key] = payload
+        self._write_disk_cache(url, payload_bytes, accept=accept)
         return payload
 
     def _request_bytes(self, url: str, *, accept: str | None = None) -> bytes:
+        if self.offline:
+            cached = self._read_disk_cache(url, accept=accept)
+            if cached is not None:
+                return cached
+            raise PypiClientError(
+                f"offline mode enabled and no cached response is available for {url}",
+                transient=False,
+                url=url,
+                code="upstream",
+                subcode="offline_cache_miss",
+            )
+
         headers = {"User-Agent": self.user_agent}
         if accept:
             headers["Accept"] = accept
@@ -155,6 +171,7 @@ class PypiClient:
                         attempt=attempt + 1,
                         status=getattr(response, "status", None),
                     )
+                    self._write_disk_cache(url, payload, accept=accept)
                     return payload
             except (TimeoutError, socket.timeout) as exc:
                 client_error = self._timeout_error(exc, url)
@@ -169,6 +186,9 @@ class PypiClient:
                 attempt=attempt + 1,
                 transient=client_error.transient,
                 message=str(client_error),
+                code=client_error.code,
+                subcode=client_error.subcode,
+                status_code=client_error.status_code,
             )
             if not client_error.transient or attempt == self.max_retries:
                 raise client_error
@@ -185,6 +205,8 @@ class PypiClient:
                 transient=False,
                 status_code=exc.code,
                 url=url,
+                code="upstream",
+                subcode="http_not_found",
             )
         transient = exc.code in TRANSIENT_HTTP_STATUS_CODES
         retry_hint = "retrying may help" if transient else "retrying is unlikely to help"
@@ -193,6 +215,8 @@ class PypiClient:
             transient=transient,
             status_code=exc.code,
             url=url,
+            code="upstream",
+            subcode="http_transient" if transient else "http_error",
         )
 
     def _timeout_error(self, exc: BaseException, url: str) -> PypiClientError:
@@ -200,12 +224,15 @@ class PypiClient:
             f"unable to reach PyPI: {exc}; retrying may help",
             transient=True,
             url=url,
+            code="upstream",
+            subcode="network_timeout",
         )
 
     def _url_error(self, exc: error.URLError, url: str) -> PypiClientError:
         reason = self._unwrap_url_error_reason(exc.reason)
         transient = self._is_transient_network_reason(reason)
         reason_text = self._format_network_reason(reason)
+        subcode = self._network_subcode(reason, transient)
         return PypiClientError(
             (
                 f"unable to reach PyPI: {reason_text}; "
@@ -213,6 +240,8 @@ class PypiClient:
             ),
             transient=transient,
             url=url,
+            code="upstream",
+            subcode=subcode,
         )
 
     def _unwrap_url_error_reason(self, reason: object) -> object:
@@ -251,9 +280,61 @@ class PypiClient:
         text = str(reason).strip()
         return text or reason.__class__.__name__
 
+    def _network_subcode(self, reason: object, transient: bool) -> str:
+        if isinstance(reason, ssl.SSLError):
+            return "network_tls"
+        if isinstance(reason, socket.gaierror):
+            return "network_dns_temporary" if transient else "network_dns_failure"
+        reason_text = str(reason).strip().lower()
+        if "connection refused" in reason_text:
+            return "network_connection_refused"
+        return "network_transient" if transient else "network_error"
+
     def _emit(self, event: str, **payload: Any) -> None:
         if self.request_hook is not None:
             self.request_hook(event, payload)
+
+    def _decode_json_payload(self, payload_bytes: bytes, url: str) -> dict[str, Any]:
+        try:
+            payload = json.loads(payload_bytes)
+        except json.JSONDecodeError as exc:
+            raise PypiClientError(
+                f"PyPI returned malformed JSON for {url}; retrying is unlikely to help",
+                transient=False,
+                url=url,
+                code="upstream",
+                subcode="json_malformed",
+            ) from exc
+        if not isinstance(payload, dict):
+            raise PypiClientError(
+                f"PyPI returned a non-object JSON response for {url}; retrying is unlikely to help",
+                transient=False,
+                url=url,
+                code="upstream",
+                subcode="json_non_object",
+            )
+        return payload
+
+    def _cache_path(self, url: str, *, accept: str | None) -> Path | None:
+        if not self.cache_dir:
+            return None
+        digest = hashlib.sha256(f"{accept or ''}|{url}".encode("utf-8")).hexdigest()
+        suffix = ".json" if accept else ".bin"
+        return Path(self.cache_dir) / f"{digest}{suffix}"
+
+    def _read_disk_cache(self, url: str, *, accept: str | None) -> bytes | None:
+        cache_path = self._cache_path(url, accept=accept)
+        if cache_path is None or not cache_path.exists():
+            return None
+        self._emit("cache_hit", url=url, kind="disk", cache_path=str(cache_path))
+        return cache_path.read_bytes()
+
+    def _write_disk_cache(self, url: str, payload: bytes, *, accept: str | None) -> None:
+        cache_path = self._cache_path(url, accept=accept)
+        if cache_path is None:
+            return
+        cache_path.write_bytes(payload)
+        self._emit("cache_store", url=url, kind="disk", cache_path=str(cache_path), size=len(payload))
 
     def _validate_project_payload(self, payload: dict[str, Any], path: str) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
@@ -265,6 +346,8 @@ class PypiClient:
                 "retrying is unlikely to help",
                 transient=False,
                 url=url,
+                code="upstream",
+                subcode="project_shape_invalid",
             ) from exc
 
     def _validate_provenance_payload(self, payload: dict[str, Any], path: str) -> dict[str, Any]:
@@ -277,4 +360,6 @@ class PypiClient:
                 "retrying is unlikely to help",
                 transient=False,
                 url=url,
+                code="upstream",
+                subcode="provenance_shape_invalid",
             ) from exc

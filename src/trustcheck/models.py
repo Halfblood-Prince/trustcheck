@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
-
-JSON_SCHEMA_VERSION = "1"
 
 
 @dataclass(slots=True)
@@ -84,6 +82,60 @@ class ReleaseDriftSummary:
 
 
 @dataclass(slots=True)
+class PolicyViolation:
+    code: str
+    severity: str
+    message: str
+
+
+@dataclass(slots=True)
+class PolicyEvaluation:
+    profile: str = "default"
+    passed: bool = True
+    enforced: bool = False
+    fail_on_severity: str = "none"
+    require_verified_provenance: str = "none"
+    require_expected_repository_match: bool = False
+    allow_metadata_only: bool = True
+    vulnerability_mode: str = "ignore"
+    violations: list[PolicyViolation] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class RequestFailureDiagnostic:
+    url: str
+    attempt: int
+    code: str
+    subcode: str
+    message: str
+    transient: bool
+    status_code: int | None = None
+
+
+@dataclass(slots=True)
+class ArtifactDiagnostic:
+    filename: str
+    stage: str
+    code: str
+    subcode: str
+    message: str
+
+
+@dataclass(slots=True)
+class ReportDiagnostics:
+    timeout: float = 10.0
+    max_retries: int = 2
+    backoff_factor: float = 0.25
+    offline: bool = False
+    cache_dir: str | None = None
+    request_count: int = 0
+    retry_count: int = 0
+    cache_hit_count: int = 0
+    request_failures: list[RequestFailureDiagnostic] = field(default_factory=list)
+    artifact_failures: list[ArtifactDiagnostic] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class TrustReport:
     project: str
     version: str
@@ -101,9 +153,10 @@ class TrustReport:
     release_drift: ReleaseDriftSummary = field(default_factory=ReleaseDriftSummary)
     risk_flags: list[RiskFlag] = field(default_factory=list)
     recommendation: str = "metadata-only"
+    policy: PolicyEvaluation = field(default_factory=PolicyEvaluation)
+    diagnostics: ReportDiagnostics = field(default_factory=ReportDiagnostics)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "schema_version": JSON_SCHEMA_VERSION,
-            "report": asdict(self),
-        }
+        from .contract import serialize_report
+
+        return serialize_report(self)

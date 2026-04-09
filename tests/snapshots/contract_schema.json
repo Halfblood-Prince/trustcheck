@@ -1,0 +1,817 @@
+{
+  "$defs": {
+    "ArtifactDiagnosticPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "filename": {
+          "title": "Filename",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string"
+        },
+        "subcode": {
+          "title": "Subcode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "filename",
+        "stage",
+        "code",
+        "subcode",
+        "message"
+      ],
+      "title": "ArtifactDiagnosticPayload",
+      "type": "object"
+    },
+    "CoverageSummaryPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "files_with_provenance": {
+          "default": 0,
+          "title": "Files With Provenance",
+          "type": "integer"
+        },
+        "status": {
+          "default": "none",
+          "title": "Status",
+          "type": "string"
+        },
+        "total_files": {
+          "default": 0,
+          "title": "Total Files",
+          "type": "integer"
+        },
+        "verified_files": {
+          "default": 0,
+          "title": "Verified Files",
+          "type": "integer"
+        }
+      },
+      "title": "CoverageSummaryPayload",
+      "type": "object"
+    },
+    "FileProvenancePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attestation_count": {
+          "default": 0,
+          "title": "Attestation Count",
+          "type": "integer"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "filename": {
+          "title": "Filename",
+          "type": "string"
+        },
+        "has_provenance": {
+          "title": "Has Provenance",
+          "type": "boolean"
+        },
+        "observed_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed Sha256"
+        },
+        "publisher_identities": {
+          "items": {
+            "$ref": "#/$defs/PublisherIdentityPayload"
+          },
+          "title": "Publisher Identities",
+          "type": "array"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "verified": {
+          "default": false,
+          "title": "Verified",
+          "type": "boolean"
+        },
+        "verified_attestation_count": {
+          "default": 0,
+          "title": "Verified Attestation Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "filename",
+        "url",
+        "has_provenance"
+      ],
+      "title": "FileProvenancePayload",
+      "type": "object"
+    },
+    "OwnershipPayload": {
+      "additionalProperties": true,
+      "properties": {
+        "organization": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Organization"
+        },
+        "roles": {
+          "items": {
+            "$ref": "#/$defs/OwnershipRolePayload"
+          },
+          "title": "Roles",
+          "type": "array"
+        }
+      },
+      "title": "OwnershipPayload",
+      "type": "object"
+    },
+    "OwnershipRolePayload": {
+      "additionalProperties": true,
+      "properties": {
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "user": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User"
+        }
+      },
+      "title": "OwnershipRolePayload",
+      "type": "object"
+    },
+    "PolicyEvaluationPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_metadata_only": {
+          "default": true,
+          "title": "Allow Metadata Only",
+          "type": "boolean"
+        },
+        "enforced": {
+          "default": false,
+          "title": "Enforced",
+          "type": "boolean"
+        },
+        "fail_on_severity": {
+          "default": "none",
+          "title": "Fail On Severity",
+          "type": "string"
+        },
+        "passed": {
+          "default": true,
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "profile": {
+          "default": "default",
+          "title": "Profile",
+          "type": "string"
+        },
+        "require_expected_repository_match": {
+          "default": false,
+          "title": "Require Expected Repository Match",
+          "type": "boolean"
+        },
+        "require_verified_provenance": {
+          "default": "none",
+          "title": "Require Verified Provenance",
+          "type": "string"
+        },
+        "violations": {
+          "items": {
+            "$ref": "#/$defs/PolicyViolationPayload"
+          },
+          "title": "Violations",
+          "type": "array"
+        },
+        "vulnerability_mode": {
+          "default": "ignore",
+          "title": "Vulnerability Mode",
+          "type": "string"
+        }
+      },
+      "title": "PolicyEvaluationPayload",
+      "type": "object"
+    },
+    "PolicyViolationPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
+      "title": "PolicyViolationPayload",
+      "type": "object"
+    },
+    "ProvenanceConsistencyPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "consistent_repositories": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Consistent Repositories",
+          "type": "array"
+        },
+        "consistent_workflows": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Consistent Workflows",
+          "type": "array"
+        },
+        "has_sdist": {
+          "default": false,
+          "title": "Has Sdist",
+          "type": "boolean"
+        },
+        "has_wheel": {
+          "default": false,
+          "title": "Has Wheel",
+          "type": "boolean"
+        },
+        "sdist_wheel_consistent": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sdist Wheel Consistent"
+        }
+      },
+      "title": "ProvenanceConsistencyPayload",
+      "type": "object"
+    },
+    "PublisherIdentityPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "environment": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Environment"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "raw": {
+          "additionalProperties": true,
+          "title": "Raw",
+          "type": "object"
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repository"
+        },
+        "workflow": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workflow"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "PublisherIdentityPayload",
+      "type": "object"
+    },
+    "PublisherTrustSummaryPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "depth_label": {
+          "default": "none",
+          "title": "Depth Label",
+          "type": "string"
+        },
+        "depth_score": {
+          "default": 0,
+          "title": "Depth Score",
+          "type": "integer"
+        },
+        "unique_verified_repositories": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unique Verified Repositories",
+          "type": "array"
+        },
+        "unique_verified_workflows": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unique Verified Workflows",
+          "type": "array"
+        },
+        "verified_publishers": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Verified Publishers",
+          "type": "array"
+        }
+      },
+      "title": "PublisherTrustSummaryPayload",
+      "type": "object"
+    },
+    "ReleaseDriftSummaryPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "compared_to_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Compared To Version"
+        },
+        "previous_repositories": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Previous Repositories",
+          "type": "array"
+        },
+        "previous_workflows": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Previous Workflows",
+          "type": "array"
+        },
+        "publisher_repository_drift": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Publisher Repository Drift"
+        },
+        "publisher_workflow_drift": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Publisher Workflow Drift"
+        }
+      },
+      "title": "ReleaseDriftSummaryPayload",
+      "type": "object"
+    },
+    "ReportDiagnosticsPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_failures": {
+          "items": {
+            "$ref": "#/$defs/ArtifactDiagnosticPayload"
+          },
+          "title": "Artifact Failures",
+          "type": "array"
+        },
+        "backoff_factor": {
+          "default": 0.25,
+          "title": "Backoff Factor",
+          "type": "number"
+        },
+        "cache_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Dir"
+        },
+        "cache_hit_count": {
+          "default": 0,
+          "title": "Cache Hit Count",
+          "type": "integer"
+        },
+        "max_retries": {
+          "default": 2,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "offline": {
+          "default": false,
+          "title": "Offline",
+          "type": "boolean"
+        },
+        "request_count": {
+          "default": 0,
+          "title": "Request Count",
+          "type": "integer"
+        },
+        "request_failures": {
+          "items": {
+            "$ref": "#/$defs/RequestFailureDiagnosticPayload"
+          },
+          "title": "Request Failures",
+          "type": "array"
+        },
+        "retry_count": {
+          "default": 0,
+          "title": "Retry Count",
+          "type": "integer"
+        },
+        "timeout": {
+          "default": 10.0,
+          "title": "Timeout",
+          "type": "number"
+        }
+      },
+      "title": "ReportDiagnosticsPayload",
+      "type": "object"
+    },
+    "RequestFailureDiagnosticPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "status_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status Code"
+        },
+        "subcode": {
+          "title": "Subcode",
+          "type": "string"
+        },
+        "transient": {
+          "title": "Transient",
+          "type": "boolean"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "attempt",
+        "code",
+        "subcode",
+        "message",
+        "transient"
+      ],
+      "title": "RequestFailureDiagnosticPayload",
+      "type": "object"
+    },
+    "RiskFlagPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "remediation": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Remediation",
+          "type": "array"
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string"
+        },
+        "why": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Why",
+          "type": "array"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
+      "title": "RiskFlagPayload",
+      "type": "object"
+    },
+    "TrustReportPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/CoverageSummaryPayload"
+        },
+        "declared_repository_urls": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Declared Repository Urls",
+          "type": "array"
+        },
+        "diagnostics": {
+          "$ref": "#/$defs/ReportDiagnosticsPayload"
+        },
+        "expected_repository": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Repository"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/FileProvenancePayload"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "ownership": {
+          "$ref": "#/$defs/OwnershipPayload"
+        },
+        "package_url": {
+          "title": "Package Url",
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/PolicyEvaluationPayload"
+        },
+        "project": {
+          "title": "Project",
+          "type": "string"
+        },
+        "provenance_consistency": {
+          "$ref": "#/$defs/ProvenanceConsistencyPayload"
+        },
+        "publisher_trust": {
+          "$ref": "#/$defs/PublisherTrustSummaryPayload"
+        },
+        "recommendation": {
+          "default": "metadata-only",
+          "title": "Recommendation",
+          "type": "string"
+        },
+        "release_drift": {
+          "$ref": "#/$defs/ReleaseDriftSummaryPayload"
+        },
+        "repository_urls": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Repository Urls",
+          "type": "array"
+        },
+        "risk_flags": {
+          "items": {
+            "$ref": "#/$defs/RiskFlagPayload"
+          },
+          "title": "Risk Flags",
+          "type": "array"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        },
+        "vulnerabilities": {
+          "items": {
+            "$ref": "#/$defs/VulnerabilityRecordPayload"
+          },
+          "title": "Vulnerabilities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "project",
+        "version",
+        "package_url"
+      ],
+      "title": "TrustReportPayload",
+      "type": "object"
+    },
+    "VulnerabilityRecordPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Aliases",
+          "type": "array"
+        },
+        "fixed_in": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fixed In",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "link": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Link"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "summary"
+      ],
+      "title": "VulnerabilityRecordPayload",
+      "type": "object"
+    }
+  },
+  "$id": "urn:trustcheck:report:1.2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "report": {
+      "$ref": "#/$defs/TrustReportPayload"
+    },
+    "schema_version": {
+      "const": "1.2.0",
+      "default": "1.2.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "report"
+  ],
+  "title": "trustcheck report envelope",
+  "type": "object"
+}

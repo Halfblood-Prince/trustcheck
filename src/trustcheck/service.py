@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Callable
+from contextlib import contextmanager
 from typing import Any
 from urllib.parse import urlparse
 
@@ -11,8 +12,11 @@ from pypi_attestations import Distribution as AttestedDistribution
 from pypi_attestations import Provenance, VerificationError
 
 from .models import (
+    ArtifactDiagnostic,
     CoverageSummary,
     FileProvenance,
+    ReportDiagnostics,
+    RequestFailureDiagnostic,
     ProvenanceConsistency,
     PublisherIdentity,
     PublisherTrustSummary,
@@ -21,6 +25,7 @@ from .models import (
     TrustReport,
     VulnerabilityRecord,
 )
+from .policy import advisory_evaluation_for
 from .pypi import PypiClient, PypiClientError
 
 GITHUB_RESERVED_SEGMENTS = {
@@ -82,6 +87,72 @@ GITHUB_REPO_SUBPATHS = {
 ProgressCallback = Callable[[str, int, int], None]
 
 
+class DiagnosticsCollector:
+    def __init__(self) -> None:
+        self.request_count = 0
+        self.retry_count = 0
+        self.cache_hit_count = 0
+        self.request_failures: list[RequestFailureDiagnostic] = []
+        self.artifact_failures: list[ArtifactDiagnostic] = []
+
+    def on_request_event(self, event: str, payload: dict[str, Any]) -> None:
+        if event == "request":
+            self.request_count += 1
+        elif event == "retry":
+            self.retry_count += 1
+        elif event == "cache_hit":
+            self.cache_hit_count += 1
+        elif event == "failure":
+            self.request_failures.append(
+                RequestFailureDiagnostic(
+                    url=str(payload.get("url") or ""),
+                    attempt=int(payload.get("attempt") or 0),
+                    code=str(payload.get("code") or "upstream"),
+                    subcode=str(payload.get("subcode") or "unknown"),
+                    message=str(payload.get("message") or ""),
+                    transient=bool(payload.get("transient")),
+                    status_code=(
+                        int(payload["status_code"])
+                        if payload.get("status_code") is not None
+                        else None
+                    ),
+                )
+            )
+
+    def add_artifact_failure(
+        self,
+        *,
+        filename: str,
+        stage: str,
+        code: str,
+        subcode: str,
+        message: str,
+    ) -> None:
+        self.artifact_failures.append(
+            ArtifactDiagnostic(
+                filename=filename,
+                stage=stage,
+                code=code,
+                subcode=subcode,
+                message=message,
+            )
+        )
+
+    def to_report_diagnostics(self, client: PypiClient) -> ReportDiagnostics:
+        return ReportDiagnostics(
+            timeout=float(getattr(client, "timeout", 10.0)),
+            max_retries=int(getattr(client, "max_retries", 2)),
+            backoff_factor=float(getattr(client, "backoff_factor", 0.25)),
+            offline=bool(getattr(client, "offline", False)),
+            cache_dir=getattr(client, "cache_dir", None),
+            request_count=self.request_count,
+            retry_count=self.retry_count,
+            cache_hit_count=self.cache_hit_count,
+            request_failures=self.request_failures,
+            artifact_failures=self.artifact_failures,
+        )
+
+
 def inspect_package(
     project: str,
     *,
@@ -91,45 +162,50 @@ def inspect_package(
     progress_callback: ProgressCallback | None = None,
 ) -> TrustReport:
     client = client or PypiClient()
+    diagnostics = DiagnosticsCollector()
 
-    payload = client.get_release(project, version) if version else client.get_project(project)
-    info = payload.get("info", {})
-    selected_version = payload.get("info", {}).get("version") or version or "unknown"
-    declared_repository_urls = _extract_repository_urls(info.get("project_urls") or {})
-    vulnerabilities = _parse_vulnerabilities(payload.get("vulnerabilities") or [])
-    ownership = info.get("ownership") or {}
-    files = _collect_files(
-        project,
-        selected_version,
-        payload,
-        client,
-        progress_callback=progress_callback,
-    )
-
-    report = TrustReport(
-        project=project,
-        version=selected_version,
-        summary=info.get("summary"),
-        package_url=f"https://pypi.org/project/{project}/{selected_version}/",
-        declared_repository_urls=declared_repository_urls,
-        repository_urls=declared_repository_urls,
-        expected_repository=expected_repository,
-        ownership=ownership,
-        vulnerabilities=vulnerabilities,
-        files=files,
-        coverage=_build_coverage_summary(files),
-        publisher_trust=_build_publisher_trust_summary(files),
-        provenance_consistency=_build_provenance_consistency(files),
-        release_drift=_build_release_drift_summary(
+    with _instrument_client(client, diagnostics.on_request_event):
+        payload = client.get_release(project, version) if version else client.get_project(project)
+        info = payload.get("info", {})
+        selected_version = payload.get("info", {}).get("version") or version or "unknown"
+        declared_repository_urls = _extract_repository_urls(info.get("project_urls") or {})
+        vulnerabilities = _parse_vulnerabilities(payload.get("vulnerabilities") or [])
+        ownership = info.get("ownership") or {}
+        files = _collect_files(
             project,
             selected_version,
+            payload,
             client,
-            current_files=files,
-        ),
-    )
-    report.risk_flags = _build_risk_flags(report)
-    report.recommendation = _recommendation_for(report)
-    return report
+            progress_callback=progress_callback,
+            diagnostics=diagnostics,
+        )
+
+        report = TrustReport(
+            project=project,
+            version=selected_version,
+            summary=info.get("summary"),
+            package_url=f"https://pypi.org/project/{project}/{selected_version}/",
+            declared_repository_urls=declared_repository_urls,
+            repository_urls=declared_repository_urls,
+            expected_repository=expected_repository,
+            ownership=ownership,
+            vulnerabilities=vulnerabilities,
+            files=files,
+            coverage=_build_coverage_summary(files),
+            publisher_trust=_build_publisher_trust_summary(files),
+            provenance_consistency=_build_provenance_consistency(files),
+            release_drift=_build_release_drift_summary(
+                project,
+                selected_version,
+                client,
+                current_files=files,
+            ),
+            diagnostics=diagnostics.to_report_diagnostics(client),
+        )
+        report.risk_flags = _build_risk_flags(report)
+        advisory_evaluation_for(report)
+        report.diagnostics = diagnostics.to_report_diagnostics(client)
+        return report
 
 
 def _collect_files(
@@ -139,6 +215,7 @@ def _collect_files(
     client: PypiClient,
     *,
     progress_callback: ProgressCallback | None = None,
+    diagnostics: DiagnosticsCollector | None = None,
 ) -> list[FileProvenance]:
     urls = payload.get("urls") or []
     results: list[FileProvenance] = []
@@ -180,12 +257,55 @@ def _collect_files(
                 raise VerificationError("no attestations were successfully verified")
         except PypiClientError as exc:
             provenance.error = str(exc)
+            if diagnostics is not None:
+                diagnostics.add_artifact_failure(
+                    filename=filename,
+                    stage="provenance-fetch",
+                    code=exc.code,
+                    subcode=exc.subcode,
+                    message=str(exc),
+                )
         except VerificationError as exc:
             provenance.error = str(exc)
+            if diagnostics is not None:
+                diagnostics.add_artifact_failure(
+                    filename=filename,
+                    stage="verification",
+                    code="verification",
+                    subcode="attestation_verification_failed",
+                    message=str(exc),
+                )
         except Exception as exc:
             provenance.error = f"attestation verification failed: {exc}"
+            if diagnostics is not None:
+                diagnostics.add_artifact_failure(
+                    filename=filename,
+                    stage="verification",
+                    code="verification",
+                    subcode="unexpected_verification_error",
+                    message=str(exc),
+                )
         results.append(provenance)
     return results
+
+
+@contextmanager
+def _instrument_client(
+    client: PypiClient,
+    hook: Callable[[str, dict[str, Any]], None],
+):
+    previous_hook = getattr(client, "request_hook", None)
+
+    def combined(event: str, payload: dict[str, Any]) -> None:
+        hook(event, payload)
+        if previous_hook is not None:
+            previous_hook(event, payload)
+
+    client.request_hook = combined
+    try:
+        yield
+    finally:
+        client.request_hook = previous_hook
 
 
 def _parse_vulnerabilities(items: list[dict[str, Any]]) -> list[VulnerabilityRecord]:
@@ -573,16 +693,6 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
         )
 
     return flags
-
-
-def _recommendation_for(report: TrustReport) -> str:
-    if any(flag.severity == "high" for flag in report.risk_flags):
-        return "high-risk"
-    if report.files and all(file.verified for file in report.files):
-        return "verified"
-    if any(flag.severity == "medium" for flag in report.risk_flags):
-        return "review-required"
-    return "metadata-only"
 
 
 def _normalize_repo_url(url: str | None) -> str:

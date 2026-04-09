@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import unittest
+from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
@@ -13,10 +14,11 @@ from trustcheck.cli import (
     EXIT_UPSTREAM_FAILURE,
     main,
 )
+from trustcheck.contract import JSON_SCHEMA_VERSION
 from trustcheck.models import (
-    JSON_SCHEMA_VERSION,
     CoverageSummary,
     FileProvenance,
+    ReportDiagnostics,
     ProvenanceConsistency,
     PublisherTrustSummary,
     ReleaseDriftSummary,
@@ -75,6 +77,7 @@ def make_report() -> TrustReport:
         release_drift=ReleaseDriftSummary(),
         risk_flags=[],
         recommendation="verified",
+        diagnostics=ReportDiagnostics(),
     )
 
 
@@ -95,6 +98,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("why this result: cryptographic verification succeeded", stdout.getvalue())
         self.assertIn("verification: 1/1 artifact(s) verified (all-verified)", stdout.getvalue())
         self.assertIn("publisher trust: strong", stdout.getvalue())
+        self.assertIn("diagnostics: requests=0 retries=0 failures=0 cache_hits=0", stdout.getvalue())
         self.assertEqual(stderr.getvalue(), "")
 
     def test_cli_text_output_emits_progress_to_stderr(self) -> None:
@@ -141,10 +145,12 @@ class CliBehaviorTests(unittest.TestCase):
             [
                 "coverage",
                 "declared_repository_urls",
+                "diagnostics",
                 "expected_repository",
                 "files",
                 "ownership",
                 "package_url",
+                "policy",
                 "project",
                 "provenance_consistency",
                 "publisher_trust",
@@ -166,6 +172,9 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(report["files"][0]["observed_sha256"], "abc123")
         self.assertEqual(report["coverage"]["status"], "all-verified")
         self.assertEqual(report["publisher_trust"]["depth_label"], "strong")
+        self.assertEqual(report["policy"]["profile"], "default")
+        self.assertEqual(report["policy"]["passed"], True)
+        self.assertEqual(report["diagnostics"]["request_count"], 0)
 
     def test_cli_json_output_does_not_emit_progress(self) -> None:
         stdout = io.StringIO()
@@ -237,6 +246,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(exit_code, EXIT_POLICY_FAILURE)
         self.assertEqual(stderr.getvalue(), "")
         self.assertIn("recommendation:", stdout.getvalue())
+        self.assertIn("policy: strict (fail)", stdout.getvalue())
 
     def test_cli_strict_mode_passes_for_fully_verified_release(self) -> None:
         stdout = io.StringIO()
@@ -244,6 +254,93 @@ class CliBehaviorTests(unittest.TestCase):
         with patch("trustcheck.cli.inspect_package", return_value=make_report()):
             with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
                 exit_code = main(["inspect", "gridoptim", "--strict"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+
+    def test_cli_policy_file_can_require_expected_repository(self) -> None:
+        stdout = io.StringIO()
+        report = make_report()
+        report.expected_repository = None
+        policy_path = Path(__file__).parent / "fixtures" / "policy_require_expected_repo.json"
+
+        with patch("trustcheck.cli.inspect_package", return_value=report):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(
+                    ["inspect", "gridoptim", "--policy-file", str(policy_path)]
+                )
+
+        self.assertEqual(exit_code, EXIT_POLICY_FAILURE)
+        self.assertIn("policy: team-policy (fail)", stdout.getvalue())
+        self.assertIn("expected_repository_required", stdout.getvalue())
+
+    def test_cli_policy_flags_override_builtin_policy(self) -> None:
+        stdout = io.StringIO()
+        report = make_report()
+        report.vulnerabilities = []
+
+        with patch("trustcheck.cli.inspect_package", return_value=report):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(
+                    [
+                        "inspect",
+                        "gridoptim",
+                        "--policy",
+                        "strict",
+                        "--require-verified-provenance",
+                        "none",
+                        "--fail-on-risk-severity",
+                        "none",
+                        "--allow-metadata-only",
+                    ]
+                )
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertIn("policy: strict (pass)", stdout.getvalue())
+
+    def test_cli_builds_client_from_config_file(self) -> None:
+        config_path = Path(__file__).parent / "fixtures" / "client_config.json"
+
+        def fake_inspect_package(*args, **kwargs):
+            client = kwargs["client"]
+            self.assertEqual(client.timeout, 3.5)
+            self.assertEqual(client.max_retries, 4)
+            self.assertEqual(client.backoff_factor, 0.75)
+            self.assertTrue(client.offline)
+            self.assertEqual(client.cache_dir, ".cache/trustcheck")
+            return make_report()
+
+        with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                exit_code = main(
+                    ["inspect", "gridoptim", "--config-file", str(config_path)]
+                )
+
+        self.assertEqual(exit_code, EXIT_OK)
+
+    def test_cli_env_overrides_network_settings(self) -> None:
+        def fake_inspect_package(*args, **kwargs):
+            client = kwargs["client"]
+            self.assertEqual(client.timeout, 1.5)
+            self.assertEqual(client.max_retries, 5)
+            self.assertEqual(client.backoff_factor, 0.6)
+            self.assertTrue(client.offline)
+            self.assertEqual(client.cache_dir, ".env-cache")
+            return make_report()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "TRUSTCHECK_TIMEOUT": "1.5",
+                "TRUSTCHECK_RETRIES": "5",
+                "TRUSTCHECK_BACKOFF": "0.6",
+                "TRUSTCHECK_OFFLINE": "true",
+                "TRUSTCHECK_CACHE_DIR": ".env-cache",
+            },
+            clear=False,
+        ):
+            with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    exit_code = main(["inspect", "gridoptim"])
 
         self.assertEqual(exit_code, EXIT_OK)
 
@@ -324,3 +421,20 @@ class CliBehaviorTests(unittest.TestCase):
 
         self.assertEqual(exit_code, EXIT_DATA_ERROR)
         self.assertIn("Traceback", stderr.getvalue())
+
+    def test_cli_json_debug_logs_are_structured(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        def fake_inspect_package(*args, **kwargs):
+            client = kwargs["client"]
+            assert client.request_hook is not None
+            client.request_hook("retry", {"url": "https://pypi.org/pypi/gridoptim/json", "attempt": 1, "delay": 0.25})
+            return make_report()
+
+        with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                exit_code = main(["--debug", "--log-format", "json", "inspect", "gridoptim"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertIn('"event": "retry"', stderr.getvalue())

@@ -1,0 +1,70 @@
+{
+  "report": {
+    "coverage": {
+      "files_with_provenance": 0,
+      "status": "none",
+      "total_files": 0,
+      "verified_files": 0
+    },
+    "declared_repository_urls": [],
+    "diagnostics": {
+      "artifact_failures": [],
+      "backoff_factor": 0.25,
+      "cache_dir": null,
+      "cache_hit_count": 0,
+      "max_retries": 2,
+      "offline": false,
+      "request_count": 0,
+      "request_failures": [],
+      "retry_count": 0,
+      "timeout": 10.0
+    },
+    "expected_repository": null,
+    "files": [],
+    "ownership": {
+      "organization": null,
+      "roles": []
+    },
+    "package_url": "https://pypi.org/project/demo/0.0.1/",
+    "policy": {
+      "allow_metadata_only": true,
+      "enforced": false,
+      "fail_on_severity": "none",
+      "passed": true,
+      "profile": "default",
+      "require_expected_repository_match": false,
+      "require_verified_provenance": "none",
+      "violations": [],
+      "vulnerability_mode": "ignore"
+    },
+    "project": "demo",
+    "provenance_consistency": {
+      "consistent_repositories": [],
+      "consistent_workflows": [],
+      "has_sdist": false,
+      "has_wheel": false,
+      "sdist_wheel_consistent": null
+    },
+    "publisher_trust": {
+      "depth_label": "none",
+      "depth_score": 0,
+      "unique_verified_repositories": [],
+      "unique_verified_workflows": [],
+      "verified_publishers": []
+    },
+    "recommendation": "metadata-only",
+    "release_drift": {
+      "compared_to_version": null,
+      "previous_repositories": [],
+      "previous_workflows": [],
+      "publisher_repository_drift": null,
+      "publisher_workflow_drift": null
+    },
+    "repository_urls": [],
+    "risk_flags": [],
+    "summary": null,
+    "version": "0.0.1",
+    "vulnerabilities": []
+  },
+  "schema_version": "1.2.0"
+}
