@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any, Literal
+from typing import Any, Final, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .models import TrustReport
 
-JSON_SCHEMA_VERSION = "1.2.0"
+JSON_SCHEMA_VERSION: Final = "1.2.0"
 JSON_SCHEMA_ID = f"urn:trustcheck:report:{JSON_SCHEMA_VERSION}"
+SchemaVersion: TypeAlias = Literal["1.2.0"]
+DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.2.0"
 
 
 class RiskFlagPayload(BaseModel):
@@ -199,7 +201,7 @@ class TrustReportPayload(BaseModel):
 class TrustReportEnvelopePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[JSON_SCHEMA_VERSION] = JSON_SCHEMA_VERSION
+    schema_version: SchemaVersion = DEFAULT_SCHEMA_VERSION
     report: TrustReportPayload
 
 

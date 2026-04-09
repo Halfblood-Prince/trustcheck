@@ -293,7 +293,7 @@ def _collect_files(
 def _instrument_client(
     client: PypiClient,
     hook: Callable[[str, dict[str, Any]], None],
-):
+) -> Any:
     previous_hook = getattr(client, "request_hook", None)
 
     def combined(event: str, payload: dict[str, Any]) -> None:

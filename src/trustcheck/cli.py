@@ -6,7 +6,7 @@ import os
 import sys
 import traceback
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from .models import TrustReport
 from .policy import BUILTIN_POLICIES, evaluate_policy, resolve_policy
@@ -226,7 +226,7 @@ def _build_client(
     args: argparse.Namespace,
     *,
     config_payload: dict[str, object],
-    request_hook,
+    request_hook: Callable[[str, dict[str, object]], None] | None,
 ) -> PypiClient:
     network_config = config_payload.get("network")
     if network_config is not None and not isinstance(network_config, dict):
@@ -287,7 +287,7 @@ def _resolve_float(
     env_value = os.getenv(env_name)
     if env_value is not None:
         return float(env_value)
-    if config_value is not None:
+    if config_value is not None and isinstance(config_value, (str, int, float)):
         return float(config_value)
     return default
 
@@ -304,7 +304,7 @@ def _resolve_int(
     env_value = os.getenv(env_name)
     if env_value is not None:
         return int(env_value)
-    if config_value is not None:
+    if config_value is not None and isinstance(config_value, (str, int, float)):
         return int(config_value)
     return default
 
@@ -344,7 +344,11 @@ def _resolve_bool(
     return default
 
 
-def _build_debug_request_hook(*, enabled: bool, log_format: str):
+def _build_debug_request_hook(
+    *,
+    enabled: bool,
+    log_format: str,
+) -> Callable[[str, dict[str, object]], None] | None:
     if not enabled:
         return None
 
