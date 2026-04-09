@@ -79,7 +79,10 @@ def evaluate_policy(report: TrustReport, settings: PolicySettings) -> PolicyEval
                 PolicyViolation(
                     code="verified_provenance_required",
                     severity="high",
-                    message="Policy requires verified provenance for every artifact, but no release files were discovered.",
+                    message=(
+                        "Policy requires verified provenance for every artifact, "
+                        "but no release files were discovered."
+                    ),
                 )
             )
         elif not all(file.verified for file in report.files):
@@ -89,7 +92,9 @@ def evaluate_policy(report: TrustReport, settings: PolicySettings) -> PolicyEval
                     severity="high",
                     message=(
                         "Policy requires verified provenance for every artifact, "
-                        f"but only {report.coverage.verified_files}/{report.coverage.total_files} verified."
+                        "but only "
+                        f"{report.coverage.verified_files}/{report.coverage.total_files} "
+                        "verified."
                     ),
                 )
             )
@@ -128,7 +133,12 @@ def evaluate_policy(report: TrustReport, settings: PolicySettings) -> PolicyEval
         )
 
     if settings.fail_on_severity != "none":
-        violations.extend(_violations_from_flags(report.risk_flags, minimum=settings.fail_on_severity))
+        violations.extend(
+            _violations_from_flags(
+                report.risk_flags,
+                minimum=settings.fail_on_severity,
+            )
+        )
 
     if not settings.allow_metadata_only and report.recommendation == "metadata-only":
         violations.append(
@@ -210,7 +220,11 @@ def _validate_policy_settings(settings: PolicySettings) -> None:
         raise ValueError("fail_on_severity must be 'none', 'medium', or 'high'")
 
 
-def _violations_from_flags(flags: list[RiskFlag], *, minimum: SeverityLevel) -> list[PolicyViolation]:
+def _violations_from_flags(
+    flags: list[RiskFlag],
+    *,
+    minimum: SeverityLevel,
+) -> list[PolicyViolation]:
     threshold = _SEVERITY_ORDER.get(minimum, 99)
     return [
         PolicyViolation(code=flag.code, severity=flag.severity, message=flag.message)

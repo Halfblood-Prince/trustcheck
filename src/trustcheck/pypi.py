@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import socket
 import ssl
 import time
@@ -334,7 +334,13 @@ class PypiClient:
         if cache_path is None:
             return
         cache_path.write_bytes(payload)
-        self._emit("cache_store", url=url, kind="disk", cache_path=str(cache_path), size=len(payload))
+        self._emit(
+            "cache_store",
+            url=url,
+            kind="disk",
+            cache_path=str(cache_path),
+            size=len(payload),
+        )
 
     def _validate_project_payload(self, payload: dict[str, Any], path: str) -> dict[str, Any]:
         url = f"{self.base_url}{path}"

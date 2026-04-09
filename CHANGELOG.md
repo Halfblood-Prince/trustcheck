@@ -18,6 +18,5 @@ The project follows Semantic Versioning for the supported public API described i
 - Added configurable network timeout, retry, backoff, cache, and offline controls via CLI, environment variables, and JSON config.
 - Added deterministic upstream error subcodes plus structured debug logging for request lifecycle events.
 - Extended the machine-readable report with a `diagnostics` block and advanced the schema to `1.2.0`.
-- Added repository security guidance in `SECURITY.md`.
 - Added dependency audit, secret scanning, and CodeQL workflows for the package itself.
 - Hardened release automation with explicit PyPI artifact attestations, build provenance attestation, SBOM generation, and published checksums.

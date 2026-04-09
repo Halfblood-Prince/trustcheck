@@ -109,10 +109,25 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("none", "medium", "high"),
         help="Fail policy evaluation when risk flags meet or exceed this severity.",
     )
-    inspect_parser.add_argument("--timeout", type=float, help="Network timeout in seconds.")
-    inspect_parser.add_argument("--retries", type=int, help="Maximum retry count for transient failures.")
-    inspect_parser.add_argument("--backoff", type=float, help="Retry backoff factor in seconds.")
-    inspect_parser.add_argument("--cache-dir", help="Optional persistent cache directory for PyPI responses.")
+    inspect_parser.add_argument(
+        "--timeout",
+        type=float,
+        help="Network timeout in seconds.",
+    )
+    inspect_parser.add_argument(
+        "--retries",
+        type=int,
+        help="Maximum retry count for transient failures.",
+    )
+    inspect_parser.add_argument(
+        "--backoff",
+        type=float,
+        help="Retry backoff factor in seconds.",
+    )
+    inspect_parser.add_argument(
+        "--cache-dir",
+        help="Optional persistent cache directory for PyPI responses.",
+    )
     inspect_parser.add_argument(
         "--offline",
         action="store_true",
@@ -338,7 +353,9 @@ def _build_debug_request_hook(*, enabled: bool, log_format: str):
         if log_format == "json":
             print(json.dumps(record, sort_keys=True), file=sys.stderr, flush=True)
         else:
-            parts = [f"event={event}"] + [f"{key}={value}" for key, value in sorted(payload.items())]
+            parts = [f"event={event}"] + [
+                f"{key}={value}" for key, value in sorted(payload.items())
+            ]
             print("[debug] " + " ".join(parts), file=sys.stderr, flush=True)
 
     return emit

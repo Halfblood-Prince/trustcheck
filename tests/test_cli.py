@@ -3,8 +3,8 @@ from __future__ import annotations
 import io
 import json
 import unittest
-from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 from trustcheck.cli import (
@@ -18,10 +18,10 @@ from trustcheck.contract import JSON_SCHEMA_VERSION
 from trustcheck.models import (
     CoverageSummary,
     FileProvenance,
-    ReportDiagnostics,
     ProvenanceConsistency,
     PublisherTrustSummary,
     ReleaseDriftSummary,
+    ReportDiagnostics,
     RiskFlag,
     TrustReport,
 )
@@ -98,7 +98,10 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("why this result: cryptographic verification succeeded", stdout.getvalue())
         self.assertIn("verification: 1/1 artifact(s) verified (all-verified)", stdout.getvalue())
         self.assertIn("publisher trust: strong", stdout.getvalue())
-        self.assertIn("diagnostics: requests=0 retries=0 failures=0 cache_hits=0", stdout.getvalue())
+        self.assertIn(
+            "diagnostics: requests=0 retries=0 failures=0 cache_hits=0",
+            stdout.getvalue(),
+        )
         self.assertEqual(stderr.getvalue(), "")
 
     def test_cli_text_output_emits_progress_to_stderr(self) -> None:
@@ -429,7 +432,14 @@ class CliBehaviorTests(unittest.TestCase):
         def fake_inspect_package(*args, **kwargs):
             client = kwargs["client"]
             assert client.request_hook is not None
-            client.request_hook("retry", {"url": "https://pypi.org/pypi/gridoptim/json", "attempt": 1, "delay": 0.25})
+            client.request_hook(
+                "retry",
+                {
+                    "url": "https://pypi.org/pypi/gridoptim/json",
+                    "attempt": 1,
+                    "delay": 0.25,
+                },
+            )
             return make_report()
 
         with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
