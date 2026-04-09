@@ -23,6 +23,9 @@ dependencies = [
 [project.scripts]
 trustcheck = "trustcheck.cli:main"
 
+[project.urls]
+Repository = "https://github.com/Halfblood-Prince/trustcheck"
+
 [tool.setuptools]
 package-dir = { "" = "src" }
 
