@@ -3,7 +3,7 @@
     "keydown",
     (event) => {
       const key = event.key.toLowerCase();
-      if (key !== "s" && key !== "n") {
+      if (key !== "s" && key !== "n" && key !== "f" && key !== ".") {
         return;
       }
 
@@ -15,9 +15,9 @@
         return;
       }
 
-      // Material for MkDocs uses plain letter hotkeys like "s" and "n" that can
-      // steal focus from embedded widgets. We disable those hotkeys entirely
-      // while still allowing the characters to be typed normally.
+      // Material for MkDocs uses plain keyboard shortcuts that can steal focus
+      // from embedded widgets. We disable the conflicting unmodified keys while
+      // still allowing those characters to be typed normally.
       event.stopImmediatePropagation();
     },
     true,
