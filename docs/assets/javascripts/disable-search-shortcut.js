@@ -2,7 +2,8 @@
   document.addEventListener(
     "keydown",
     (event) => {
-      if (event.key.toLowerCase() !== "s") {
+      const key = event.key.toLowerCase();
+      if (key !== "s" && key !== "n") {
         return;
       }
 
@@ -14,9 +15,9 @@
         return;
       }
 
-      // Material for MkDocs uses plain "s" as a global shortcut that can steal
-      // focus from embedded widgets. We disable that hotkey entirely while
-      // still allowing the "s" character to be typed normally.
+      // Material for MkDocs uses plain letter hotkeys like "s" and "n" that can
+      // steal focus from embedded widgets. We disable those hotkeys entirely
+      // while still allowing the characters to be typed normally.
       event.stopImmediatePropagation();
     },
     true,
