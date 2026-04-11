@@ -512,3 +512,8 @@ mypy src
 ## License
 
 [Trustcheck Personal Use License](LICENSE)
+
+
+## Documentation
+
+Documentation: https://Halfblood-Prince.github.io/trustcheck/
