@@ -58,7 +58,10 @@ Fail CI when full verification is missing:
 trustcheck inspect sampleproject --version 4.0.0 --strict
 ```
 
-<div id="context7-chatbot"></div>
+<script
+  src="https://context7.com/widget.js"
+  data-library="/halfblood-prince/trustcheck">
+</script>
 
 ## Docs map
 
