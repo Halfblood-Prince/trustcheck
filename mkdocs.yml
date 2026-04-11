@@ -1,0 +1,52 @@
+site_name: trustcheck
+site_description: Documentation for trustcheck, a Python package and CLI for PyPI package trust and provenance verification.
+site_url: https://halfblood-prince.github.io/trustcheck/
+repo_url: https://github.com/Halfblood-Prince/trustcheck
+repo_name: Halfblood-Prince/trustcheck
+edit_uri: edit/main/docs/
+site_dir: site
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+  - CLI:
+      - Overview: cli/index.md
+      - Exit codes: cli/exit-codes.md
+      - Policies: cli/policies.md
+      - Config and offline mode: cli/configuration.md
+  - Reference:
+      - Python API: reference/python-api.md
+      - JSON contract: reference/json-contract.md
+      - Recommendation model: reference/recommendations.md
+  - Guides:
+      - CI integration: guides/ci-integration.md
+      - GitHub Pages setup: guides/github-pages.md
+  - Changelog: changelog.md
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Halfblood-Prince/trustcheck
