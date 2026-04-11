@@ -1,30 +1,7 @@
 (() => {
-  function isEditableTarget(target) {
-    if (!(target instanceof Element)) {
-      return false;
-    }
-
-    return Boolean(
-      target.closest(
-        [
-          "input",
-          "textarea",
-          "select",
-          "[contenteditable='']",
-          "[contenteditable='true']",
-          "[role='textbox']",
-        ].join(","),
-      ),
-    );
-  }
-
   document.addEventListener(
     "keydown",
     (event) => {
-      if (event.defaultPrevented) {
-        return;
-      }
-
       if (event.key.toLowerCase() !== "s") {
         return;
       }
@@ -33,14 +10,22 @@
         return;
       }
 
-      if (!isEditableTarget(event.target)) {
+      if (event.shiftKey) {
         return;
       }
 
-      // Stop Material for MkDocs from treating "s" as a global search shortcut
-      // while the user is actively typing in an editable control.
-      event.stopPropagation();
+      // Material for MkDocs uses plain "s" as a global shortcut that can steal
+      // focus from embedded widgets. We disable that hotkey entirely while
+      // still allowing the "s" character to be typed normally.
+      event.stopImmediatePropagation();
     },
     true,
   );
+
+  window.addEventListener("load", () => {
+    const search = document.querySelector("[data-md-component='search-query']");
+    if (search instanceof HTMLElement) {
+      search.removeAttribute("accesskey");
+    }
+  });
 })();
