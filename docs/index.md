@@ -58,6 +58,8 @@ Fail CI when full verification is missing:
 trustcheck inspect sampleproject --version 4.0.0 --strict
 ```
 
+<div id="context7-chatbot"></div>
+
 ## Docs map
 
 - Start with [Installation](getting-started/installation.md) and [Quickstart](getting-started/quickstart.md)
