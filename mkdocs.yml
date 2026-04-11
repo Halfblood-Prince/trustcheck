@@ -21,7 +21,6 @@ nav:
       - Recommendation model: reference/recommendations.md
   - Guides:
       - CI integration: guides/ci-integration.md
-      - GitHub Pages setup: guides/github-pages.md
   - Changelog: changelog.md
 
 theme:
