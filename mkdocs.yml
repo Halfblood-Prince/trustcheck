@@ -45,6 +45,9 @@ markdown_extensions:
 plugins:
   - search
 
+extra_javascript:
+  - assets/javascripts/disable-search-shortcut.js
+
 extra:
   social:
     - icon: fontawesome/brands/github
