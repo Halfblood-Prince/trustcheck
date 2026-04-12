@@ -58,6 +58,18 @@ Fail CI when full verification is missing:
 trustcheck inspect sampleproject --version 4.0.0 --strict
 ```
 
+## Use from Python
+
+`trustcheck` can also be imported directly into Python programs:
+
+```python
+from trustcheck import inspect_package
+
+report = inspect_package("sampleproject", version="4.0.0")
+print(report.recommendation)
+print(report.to_dict()["report"]["coverage"]["status"])
+```
+
 <script
   src="https://context7.com/widget.js"
   data-library="/halfblood-prince/trustcheck">

@@ -70,6 +70,15 @@ Fail CI when full verification is missing:
 trustcheck inspect sampleproject --version 4.0.0 --strict
 ```
 
+Use it from Python:
+
+```python
+from trustcheck import inspect_package
+
+report = inspect_package("sampleproject", version="4.0.0")
+print(report.recommendation)
+```
+
 ## Documentation
 
 Full documentation: https://halfblood-prince.github.io/trustcheck/
