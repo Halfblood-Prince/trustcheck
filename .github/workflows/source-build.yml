@@ -63,5 +63,5 @@ jobs:
             --exclude=.tmp-build \
             -cf - . | tar -xf - -C "$archive_root"
           python -m build --sdist --outdir "$archive_root/dist" "$archive_root"
-          python -m pip install --force-reinstall --no-deps "$archive_root"/dist/*.tar.gz
+          python -m pip install --force-reinstall "$archive_root"/dist/*.tar.gz
           trustcheck --help

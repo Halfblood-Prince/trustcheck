@@ -10,12 +10,6 @@
 [![Python 3.12 | 3.13 | 3.14](https://img.shields.io/badge/ci-python%203.12-blue.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/trustcheck?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/trustcheck)
 
-Source build matrix status:
-
-| Linux | macOS | Windows |
-| --- | --- | --- |
-| [ubuntu-latest](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/source-build.yml) | [macos-latest](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/source-build.yml) | [windows-latest](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/source-build.yml) |
-
 `trustcheck` is a Python package and CLI for evaluating the trust posture of PyPI releases before they are installed, promoted, or approved.
 
 It combines PyPI metadata, vulnerability records, provenance availability, cryptographic attestation verification, Trusted Publisher identity hints, and repository matching into a single operator-friendly report.
