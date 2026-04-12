@@ -118,6 +118,11 @@ jobs:
           python -m pip install --force-reinstall --no-deps dist/*.whl
           trustcheck --help
 
+      - name: Smoke test built sdist
+        run: |
+          python -m pip install --force-reinstall --no-deps dist/*.tar.gz
+          trustcheck --help
+
   coverage:
     needs: qa
     runs-on: ubuntu-latest
@@ -148,6 +153,11 @@ jobs:
       - name: Smoke test built wheel
         run: |
           python -m pip install --force-reinstall --no-deps dist/*.whl
+          trustcheck --help
+
+      - name: Smoke test built sdist
+        run: |
+          python -m pip install --force-reinstall --no-deps dist/*.tar.gz
           trustcheck --help
 
       - name: Upload coverage report
