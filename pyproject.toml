@@ -13,8 +13,15 @@ license = { file = "LICENSE" }
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
+  "Intended Audience :: System Administrators",
+  "Topic :: Security",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
   "pypi-attestations>=0.0.29,<1",
@@ -24,7 +31,12 @@ dependencies = [
 trustcheck = "trustcheck.cli:main"
 
 [project.urls]
+Homepage = "https://github.com/Halfblood-Prince/trustcheck"
+Documentation = "https://halfblood-prince.github.io/trustcheck/"
+Issues = "https://github.com/Halfblood-Prince/trustcheck/issues"
 Repository = "https://github.com/Halfblood-Prince/trustcheck"
+Changelog = "https://github.com/Halfblood-Prince/trustcheck/releases"
+Security = "https://github.com/Halfblood-Prince/trustcheck/security"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
