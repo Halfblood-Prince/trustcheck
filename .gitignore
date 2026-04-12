@@ -8,3 +8,4 @@ __pycache__/
 build/
 dist/
 pytest-cache-files-*/
+src/trustcheck/_version.py

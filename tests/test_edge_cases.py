@@ -4,6 +4,8 @@ import importlib
 import io
 import json
 import runpy
+import sys
+import types
 import unittest
 from argparse import Namespace
 from contextlib import redirect_stderr
@@ -166,6 +168,17 @@ class PackageEntryPointTests(unittest.TestCase):
         with patch("importlib.metadata.version", side_effect=PackageNotFoundError):
             reloaded = importlib.reload(trustcheck)
             self.assertEqual(reloaded.__version__, "0+unknown")
+
+        importlib.reload(trustcheck)
+
+    def test_package_version_uses_generated_version_module_without_metadata(self) -> None:
+        version_module = types.ModuleType("trustcheck._version")
+        version_module.version = "1.2.3"
+
+        with patch.dict(sys.modules, {"trustcheck._version": version_module}):
+            with patch("importlib.metadata.version", side_effect=PackageNotFoundError):
+                reloaded = importlib.reload(trustcheck)
+                self.assertEqual(reloaded.__version__, "1.2.3")
 
         importlib.reload(trustcheck)
 
@@ -354,6 +367,17 @@ class PypiCoverageTests(unittest.TestCase):
             client._decode_json_payload(b"[]", "https://pypi.org/pypi/gridoptim/json")
 
         self.assertEqual(ctx.exception.subcode, "json_non_object")
+
+    def test_default_user_agent_uses_generated_version_module_without_metadata(self) -> None:
+        version_module = types.ModuleType("trustcheck._version")
+        version_module.version = "2.3.4"
+
+        with patch.dict(sys.modules, {"trustcheck._version": version_module}):
+            with patch("importlib.metadata.version", side_effect=PackageNotFoundError):
+                reloaded = importlib.reload(importlib.import_module("trustcheck.pypi"))
+
+        self.assertEqual(reloaded.DEFAULT_USER_AGENT, "trustcheck/2.3.4")
+        importlib.reload(reloaded)
 
     def test_write_and_read_disk_cache_emit_events(self) -> None:
         cache_dir = SCRATCH_ROOT / "cache"

@@ -35,6 +35,8 @@ where = ["src"]
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"
 local_scheme = "no-local-version"
+version_file = "src/trustcheck/_version.py"
+fallback_version = "0+unknown"
 
 [tool.ruff]
 target-version = "py310"

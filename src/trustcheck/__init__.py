@@ -5,9 +5,12 @@ from .models import TrustReport
 from .service import inspect_package
 
 try:
-    __version__ = version("trustcheck")
-except PackageNotFoundError:
-    __version__ = "0+unknown"
+    from ._version import version as __version__
+except ImportError:
+    try:
+        __version__ = version("trustcheck")
+    except PackageNotFoundError:
+        __version__ = "0+unknown"
 
 __all__ = [
     "JSON_SCHEMA_ID",

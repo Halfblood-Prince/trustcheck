@@ -44,9 +44,12 @@ PERMANENT_ERROR_TEXT = (
     "connection refused",
 )
 try:
-    _PACKAGE_VERSION = version("trustcheck")
-except PackageNotFoundError:
-    _PACKAGE_VERSION = "0+unknown"
+    from ._version import version as _PACKAGE_VERSION
+except ImportError:
+    try:
+        _PACKAGE_VERSION = version("trustcheck")
+    except PackageNotFoundError:
+        _PACKAGE_VERSION = "0+unknown"
 DEFAULT_USER_AGENT = f"trustcheck/{_PACKAGE_VERSION}"
 
 
