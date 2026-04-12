@@ -25,6 +25,7 @@ nav:
 
 theme:
   name: material
+  logo: logo.png
   features:
     - navigation.sections
     - navigation.expand
