@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 keywords = ["pypi", "security", "supply-chain", "provenance", "attestations"]
 license = { file = "LICENSE" }
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Intended Audience :: System Administrators",
   "Operating System :: MacOS",
@@ -36,10 +36,10 @@ trustcheck = "trustcheck.cli:main"
 [project.urls]
 Homepage = "https://github.com/Halfblood-Prince/trustcheck"
 Documentation = "https://halfblood-prince.github.io/trustcheck/"
-Issues = "https://github.com/Halfblood-Prince/trustcheck/issues"
+Issues = "https://discord.com/channels/267624335836053506/1490011081958101194"
 Repository = "https://github.com/Halfblood-Prince/trustcheck"
 Changelog = "https://github.com/Halfblood-Prince/trustcheck/releases"
-Security = "https://github.com/Halfblood-Prince/trustcheck/security"
+Security = "https://discord.com/channels/267624335836053506/1490011081958101194"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
