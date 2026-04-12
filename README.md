@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/images/logo.png" width="300">
+  <img src="https://raw.githubusercontent.com/Halfblood-Prince/trustcheck/main/docs/assets/images/logo.png" width="300">
 </p>
 
 # trustcheck
