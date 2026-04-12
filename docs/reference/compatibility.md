@@ -42,7 +42,7 @@ When a breaking JSON or Python API change is necessary, `trustcheck` will:
 
 - increment the package major version
 - publish a new schema major version
-- record the change in [`CHANGELOG.md`](../../CHANGELOG.md)
+- record the change in the [changelog](../changelog.md)
 
 ## Supported public API
 
