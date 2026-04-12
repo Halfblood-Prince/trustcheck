@@ -7,7 +7,7 @@
 [![CI](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
 [![Source Build](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/source-build.yml/badge.svg?branch=main)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/source-build.yml)
 [![PyPI](https://img.shields.io/pypi/v/trustcheck.svg)](https://pypi.org/project/trustcheck/)
-[![Python 3.12 | 3.13 | 3.14](https://img.shields.io/badge/ci-python%203.12-blue.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
+[![Python 3.10 | 3.11 | 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/trustcheck?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/trustcheck)
 
 `trustcheck` is a Python package and CLI for evaluating the trust posture of PyPI releases before they are installed, promoted, or approved.
@@ -74,12 +74,12 @@ trustcheck inspect sampleproject --version 4.0.0 --strict
 
 Full documentation: https://halfblood-prince.github.io/trustcheck/
 
-- Getting started: [Installation](docs/getting-started/installation.md) and [Quickstart](docs/getting-started/quickstart.md)
-- CLI usage: [CLI overview](docs/cli/index.md), [Policies](docs/cli/policies.md), and [Config and offline mode](docs/cli/configuration.md)
-- Integrations: [JSON contract](docs/reference/json-contract.md), [Python API](docs/reference/python-api.md), and [Compatibility](docs/reference/compatibility.md)
-- Trust model: [Verification model and repository matching](docs/reference/trust-model.md)
-- Automation: [CI integration](docs/guides/ci-integration.md)
-- Project details: [Development and release process](docs/guides/development.md) and [Changelog](CHANGELOG.md)
+- Getting started: [Installation](https://halfblood-prince.github.io/trustcheck/getting-started/installation/) and [Quickstart](https://halfblood-prince.github.io/trustcheck/getting-started/quickstart/)
+- CLI usage: [CLI overview](https://halfblood-prince.github.io/trustcheck/cli/), [Policies](https://halfblood-prince.github.io/trustcheck/cli/policies/), and [Config and offline mode](https://halfblood-prince.github.io/trustcheck/cli/configuration/)
+- Integrations: [JSON contract](https://halfblood-prince.github.io/trustcheck/reference/json-contract/), [Python API](https://halfblood-prince.github.io/trustcheck/reference/python-api/), and [Compatibility](https://halfblood-prince.github.io/trustcheck/reference/compatibility/)
+- Trust model: [Verification model and repository matching](https://halfblood-prince.github.io/trustcheck/reference/trust-model/)
+- Automation: [CI integration](https://halfblood-prince.github.io/trustcheck/guides/ci-integration/)
+- Project details: [Development and release process](https://halfblood-prince.github.io/trustcheck/guides/development/) and [Changelog](https://halfblood-prince.github.io/trustcheck/changelog/)
 
 ## License
 
