@@ -12,7 +12,7 @@ Please do not open a public GitHub issue for suspected vulnerabilities.
 
 Report security concerns privately through the project's channel in the official Python Discord server:
 
-`https://discord.com/channels/267624335836053506/1468524576479641744/threads/1490011081958101194`
+[![Discord](https://img.shields.io/badge/Discord-Private%20Report-5865F2?logo=discord&logoColor=white)](https://discord.com/channels/267624335836053506/1468524576479641744/threads/1490011081958101194)
 
 When reporting, include:
 
