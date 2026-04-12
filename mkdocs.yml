@@ -25,7 +25,7 @@ nav:
 
 theme:
   name: material
-  logo: assets/images/logo.png
+  logo: assets/images/logo-bg-less.png
   features:
     - navigation.sections
     - navigation.expand
