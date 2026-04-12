@@ -165,9 +165,10 @@ class PackageEntryPointTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 7)
 
     def test_package_version_falls_back_when_metadata_missing(self) -> None:
-        with patch("importlib.metadata.version", side_effect=PackageNotFoundError):
-            reloaded = importlib.reload(trustcheck)
-            self.assertEqual(reloaded.__version__, "0+unknown")
+        with patch.dict(sys.modules, {"trustcheck._version": None}):
+            with patch("importlib.metadata.version", side_effect=PackageNotFoundError):
+                reloaded = importlib.reload(trustcheck)
+                self.assertEqual(reloaded.__version__, "0+unknown")
 
         importlib.reload(trustcheck)
 

@@ -8,8 +8,8 @@ from io import BytesIO
 from unittest.mock import patch
 from urllib import error
 
-from trustcheck import __version__
-from trustcheck.pypi import DEFAULT_USER_AGENT, PypiClient, PypiClientError
+import trustcheck
+from trustcheck import pypi as pypi_module
 
 
 class FakeResponse:
@@ -29,9 +29,9 @@ class FakeResponse:
 
 class PypiClientTests(unittest.TestCase):
     def test_user_agent_is_versioned(self) -> None:
-        client = PypiClient()
-        self.assertEqual(client.user_agent, DEFAULT_USER_AGENT)
-        self.assertEqual(client.user_agent, f"trustcheck/{__version__}")
+        client = pypi_module.PypiClient()
+        self.assertEqual(client.user_agent, pypi_module.DEFAULT_USER_AGENT)
+        self.assertEqual(client.user_agent, f"trustcheck/{trustcheck.__version__}")
 
     def test_retries_transient_http_errors_before_succeeding(self) -> None:
         attempts: list[int] = []
@@ -49,7 +49,7 @@ class PypiClientTests(unittest.TestCase):
                 )
             return FakeResponse(json.dumps({"info": {"version": "1.0.0"}}).encode())
 
-        client = PypiClient(max_retries=2, backoff_factor=0.1, sleep=sleeps.append)
+        client = pypi_module.PypiClient(max_retries=2, backoff_factor=0.1, sleep=sleeps.append)
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             payload = client.get_project("gridoptim")
@@ -71,23 +71,23 @@ class PypiClientTests(unittest.TestCase):
                 fp=None,
             )
 
-        client = PypiClient(max_retries=3, sleep=lambda delay: None)
+        client = pypi_module.PypiClient(max_retries=3, sleep=lambda delay: None)
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            with self.assertRaises(PypiClientError) as ctx:
+            with self.assertRaises(pypi_module.PypiClientError) as ctx:
                 client.get_project("gridoptim")
 
         self.assertEqual(ctx.exception.subcode, "http_not_found")
         self.assertEqual(len(attempts), 1)
 
     def test_url_errors_report_retry_hint(self) -> None:
-        client = PypiClient(max_retries=0, sleep=lambda delay: None)
+        client = pypi_module.PypiClient(max_retries=0, sleep=lambda delay: None)
 
         with patch(
             "urllib.request.urlopen",
             side_effect=error.URLError("temporary failure in name resolution"),
         ):
-            with self.assertRaisesRegex(PypiClientError, "retrying may help"):
+            with self.assertRaisesRegex(pypi_module.PypiClientError, "retrying may help"):
                 client.get_project("gridoptim")
 
     def test_direct_socket_timeout_is_treated_as_transient(self) -> None:
@@ -97,10 +97,10 @@ class PypiClientTests(unittest.TestCase):
             attempts.append(1)
             raise socket.timeout("timed out")
 
-        client = PypiClient(max_retries=1, sleep=lambda delay: None)
+        client = pypi_module.PypiClient(max_retries=1, sleep=lambda delay: None)
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            with self.assertRaisesRegex(PypiClientError, "retrying may help"):
+            with self.assertRaisesRegex(pypi_module.PypiClientError, "retrying may help"):
                 client.get_project("gridoptim")
 
         self.assertEqual(len(attempts), 2)
@@ -112,22 +112,24 @@ class PypiClientTests(unittest.TestCase):
             attempts.append(1)
             raise error.URLError("connection refused")
 
-        client = PypiClient(max_retries=3, sleep=lambda delay: None)
+        client = pypi_module.PypiClient(max_retries=3, sleep=lambda delay: None)
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            with self.assertRaisesRegex(PypiClientError, "retrying is unlikely to help"):
+            with self.assertRaisesRegex(
+                pypi_module.PypiClientError, "retrying is unlikely to help"
+            ):
                 client.get_project("gridoptim")
 
         self.assertEqual(len(attempts), 1)
 
     def test_tls_errors_are_classified_as_permanent(self) -> None:
-        client = PypiClient(max_retries=2, sleep=lambda delay: None)
+        client = pypi_module.PypiClient(max_retries=2, sleep=lambda delay: None)
 
         with patch(
             "urllib.request.urlopen",
             side_effect=error.URLError(ssl.SSLError("certificate verify failed")),
         ):
-            with self.assertRaises(PypiClientError) as ctx:
+            with self.assertRaises(pypi_module.PypiClientError) as ctx:
                 client.get_project("gridoptim")
 
         self.assertEqual(ctx.exception.subcode, "network_tls")
@@ -139,10 +141,10 @@ class PypiClientTests(unittest.TestCase):
             attempts.append(1)
             raise error.URLError(socket.gaierror(socket.EAI_AGAIN, "temporary failure"))
 
-        client = PypiClient(max_retries=1, sleep=lambda delay: None)
+        client = pypi_module.PypiClient(max_retries=1, sleep=lambda delay: None)
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            with self.assertRaisesRegex(PypiClientError, "retrying may help"):
+            with self.assertRaisesRegex(pypi_module.PypiClientError, "retrying may help"):
                 client.get_project("gridoptim")
 
         self.assertEqual(len(attempts), 2)
@@ -154,44 +156,50 @@ class PypiClientTests(unittest.TestCase):
             attempts.append(1)
             raise error.URLError(socket.gaierror(socket.EAI_NONAME, "name or service not known"))
 
-        client = PypiClient(max_retries=2, sleep=lambda delay: None)
+        client = pypi_module.PypiClient(max_retries=2, sleep=lambda delay: None)
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            with self.assertRaisesRegex(PypiClientError, "retrying is unlikely to help"):
+            with self.assertRaisesRegex(
+                pypi_module.PypiClientError, "retrying is unlikely to help"
+            ):
                 client.get_project("gridoptim")
 
         self.assertEqual(len(attempts), 1)
 
     def test_malformed_json_is_permanent(self) -> None:
-        client = PypiClient(max_retries=2, sleep=lambda delay: None)
+        client = pypi_module.PypiClient(max_retries=2, sleep=lambda delay: None)
 
         with patch(
             "urllib.request.urlopen",
             return_value=FakeResponse(b"{not-json"),
         ):
-            with self.assertRaises(PypiClientError) as ctx:
+            with self.assertRaises(pypi_module.PypiClientError) as ctx:
                 client.get_project("gridoptim")
 
         self.assertEqual(ctx.exception.subcode, "json_malformed")
 
     def test_unexpected_project_shape_is_handled_gracefully(self) -> None:
-        client = PypiClient(max_retries=0, sleep=lambda delay: None)
+        client = pypi_module.PypiClient(max_retries=0, sleep=lambda delay: None)
 
         with patch(
             "urllib.request.urlopen",
             return_value=FakeResponse(json.dumps({"info": {"project_urls": []}}).encode()),
         ):
-            with self.assertRaisesRegex(PypiClientError, "unexpected project response shape"):
+            with self.assertRaisesRegex(
+                pypi_module.PypiClientError, "unexpected project response shape"
+            ):
                 client.get_project("gridoptim")
 
     def test_unexpected_provenance_shape_is_handled_gracefully(self) -> None:
-        client = PypiClient(max_retries=0, sleep=lambda delay: None)
+        client = pypi_module.PypiClient(max_retries=0, sleep=lambda delay: None)
 
         with patch(
             "urllib.request.urlopen",
             return_value=FakeResponse(json.dumps({"attestation_bundles": {}}).encode()),
         ):
-            with self.assertRaisesRegex(PypiClientError, "unexpected provenance response shape"):
+            with self.assertRaisesRegex(
+                pypi_module.PypiClientError, "unexpected provenance response shape"
+            ):
                 client.get_provenance("gridoptim", "2.2.0", "gridoptim.whl")
 
     def test_json_requests_are_cached(self) -> None:
@@ -201,7 +209,7 @@ class PypiClientTests(unittest.TestCase):
             calls.append("hit")
             return FakeResponse(json.dumps({"info": {"version": "1.0.0"}}).encode())
 
-        client = PypiClient()
+        client = pypi_module.PypiClient()
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             first = client.get_project("gridoptim")
@@ -217,7 +225,7 @@ class PypiClientTests(unittest.TestCase):
             calls.append("hit")
             return FakeResponse(b"wheel-bytes")
 
-        client = PypiClient()
+        client = pypi_module.PypiClient()
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
             first = client.download_distribution(
@@ -237,7 +245,7 @@ class PypiClientTests(unittest.TestCase):
         def fake_urlopen(req: object, timeout: float) -> FakeResponse:
             raise error.URLError("timed out")
 
-        client = PypiClient(
+        client = pypi_module.PypiClient(
             max_retries=1,
             backoff_factor=0.1,
             sleep=lambda delay: None,
@@ -245,7 +253,7 @@ class PypiClientTests(unittest.TestCase):
         )
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            with self.assertRaises(PypiClientError):
+            with self.assertRaises(pypi_module.PypiClientError):
                 client.get_project("gridoptim")
 
         event_names = [event for event, _ in events]
@@ -256,11 +264,13 @@ class PypiClientTests(unittest.TestCase):
     def test_disk_cache_supports_offline_mode(self) -> None:
         cache_store: dict[tuple[str, str | None], bytes] = {}
 
-        def read_cache(self: PypiClient, url: str, *, accept: str | None) -> bytes | None:
+        def read_cache(
+            self: pypi_module.PypiClient, url: str, *, accept: str | None
+        ) -> bytes | None:
             return cache_store.get((url, accept))
 
         def write_cache(
-            self: PypiClient,
+            self: pypi_module.PypiClient,
             url: str,
             payload: bytes,
             *,
@@ -268,12 +278,12 @@ class PypiClientTests(unittest.TestCase):
         ) -> None:
             cache_store[(url, accept)] = payload
 
-        with patch.object(PypiClient, "_read_disk_cache", read_cache), patch.object(
-            PypiClient,
+        with patch.object(pypi_module.PypiClient, "_read_disk_cache", read_cache), patch.object(
+            pypi_module.PypiClient,
             "_write_disk_cache",
             write_cache,
         ):
-            client = PypiClient(cache_dir=".cache/test-cache")
+            client = pypi_module.PypiClient(cache_dir=".cache/test-cache")
             with patch(
                 "urllib.request.urlopen",
                 return_value=FakeResponse(json.dumps({"info": {"version": "1.0.0"}}).encode()),
@@ -283,15 +293,15 @@ class PypiClientTests(unittest.TestCase):
             self.assertEqual(payload["info"]["version"], "1.0.0")
             self.assertTrue(cache_store)
 
-            offline_client = PypiClient(cache_dir=".cache/test-cache", offline=True)
+            offline_client = pypi_module.PypiClient(cache_dir=".cache/test-cache", offline=True)
             offline_payload = offline_client.get_project("gridoptim")
             self.assertEqual(offline_payload["info"]["version"], "1.0.0")
 
     def test_offline_mode_reports_cache_miss_subcode(self) -> None:
-        with patch.object(PypiClient, "_read_disk_cache", return_value=None):
-            client = PypiClient(cache_dir=".cache/test-cache", offline=True)
+        with patch.object(pypi_module.PypiClient, "_read_disk_cache", return_value=None):
+            client = pypi_module.PypiClient(cache_dir=".cache/test-cache", offline=True)
 
-            with self.assertRaises(PypiClientError) as ctx:
+            with self.assertRaises(pypi_module.PypiClientError) as ctx:
                 client.get_project("gridoptim")
 
         self.assertEqual(ctx.exception.subcode, "offline_cache_miss")
