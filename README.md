@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/images/logo.png" width="300">
+</p>
+
 # trustcheck
 
 [![CI](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
