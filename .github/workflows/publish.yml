@@ -104,22 +104,26 @@ jobs:
         run: python -m build
 
       - name: Prepare package upload directory
+        shell: bash
         run: |
           mkdir -p dist/packages
           cp dist/*.whl dist/packages/
           cp dist/*.tar.gz dist/packages/
 
       - name: Smoke test built wheel
+        shell: bash
         run: |
           python -m pip install --force-reinstall --no-deps dist/*.whl
           trustcheck --help
 
       - name: Smoke test built sdist
+        shell: bash
         run: |
           python -m pip install --force-reinstall --no-deps dist/*.tar.gz
           trustcheck --help
 
       - name: Verify archive build without Git metadata
+        shell: bash
         run: |
           archive_root="$(mktemp -d)"
           tar \

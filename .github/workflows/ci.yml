@@ -114,16 +114,19 @@ jobs:
         run: python -m build
 
       - name: Smoke test built wheel
+        shell: bash
         run: |
           python -m pip install --force-reinstall --no-deps dist/*.whl
           trustcheck --help
 
       - name: Smoke test built sdist
+        shell: bash
         run: |
           python -m pip install --force-reinstall --no-deps dist/*.tar.gz
           trustcheck --help
 
       - name: Verify archive build without Git metadata
+        shell: bash
         run: |
           archive_root="$(mktemp -d)"
           tar \
