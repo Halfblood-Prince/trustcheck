@@ -34,25 +34,37 @@ not:
 - embed the software, or any portion or chunk of its code, into any commercial
   product, service, or project.
 
-4. Ownership
+4. GitHub Action Exception
+
+Notwithstanding the other terms of this license, use of the TrustCheck software
+through the official Halfblood-Prince/trustcheck-action GitHub Action is
+permitted for both private and commercial purposes.
+
+This exception applies only to use of TrustCheck as invoked by the official
+GitHub Action and does not grant permission to copy, modify, redistribute,
+sublicense, sell, or otherwise use the TrustCheck software outside that context
+unless separately authorized in writing by the Author.
+
+
+5. Ownership
 
 The software is licensed, not sold. The Author retains all right, title, and
 interest in and to the software.
 
-5. No Warranty
+6. No Warranty
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
 
-6. Limitation of Liability
+7. Limitation of Liability
 
 IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM,
 OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-7. Acceptance
+8. Acceptance
 
 By using, copying, accessing, or modifying this software, you agree to be bound
 by the terms of this license.
