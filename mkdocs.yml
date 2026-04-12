@@ -18,9 +18,12 @@ nav:
   - Reference:
       - Python API: reference/python-api.md
       - JSON contract: reference/json-contract.md
+      - Compatibility: reference/compatibility.md
+      - Trust model and repository matching: reference/trust-model.md
       - Recommendation model: reference/recommendations.md
   - Guides:
       - CI integration: guides/ci-integration.md
+      - Development and release process: guides/development.md
   - Changelog: changelog.md
 
 theme:
