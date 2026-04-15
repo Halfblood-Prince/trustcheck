@@ -11,7 +11,7 @@ from typing import Callable, Sequence
 from .models import TrustReport
 from .policy import BUILTIN_POLICIES, evaluate_policy, resolve_policy
 from .pypi import PypiClient, PypiClientError
-from .service import ProgressCallback, inspect_package
+from .service import DependencyProgressCallback, ProgressCallback, inspect_package
 
 EXIT_OK = 0
 EXIT_UPSTREAM_FAILURE = 1
@@ -60,11 +60,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show detailed per-file verification evidence.",
     )
-    inspect_parser.add_argument(
+    dependency_group = inspect_parser.add_mutually_exclusive_group()
+    dependency_group.add_argument(
         "--with-deps",
         action="store_true",
         help=(
-            "Inspect declared runtime dependencies recursively and "
+            "Inspect direct runtime dependencies and summarize the "
+            "worst-risk dependency."
+        ),
+    )
+    dependency_group.add_argument(
+        "--with-transitive-deps",
+        action="store_true",
+        help=(
+            "Inspect direct and transitive runtime dependencies and "
             "summarize the worst-risk dependency."
         ),
     )
@@ -152,8 +161,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "inspect":
             config_payload = _load_config_file(args.config_file)
             progress_callback = None
+            dependency_progress_callback = None
             if args.format == "text":
                 progress_callback = _build_progress_callback()
+                dependency_progress_callback = _build_dependency_progress_callback()
             client = _build_client(
                 args,
                 config_payload=config_payload,
@@ -168,7 +179,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_repository=args.expected_repo,
                 client=client,
                 progress_callback=progress_callback,
+                dependency_progress_callback=dependency_progress_callback,
                 include_dependencies=args.with_deps,
+                include_transitive_dependencies=args.with_transitive_deps,
             )
             policy_name = "strict" if args.strict else args.policy
             policy = resolve_policy(
@@ -224,6 +237,17 @@ def _build_progress_callback() -> ProgressCallback:
     def emit(filename: str, current: int, total: int) -> None:
         print(
             f"[progress] verifying artifact {current}/{total}: {filename}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    return emit
+
+
+def _build_dependency_progress_callback() -> DependencyProgressCallback:
+    def emit(project: str, depth: int) -> None:
+        print(
+            f"[progress] inspecting dependency depth={depth}: {project}",
             file=sys.stderr,
             flush=True,
         )

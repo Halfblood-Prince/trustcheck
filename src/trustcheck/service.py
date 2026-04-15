@@ -92,6 +92,7 @@ GITHUB_REPO_SUBPATHS = {
 }
 
 ProgressCallback = Callable[[str, int, int], None]
+DependencyProgressCallback = Callable[[str, int], None]
 
 _RECOMMENDATION_ORDER = {
     "verified": 0,
@@ -179,7 +180,9 @@ def inspect_package(
     expected_repository: str | None = None,
     client: PypiClient | None = None,
     progress_callback: ProgressCallback | None = None,
+    dependency_progress_callback: DependencyProgressCallback | None = None,
     include_dependencies: bool = False,
+    include_transitive_dependencies: bool = False,
     _dependency_context: DependencyTraversalContext | None = None,
 ) -> TrustReport:
     client = client or PypiClient()
@@ -227,16 +230,19 @@ def inspect_package(
             ),
             diagnostics=diagnostics.to_report_diagnostics(client),
         )
-        if include_dependencies:
+        dependency_inspection_requested = include_dependencies or include_transitive_dependencies
+        if dependency_inspection_requested:
             report.dependencies = _inspect_dependencies(
                 report,
                 client,
                 dependency_context=dependency_context,
+                dependency_progress_callback=dependency_progress_callback,
+                recursive=include_transitive_dependencies,
             )
         report.dependency_summary = _build_dependency_summary(
             declared_dependencies,
             report.dependencies,
-            requested=include_dependencies,
+            requested=dependency_inspection_requested,
         )
         report.risk_flags = _build_risk_flags(report)
         advisory_evaluation_for(report)
@@ -371,6 +377,8 @@ def _inspect_dependencies(
     client: PypiClient,
     *,
     dependency_context: DependencyTraversalContext,
+    dependency_progress_callback: DependencyProgressCallback | None = None,
+    recursive: bool,
 ) -> list[DependencyInspection]:
     inspections: list[DependencyInspection] = []
     environment: dict[str, str] = {
@@ -391,10 +399,13 @@ def _inspect_dependencies(
             parent=dependency_parent,
             depth=depth,
             environment=environment,
+            dependency_progress_callback=dependency_progress_callback,
         )
         if inspection is None:
             continue
         inspections.append(inspection)
+        if not recursive:
+            continue
         for nested_requirement in nested_requirements:
             pending.append(
                 (
@@ -414,6 +425,7 @@ def _inspect_dependency_requirement(
     parent: tuple[str, str],
     depth: int,
     environment: dict[str, str],
+    dependency_progress_callback: DependencyProgressCallback | None = None,
 ) -> tuple[DependencyInspection | None, list[str]]:
     try:
         requirement = Requirement(requirement_text)
@@ -440,6 +452,8 @@ def _inspect_dependency_requirement(
     if dependency_key in dependency_context.seen:
         return None, []
     dependency_context.seen.add(dependency_key)
+    if dependency_progress_callback is not None:
+        dependency_progress_callback(project_name, depth)
 
     try:
         payload = client.get_project(project_name)
@@ -450,6 +464,7 @@ def _inspect_dependency_requirement(
             client=client,
             include_dependencies=False,
             _dependency_context=dependency_context,
+            dependency_progress_callback=dependency_progress_callback,
         )
         inspection = DependencyInspection(
             requirement=requirement_text,
@@ -618,6 +633,9 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
     files_with_errors = [file.filename for file in report.files if file.error]
     files_without_provenance = [file.filename for file in report.files if not file.has_provenance]
     unverified_files = [file.filename for file in report.files if not file.verified]
+    artifact_failure_by_filename = {
+        failure.filename: failure for failure in report.diagnostics.artifact_failures
+    }
 
     if report.vulnerabilities:
         flags.append(
@@ -805,7 +823,7 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
         flags.append(
             RiskFlag(
                 code="no_provenance",
-                severity="high",
+                severity="medium",
                 message=(
                     "No provenance bundles were found for the release files "
                     "on PyPI, so the artifacts cannot be verified."
@@ -847,7 +865,13 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
             )
         )
 
-    if any(file.error for file in report.files):
+    if any(
+        file.error
+        and not _is_missing_provenance_failure(
+            artifact_failure_by_filename.get(file.filename)
+        )
+        for file in report.files
+    ):
         flags.append(
             RiskFlag(
                 code="provenance_verification_failed",
@@ -869,7 +893,11 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
             )
         )
 
-    if report.files and not all(file.verified for file in report.files):
+    if (
+        report.files
+        and not all(file.verified for file in report.files)
+        and not all(not file.has_provenance for file in report.files)
+    ):
         flags.append(
             RiskFlag(
                 code="unverified_provenance",
@@ -890,7 +918,11 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
             )
         )
 
-    if report.files and not any(file.publisher_identities for file in report.files):
+    if (
+        report.files
+        and any(file.has_provenance for file in report.files)
+        and not any(file.publisher_identities for file in report.files)
+    ):
         flags.append(
             RiskFlag(
                 code="missing_publisher_identity",
@@ -977,6 +1009,17 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
         )
 
     return flags
+
+
+def _is_missing_provenance_failure(diagnostic: ArtifactDiagnostic | None) -> bool:
+    return (
+        diagnostic is not None
+        and diagnostic.stage == "provenance-fetch"
+        and (
+            diagnostic.subcode == "http_not_found"
+            or "not found" in diagnostic.message.lower()
+        )
+    )
 
 
 def _normalize_repo_url(url: str | None) -> str:

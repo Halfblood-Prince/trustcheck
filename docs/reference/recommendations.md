@@ -16,6 +16,8 @@ No cryptographically verified artifact set was established, but no risk flags el
 
 Medium-severity issues require manual review.
 
+This can include cases where a package publishes no provenance at all. Missing provenance weakens the trust signal, but it is different from a failed verification or a direct inconsistency.
+
 ### `high-risk`
 
 High-severity issues were detected.

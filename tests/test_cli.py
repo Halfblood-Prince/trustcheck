@@ -162,6 +162,31 @@ class CliBehaviorTests(unittest.TestCase):
         )
         self.assertIn("trustcheck report for gridoptim 2.2.0", stdout.getvalue())
 
+    def test_cli_text_output_emits_dependency_progress_to_stderr(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        def fake_inspect_package(*args, **kwargs):
+            dependency_progress_callback = kwargs["dependency_progress_callback"]
+            dependency_progress_callback("depalpha", 1)
+            dependency_progress_callback("depbeta", 2)
+            return make_report()
+
+        with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                exit_code = main(["inspect", "gridoptim", "--with-deps"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertIn(
+            "[progress] inspecting dependency depth=1: depalpha",
+            stderr.getvalue(),
+        )
+        self.assertIn(
+            "[progress] inspecting dependency depth=2: depbeta",
+            stderr.getvalue(),
+        )
+        self.assertIn("trustcheck report for gridoptim 2.2.0", stdout.getvalue())
+
     def test_cli_success_json_output_contract(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -221,6 +246,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         def fake_inspect_package(*args, **kwargs):
             self.assertIsNone(kwargs["progress_callback"])
+            self.assertIsNone(kwargs["dependency_progress_callback"])
             return make_report()
 
         with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
@@ -237,6 +263,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         def fake_inspect_package(*args, **kwargs):
             self.assertTrue(kwargs["include_dependencies"])
+            self.assertFalse(kwargs["include_transitive_dependencies"])
             return make_report()
 
         with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
@@ -245,15 +272,29 @@ class CliBehaviorTests(unittest.TestCase):
 
         self.assertEqual(exit_code, EXIT_OK)
 
+    def test_cli_with_transitive_deps_flag_enables_recursive_dependency_inspection(self) -> None:
+        stdout = io.StringIO()
+
+        def fake_inspect_package(*args, **kwargs):
+            self.assertFalse(kwargs["include_dependencies"])
+            self.assertTrue(kwargs["include_transitive_dependencies"])
+            return make_report()
+
+        with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(["inspect", "gridoptim", "--with-transitive-deps"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+
     def test_cli_text_output_shows_file_errors_in_verbose_mode(self) -> None:
         report = make_report()
         report.files[0].verified = False
         report.files[0].error = "resource not found"
-        report.recommendation = "high-risk"
+        report.recommendation = "review-required"
         report.risk_flags = [
             RiskFlag(
                 code="no_provenance",
-                severity="high",
+                severity="medium",
                 message="No provenance bundles were found.",
                 why=["No verified provenance bundle was attached to the artifact."],
                 remediation=["Require a release that publishes provenance before use."],
@@ -267,7 +308,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertIn("note: resource not found", stdout.getvalue())
-        self.assertIn("[high] no_provenance", stdout.getvalue())
+        self.assertIn("[medium] no_provenance", stdout.getvalue())
         self.assertIn("why:", stdout.getvalue())
         self.assertIn("remediation:", stdout.getvalue())
         self.assertIn("requirement: depalpha>=1.0", stdout.getvalue())

@@ -16,6 +16,8 @@
 
 It combines PyPI metadata, vulnerability records, provenance availability, cryptographic attestation verification, Trusted Publisher identity hints, and repository matching into a single operator-friendly report.
 
+Packages that publish no provenance are treated as needing review rather than as automatic high-risk findings, while invalid provenance, partial coverage, repository mismatches, and known vulnerabilities remain stronger negative signals.
+
 ## What it checks
 
 For a selected package version, `trustcheck` can:
@@ -52,10 +54,16 @@ Inspect a specific version:
 trustcheck inspect sampleproject --version 4.0.0
 ```
 
-Inspect a package and its declared dependencies:
+Inspect a package and its direct dependencies:
 
 ```bash
 trustcheck inspect sampleproject --version 4.0.0 --with-deps
+```
+
+Inspect the full transitive dependency tree:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --with-transitive-deps
 ```
 
 Require a release to match an expected repository:
@@ -83,7 +91,7 @@ Use it from Python:
 ```python
 from trustcheck import inspect_package
 
-report = inspect_package("sampleproject", version="4.0.0")
+report = inspect_package("sampleproject", version="4.0.0", include_dependencies=True)
 print(report.recommendation)
 ```
 

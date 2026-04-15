@@ -117,7 +117,7 @@
 
 ## Dependency fields
 
-When dependency inspection is enabled with `--with-deps` or `include_dependencies=True`, the report may include:
+When dependency inspection is enabled with `--with-deps`, `--with-transitive-deps`, `include_dependencies=True`, or `include_transitive_dependencies=True`, the report may include:
 
 - `report.declared_dependencies`: raw `requires_dist` strings from the inspected release metadata
 - `report.dependencies`: flattened dependency inspection results for the resolved dependency set

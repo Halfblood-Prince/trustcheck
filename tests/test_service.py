@@ -237,7 +237,7 @@ class InspectPackageTests(unittest.TestCase):
 
         self.assertEqual(report.files[0].error, "resource not found")
         self.assertIn("no_provenance", {flag.code for flag in report.risk_flags})
-        self.assertEqual(report.recommendation, "high-risk")
+        self.assertEqual(report.recommendation, "review-required")
 
     def test_provenance_transient_failure_marks_file_as_unverified(self) -> None:
         payload = make_project_payload()
@@ -758,6 +758,69 @@ class InspectPackageTests(unittest.TestCase):
         self.assertEqual(report.dependency_summary.max_depth, 1)
         self.assertEqual(report.dependency_summary.highest_risk_recommendation, "high-risk")
         self.assertIn("dependency_high_risk", {flag.code for flag in report.risk_flags})
+
+    def test_inspect_package_transitive_dependency_mode_walks_nested_dependencies(self) -> None:
+        root_payload = make_project_payload(
+            requires_dist=["depalpha>=1.0"],
+            releases={"2.2.0": []},
+        )
+        depalpha_payload = make_project_payload(
+            version="1.4.0",
+            requires_dist=["depbeta>=2.0"],
+            releases={"1.4.0": []},
+            urls=[],
+            project_urls={},
+        )
+        depbeta_payload = make_project_payload(
+            version="2.5.0",
+            requires_dist=[],
+            releases={"2.5.0": []},
+            urls=[],
+            project_urls={},
+        )
+        client = FakeClient(
+            project_payload=root_payload,
+            release_payloads={
+                "depalpha": depalpha_payload,
+                "depbeta": depbeta_payload,
+            },
+        )
+
+        report = inspect_package(
+            "gridoptim",
+            client=cast(Any, client),
+            include_transitive_dependencies=True,
+        )
+
+        self.assertEqual(
+            [(item.project, item.depth) for item in report.dependencies],
+            [("depalpha", 1), ("depbeta", 2)],
+        )
+        self.assertEqual(report.dependency_summary.total_inspected, 2)
+        self.assertEqual(report.dependency_summary.max_depth, 2)
+
+    def test_inspect_package_reports_dependency_progress(self) -> None:
+        client = FakeClient(
+            project_payload=make_project_payload(
+                requires_dist=["depalpha>=1.0"],
+                releases={"2.2.0": []},
+            ),
+            release_payloads={
+                "depalpha": make_project_payload(version="1.4.0", releases={"1.4.0": []}, urls=[]),
+            },
+        )
+        progress_events: list[tuple[str, int]] = []
+
+        inspect_package(
+            "gridoptim",
+            client=cast(Any, client),
+            include_dependencies=True,
+            dependency_progress_callback=lambda project, depth: progress_events.append(
+                (project, depth)
+            ),
+        )
+
+        self.assertEqual(progress_events, [("depalpha", 1)])
 
     def test_dependency_resolution_failure_is_recorded(self) -> None:
         client = FakeClient(

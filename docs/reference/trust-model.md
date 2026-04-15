@@ -12,6 +12,8 @@ That distinction is reflected in the report:
 - verified provenance can support a trust decision
 - missing or unverifiable provenance drives risk flags and strict-policy failures
 
+In particular, a complete absence of published provenance is treated as a weaker trust posture that typically warrants review, while invalid provenance or stronger inconsistencies remain higher-severity concerns.
+
 Recommendation tiers are documented in more detail in [Recommendation model](recommendations.md), but the core outcomes are:
 
 - `verified`: every discovered release artifact verified successfully
@@ -62,14 +64,14 @@ For configuration details, see [Config and offline mode](../cli/configuration.md
 
 ## Dependency inspection
 
-When `--with-deps` or `include_dependencies=True` is used, `trustcheck` extends the trust model from a single release to the package's declared runtime dependency set.
+When `--with-deps`, `--with-transitive-deps`, `include_dependencies=True`, or `include_transitive_dependencies=True` is used, `trustcheck` extends the trust model from a single release to the package's declared runtime dependency set.
 
 Dependency inspection currently works by:
 
 - reading `requires_dist` metadata from the selected release
 - evaluating environment markers before inspection
 - resolving a compatible dependency release from the versions visible on PyPI
-- recursively inspecting those dependency releases with the same release-level trust logic
+- inspecting either direct dependencies only or the full transitive tree, depending on the selected mode
 - summarizing the highest-risk dependency outcome in the top-level report
 
 The dependency view is flattened in the report for operator readability and automation. The `depth`, `parent_project`, and `parent_version` fields preserve traversal context.

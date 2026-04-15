@@ -32,10 +32,10 @@ jobs:
 
 ## Inspect the dependency set in CI
 
-Use `--with-deps` when you want the gate to consider the resolved runtime dependency set instead of only the top-level package release.
+Use `--with-deps` when you want the gate to consider direct runtime dependencies in addition to the top-level package release.
 
 ```yaml
-- name: Inspect release and dependencies
+- name: Inspect release and direct dependencies
   run: |
     trustcheck inspect sampleproject \
       --version 4.0.0 \
@@ -43,7 +43,18 @@ Use `--with-deps` when you want the gate to consider the resolved runtime depend
       --strict
 ```
 
-This is useful when a package itself verifies cleanly, but one of its declared dependencies is missing provenance, has known vulnerabilities, or otherwise escalates the overall review outcome.
+Use `--with-transitive-deps` when you want to walk the full dependency tree recursively:
+
+```yaml
+- name: Inspect release and full dependency tree
+  run: |
+    trustcheck inspect sampleproject \
+      --version 4.0.0 \
+      --with-transitive-deps \
+      --strict
+```
+
+This is useful when a package itself verifies cleanly, but one of its dependencies is missing provenance, has known vulnerabilities, or otherwise escalates the overall review outcome.
 
 ## Capture JSON output
 

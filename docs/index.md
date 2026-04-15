@@ -53,10 +53,16 @@ Emit JSON for automation:
 trustcheck inspect sampleproject --version 4.0.0 --format json
 ```
 
-Inspect the package and its declared dependencies:
+Inspect the package and its direct dependencies:
 
 ```bash
 trustcheck inspect sampleproject --version 4.0.0 --with-deps
+```
+
+Inspect the full dependency tree:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --with-transitive-deps
 ```
 
 Fail CI when full verification is missing:
