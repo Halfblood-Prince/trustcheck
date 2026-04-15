@@ -28,9 +28,13 @@ A recommendation is best interpreted together with:
 - `publisher_trust`
 - `provenance_consistency`
 - `release_drift`
+- `dependency_summary`
+- `dependencies`
 - `risk_flags`
 - `policy`
 
 ## Important distinction
 
 A recommendation is not the same thing as a policy gate. A report can have an advisory recommendation and still pass or fail depending on the selected policy settings.
+
+When dependency inspection is enabled, dependency outcomes can also influence the top-level recommendation. For example, a package with clean top-level release evidence may still become `review-required` or `high-risk` if an inspected dependency lands in one of those tiers.

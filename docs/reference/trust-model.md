@@ -60,10 +60,25 @@ Common upstream subcodes include:
 
 For configuration details, see [Config and offline mode](../cli/configuration.md).
 
+## Dependency inspection
+
+When `--with-deps` or `include_dependencies=True` is used, `trustcheck` extends the trust model from a single release to the package's declared runtime dependency set.
+
+Dependency inspection currently works by:
+
+- reading `requires_dist` metadata from the selected release
+- evaluating environment markers before inspection
+- resolving a compatible dependency release from the versions visible on PyPI
+- recursively inspecting those dependency releases with the same release-level trust logic
+- summarizing the highest-risk dependency outcome in the top-level report
+
+The dependency view is flattened in the report for operator readability and automation. The `depth`, `parent_project`, and `parent_version` fields preserve traversal context.
+
 ## Limitations
 
 - PyPI metadata quality varies by project
 - some projects do not publish provenance at all
 - repository matching currently supports canonical GitHub and GitLab URLs only
+- dependency inspection uses declared runtime metadata and does not yet ingest lockfiles or solver output
 - provenance verification may depend on local environment support required by underlying tooling
 - text output is intentionally concise and may omit low-level detail unless `--verbose` is used

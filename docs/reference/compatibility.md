@@ -10,6 +10,7 @@ The following interfaces are supported across compatible releases:
 - `TrustReport.to_dict()` returning the machine-readable report envelope
 - top-level JSON fields `schema_version` and `report`
 - currently documented report field names
+- the `include_dependencies` keyword on `inspect_package(...)`
 - the machine-readable `report.diagnostics` block
 - the machine-readable `report.policy` evaluation block
 - the meaning of `schema_version`, `JSON_SCHEMA_ID`, and `get_json_schema()`

@@ -26,6 +26,14 @@ trustcheck inspect sampleproject \
 trustcheck inspect sampleproject --version 4.0.0 --verbose
 ```
 
+## Inspect declared dependencies too
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --with-deps
+```
+
+When dependency inspection is enabled, the text report adds a dependency summary with the number of declared and inspected dependencies, the maximum traversal depth, and the highest-risk dependency recommendation observed in the set.
+
 ## Emit machine-readable JSON
 
 ```bash

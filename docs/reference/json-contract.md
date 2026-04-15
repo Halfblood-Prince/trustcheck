@@ -12,19 +12,20 @@
 
 ## Current schema identifiers
 
-- `JSON_SCHEMA_VERSION = "1.2.0"`
-- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.2.0"`
+- `JSON_SCHEMA_VERSION = "1.3.0"`
+- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.3.0"`
 
 ## Top-level shape
 
 ```json
 {
-  "schema_version": "1.2.0",
+  "schema_version": "1.3.0",
   "report": {
     "project": "demo",
     "version": "1.2.3",
     "summary": "Demo package",
     "package_url": "https://pypi.org/project/demo/1.2.3/",
+    "declared_dependencies": ["depalpha>=1.0"],
     "diagnostics": {
       "timeout": 10.0,
       "max_retries": 2,
@@ -84,11 +85,45 @@
       "previous_repositories": [],
       "previous_workflows": []
     },
+    "dependencies": [
+      {
+        "requirement": "depalpha>=1.0",
+        "project": "depalpha",
+        "version": "1.4.0",
+        "depth": 1,
+        "parent_project": "demo",
+        "parent_version": "1.2.3",
+        "package_url": "https://pypi.org/project/depalpha/1.4.0/",
+        "recommendation": "review-required",
+        "risk_flags": [],
+        "declared_dependencies": [],
+        "error": null
+      }
+    ],
+    "dependency_summary": {
+      "requested": true,
+      "total_declared": 1,
+      "total_inspected": 1,
+      "unique_dependencies": 1,
+      "max_depth": 1,
+      "highest_risk_recommendation": "review-required",
+      "highest_risk_projects": ["depalpha"]
+    },
     "risk_flags": [],
     "recommendation": "verified"
   }
 }
 ```
+
+## Dependency fields
+
+When dependency inspection is enabled with `--with-deps` or `include_dependencies=True`, the report may include:
+
+- `report.declared_dependencies`: raw `requires_dist` strings from the inspected release metadata
+- `report.dependencies`: flattened dependency inspection results for the resolved dependency set
+- `report.dependency_summary`: aggregate counts and the highest-risk recommendation seen among inspected dependencies
+
+If dependency inspection is not requested, these fields are still present in the contract with empty or default values so JSON consumers can rely on a stable shape.
 
 ## Runtime schema access
 

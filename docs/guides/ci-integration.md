@@ -30,6 +30,21 @@ jobs:
             --strict
 ```
 
+## Inspect the dependency set in CI
+
+Use `--with-deps` when you want the gate to consider the resolved runtime dependency set instead of only the top-level package release.
+
+```yaml
+- name: Inspect release and dependencies
+  run: |
+    trustcheck inspect sampleproject \
+      --version 4.0.0 \
+      --with-deps \
+      --strict
+```
+
+This is useful when a package itself verifies cleanly, but one of its declared dependencies is missing provenance, has known vulnerabilities, or otherwise escalates the overall review outcome.
+
 ## Capture JSON output
 
 ```yaml
@@ -37,6 +52,7 @@ jobs:
   run: |
     trustcheck inspect sampleproject \
       --version 4.0.0 \
+      --with-deps \
       --format json > trustcheck-report.json
 ```
 

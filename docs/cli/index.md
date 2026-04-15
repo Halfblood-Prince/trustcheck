@@ -12,6 +12,7 @@ trustcheck inspect <project>
 - `--expected-repo`: require repository evidence to match an expected GitHub or GitLab repository
 - `--format text|json`: choose human-readable text or machine-readable JSON
 - `--verbose`: include per-file provenance, digest, publisher, and note fields in text output
+- `--with-deps`: recursively inspect declared runtime dependencies and summarize the highest-risk dependency
 - `--strict`: apply the built-in strict policy
 - `--policy default|strict|internal-metadata`: evaluate a built-in policy profile
 - `--policy-file PATH`: load policy settings from a JSON file
@@ -49,6 +50,14 @@ Run with strict policy:
 ```bash
 trustcheck inspect sampleproject --version 4.0.0 --strict
 ```
+
+Inspect the package and its dependency set:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --with-deps
+```
+
+When `--with-deps` is enabled, `trustcheck` reads `requires_dist` metadata, resolves compatible dependency versions from PyPI, recursively inspects those releases, and adds a dependency summary to the report. The top-level result can be escalated if an inspected dependency is `review-required` or `high-risk`.
 
 Use a custom policy file:
 

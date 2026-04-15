@@ -16,6 +16,7 @@ For a selected package version, `trustcheck` can:
 - compare expected repository input against declared and attested repository signals
 - flag publisher repository and workflow drift against the previous release
 - surface PyPI vulnerability records for the selected version
+- inspect declared runtime dependencies and summarize the worst-risk dependency in the set
 - emit a concise human-readable report or structured JSON
 
 ## Install
@@ -52,6 +53,12 @@ Emit JSON for automation:
 trustcheck inspect sampleproject --version 4.0.0 --format json
 ```
 
+Inspect the package and its declared dependencies:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --with-deps
+```
+
 Fail CI when full verification is missing:
 
 ```bash
@@ -65,9 +72,10 @@ trustcheck inspect sampleproject --version 4.0.0 --strict
 ```python
 from trustcheck import inspect_package
 
-report = inspect_package("sampleproject", version="4.0.0")
+report = inspect_package("sampleproject", version="4.0.0", include_dependencies=True)
 print(report.recommendation)
 print(report.to_dict()["report"]["coverage"]["status"])
+print(report.dependency_summary.highest_risk_recommendation)
 ```
 
 <script

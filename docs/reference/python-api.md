@@ -18,7 +18,7 @@ Everything else under `trustcheck.*` should be treated as internal implementatio
 ```python
 from trustcheck import JSON_SCHEMA_VERSION, TrustReport, get_json_schema, inspect_package
 
-report = inspect_package("sampleproject", version="4.0.0")
+report = inspect_package("sampleproject", version="4.0.0", include_dependencies=True)
 payload = report.to_dict()
 assert payload["schema_version"] == JSON_SCHEMA_VERSION
 
@@ -37,6 +37,23 @@ report = inspect_package("sampleproject", version="4.0.0")
 
 print(report.recommendation)
 print(report.coverage.status)
+```
+
+### Inspect the dependency set too
+
+```python
+from trustcheck import inspect_package
+
+report = inspect_package(
+    "sampleproject",
+    version="4.0.0",
+    include_dependencies=True,
+)
+
+print(report.dependency_summary.total_inspected)
+print(report.dependency_summary.highest_risk_recommendation)
+for dependency in report.dependencies:
+    print(dependency.project, dependency.version, dependency.recommendation)
 ```
 
 ### Require a repository match before continuing
@@ -61,7 +78,7 @@ import json
 
 from trustcheck import inspect_package
 
-report = inspect_package("sampleproject", version="4.0.0")
+report = inspect_package("sampleproject", version="4.0.0", include_dependencies=True)
 payload = report.to_dict()
 
 print(json.dumps(payload, indent=2))
@@ -69,13 +86,14 @@ print(json.dumps(payload, indent=2))
 
 ## `inspect_package`
 
-Use `inspect_package(project, version=None, expected_repository=None, client=None, progress_callback=None)` to collect evidence and build a `TrustReport`.
+Use `inspect_package(project, version=None, expected_repository=None, client=None, progress_callback=None, include_dependencies=False)` to collect evidence and build a `TrustReport`.
 
 In most applications, you only need to provide:
 
 - `project`
 - optionally `version`
 - optionally `expected_repository`
+- optionally `include_dependencies=True` when you want recursive dependency inspection
 
 ### Progress callback example
 
@@ -101,6 +119,7 @@ report = inspect_package(
 `TrustReport` is the main result object. It includes:
 
 - package identity and summary
+- declared dependency metadata
 - repository signals
 - vulnerabilities
 - per-file provenance data
@@ -108,6 +127,7 @@ report = inspect_package(
 - publisher trust summary
 - provenance consistency
 - release drift
+- dependency inspection results and aggregate dependency summary
 - policy evaluation
 - diagnostics
 
@@ -125,4 +145,7 @@ for flag in report.risk_flags:
 
 for file in report.files:
     print(file.filename, file.verified, file.error)
+
+for dependency in report.dependencies:
+    print(dependency.project, dependency.depth, dependency.recommendation, dependency.error)
 ```
