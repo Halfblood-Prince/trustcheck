@@ -6,4 +6,4 @@ In light of software supply-chain incidents such as the XZ Utils backdoor and th
 
 Issues may still be reported for bugs, security concerns, and feature suggestions, but pull requests will not be reviewed or merged.
 
-If you discover a security issue, follow the process in [SECURITY.md](SECURITY.md) instead of filing a public issue.
+If you discover a security issue, follow the reporting guidance in [SECURITY.md](SECURITY.md).

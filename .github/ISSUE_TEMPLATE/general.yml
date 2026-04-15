@@ -1,0 +1,100 @@
+name: General issue
+description: Report a bug, request an enhancement, or suggest a documentation improvement.
+title: "[Issue]: "
+labels:
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue for `trustcheck`.
+
+        Before submitting:
+
+        - Security issues may be reported publicly here on GitHub. You can also follow the guidance in `SECURITY.md` if you prefer to use the Discord channel.
+        - This repository currently follows a solo-developer policy. Issues are welcome, but pull requests are not being accepted at this time.
+
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Issue type
+      description: What kind of issue are you reporting?
+      options:
+        - Bug report
+        - Feature request
+        - Documentation improvement
+        - Question or clarification
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the issue or request in a few clear sentences.
+      placeholder: trustcheck should..., trustcheck failed when..., the docs are missing...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction or context
+      description: For bugs, provide steps to reproduce. For other issue types, provide the surrounding context.
+      placeholder: |
+        1. Run `trustcheck inspect ...`
+        2. Observe ...
+        3. Expected ...
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+      placeholder: I expected trustcheck to...
+    validations:
+      required: false
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead?
+      placeholder: trustcheck instead...
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Share any relevant environment details.
+      placeholder: |
+        trustcheck version:
+        Python version:
+        OS:
+        Command run:
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional details
+      description: Add logs, screenshots, related packages, or any extra context that would help with triage.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I reviewed the reporting guidance in SECURITY.md when relevant.
+          required: true
+        - label: I included enough detail for triage.
+          required: true
