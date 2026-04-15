@@ -373,7 +373,9 @@ def _inspect_dependencies(
     dependency_context: DependencyTraversalContext,
 ) -> list[DependencyInspection]:
     inspections: list[DependencyInspection] = []
-    environment: dict[str, str] = dict(default_environment())
+    environment: dict[str, str] = {
+        key: str(value) for key, value in default_environment().items()
+    }
     environment.setdefault("extra", "")
     pending: deque[tuple[str, tuple[str, str], int]] = deque(
         (requirement_text, (report.project, report.version), 1)
@@ -503,7 +505,15 @@ def _select_dependency_version(payload: dict[str, Any], requirement: Requirement
 
     fallback = info.get("version")
     if isinstance(fallback, str) and fallback:
-        return fallback
+        try:
+            parsed_fallback = Version(fallback)
+        except InvalidVersion:
+            parsed_fallback = None
+        if parsed_fallback is not None and (
+            not requirement.specifier
+            or requirement.specifier.contains(parsed_fallback, prereleases=None)
+        ):
+            return fallback
     raise PypiClientError(
         f"unable to resolve a compatible version for dependency {requirement.name!r}",
         transient=False,
