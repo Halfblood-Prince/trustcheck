@@ -373,7 +373,7 @@ def _inspect_dependencies(
     dependency_context: DependencyTraversalContext,
 ) -> list[DependencyInspection]:
     inspections: list[DependencyInspection] = []
-    environment = default_environment()
+    environment: dict[str, str] = dict(default_environment())
     environment.setdefault("extra", "")
     pending: deque[tuple[str, tuple[str, str], int]] = deque(
         (requirement_text, (report.project, report.version), 1)
