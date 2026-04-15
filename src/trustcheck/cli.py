@@ -61,6 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show detailed per-file verification evidence.",
     )
     inspect_parser.add_argument(
+        "--with-deps",
+        action="store_true",
+        help="Inspect declared runtime dependencies recursively and summarize the worst-risk dependency.",
+    )
+    inspect_parser.add_argument(
         "--strict",
         action="store_true",
         help="Apply the built-in strict policy.",
@@ -160,6 +165,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_repository=args.expected_repo,
                 client=client,
                 progress_callback=progress_callback,
+                include_dependencies=args.with_deps,
             )
             policy_name = "strict" if args.strict else args.policy
             policy = resolve_policy(
@@ -417,6 +423,44 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
         lines.append("")
         lines.append("declared repository urls:")
         lines.extend(f"  - {url}" for url in report.declared_repository_urls)
+
+    if report.dependency_summary.requested:
+        lines.append("")
+        lines.append("dependencies:")
+        lines.append(
+            "  summary: "
+            f"declared={report.dependency_summary.total_declared} "
+            f"inspected={report.dependency_summary.total_inspected} "
+            f"unique={report.dependency_summary.unique_dependencies} "
+            f"max_depth={report.dependency_summary.max_depth} "
+            f"highest_risk={report.dependency_summary.highest_risk_recommendation}"
+        )
+        if report.dependency_summary.highest_risk_projects:
+            lines.append(
+                "  highest-risk dependencies: "
+                + ", ".join(report.dependency_summary.highest_risk_projects)
+            )
+        if verbose and report.dependencies:
+            for dependency in report.dependencies:
+                lines.append(
+                    "  - "
+                    f"{dependency.project} {dependency.version} "
+                    f"(depth={dependency.depth}, recommendation={dependency.recommendation})"
+                )
+                lines.append(f"    requirement: {dependency.requirement}")
+                if dependency.parent_project:
+                    lines.append(
+                        "    parent: "
+                        f"{dependency.parent_project} {dependency.parent_version or 'unknown'}"
+                    )
+                if dependency.error:
+                    lines.append(f"    note: {dependency.error}")
+                elif dependency.risk_flags:
+                    lines.append("    risk flags:")
+                    lines.extend(
+                        f"      - [{flag.severity}] {flag.code}: {flag.message}"
+                        for flag in dependency.risk_flags[:3]
+                    )
 
     if report.expected_repository:
         lines.append(f"expected repository: {report.expected_repository}")

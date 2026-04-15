@@ -82,6 +82,32 @@ class ReleaseDriftSummary:
 
 
 @dataclass(slots=True)
+class DependencyInspection:
+    requirement: str
+    project: str
+    version: str
+    depth: int
+    parent_project: str | None = None
+    parent_version: str | None = None
+    package_url: str | None = None
+    recommendation: str = "metadata-only"
+    risk_flags: list[RiskFlag] = field(default_factory=list)
+    declared_dependencies: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass(slots=True)
+class DependencySummary:
+    requested: bool = False
+    total_declared: int = 0
+    total_inspected: int = 0
+    unique_dependencies: int = 0
+    max_depth: int = 0
+    highest_risk_recommendation: str = "metadata-only"
+    highest_risk_projects: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class PolicyViolation:
     code: str
     severity: str
@@ -141,6 +167,7 @@ class TrustReport:
     version: str
     summary: str | None
     package_url: str
+    declared_dependencies: list[str] = field(default_factory=list)
     declared_repository_urls: list[str] = field(default_factory=list)
     repository_urls: list[str] = field(default_factory=list)
     expected_repository: str | None = None
@@ -151,6 +178,8 @@ class TrustReport:
     publisher_trust: PublisherTrustSummary = field(default_factory=PublisherTrustSummary)
     provenance_consistency: ProvenanceConsistency = field(default_factory=ProvenanceConsistency)
     release_drift: ReleaseDriftSummary = field(default_factory=ReleaseDriftSummary)
+    dependencies: list[DependencyInspection] = field(default_factory=list)
+    dependency_summary: DependencySummary = field(default_factory=DependencySummary)
     risk_flags: list[RiskFlag] = field(default_factory=list)
     recommendation: str = "metadata-only"
     policy: PolicyEvaluation = field(default_factory=PolicyEvaluation)

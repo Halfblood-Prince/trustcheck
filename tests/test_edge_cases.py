@@ -23,6 +23,8 @@ from trustcheck.cli import (
 from trustcheck.models import (
     ArtifactDiagnostic,
     CoverageSummary,
+    DependencyInspection,
+    DependencySummary,
     FileProvenance,
     ProvenanceConsistency,
     PublisherIdentity,
@@ -52,6 +54,7 @@ def make_report() -> TrustReport:
         version="2.2.0",
         summary="gridoptim package",
         package_url="https://pypi.org/project/gridoptim/2.2.0/",
+        declared_dependencies=["depalpha>=1.0"],
         declared_repository_urls=["https://github.com/halfblood-prince/gridoptim"],
         repository_urls=["https://github.com/halfblood-prince/gridoptim"],
         expected_repository="https://github.com/halfblood-prince/gridoptim",
@@ -107,6 +110,27 @@ def make_report() -> TrustReport:
             publisher_workflow_drift=True,
             previous_repositories=["https://github.com/halfblood-prince/gridoptim"],
             previous_workflows=["old-release.yml"],
+        ),
+        dependencies=[
+            DependencyInspection(
+                requirement="depalpha>=1.0",
+                project="depalpha",
+                version="1.4.0",
+                depth=1,
+                parent_project="gridoptim",
+                parent_version="2.2.0",
+                package_url="https://pypi.org/project/depalpha/1.4.0/",
+                recommendation="review-required",
+            )
+        ],
+        dependency_summary=DependencySummary(
+            requested=True,
+            total_declared=1,
+            total_inspected=1,
+            unique_dependencies=1,
+            max_depth=1,
+            highest_risk_recommendation="review-required",
+            highest_risk_projects=["depalpha"],
         ),
         vulnerabilities=[
             VulnerabilityRecord(
@@ -271,6 +295,7 @@ class CliHelperCoverageTests(unittest.TestCase):
         self.assertIn("publisher: kind=GitHub", rendered)
         self.assertIn("request failures: none", rendered)
         self.assertIn("artifact failures:", rendered)
+        self.assertIn("dependencies:", rendered)
 
 
 class PolicyCoverageTests(unittest.TestCase):

@@ -471,6 +471,146 @@
       "title": "ReleaseDriftSummaryPayload",
       "type": "object"
     },
+    "DependencyInspectionPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "declared_dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Declared Dependencies",
+          "type": "array"
+        },
+        "depth": {
+          "title": "Depth",
+          "type": "integer"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "package_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Package Url"
+        },
+        "parent_project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Project"
+        },
+        "parent_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Version"
+        },
+        "project": {
+          "title": "Project",
+          "type": "string"
+        },
+        "recommendation": {
+          "default": "metadata-only",
+          "title": "Recommendation",
+          "type": "string"
+        },
+        "requirement": {
+          "title": "Requirement",
+          "type": "string"
+        },
+        "risk_flags": {
+          "items": {
+            "$ref": "#/$defs/RiskFlagPayload"
+          },
+          "title": "Risk Flags",
+          "type": "array"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "requirement",
+        "project",
+        "version",
+        "depth"
+      ],
+      "title": "DependencyInspectionPayload",
+      "type": "object"
+    },
+    "DependencySummaryPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "highest_risk_projects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Highest Risk Projects",
+          "type": "array"
+        },
+        "highest_risk_recommendation": {
+          "default": "metadata-only",
+          "title": "Highest Risk Recommendation",
+          "type": "string"
+        },
+        "max_depth": {
+          "default": 0,
+          "title": "Max Depth",
+          "type": "integer"
+        },
+        "requested": {
+          "default": false,
+          "title": "Requested",
+          "type": "boolean"
+        },
+        "total_declared": {
+          "default": 0,
+          "title": "Total Declared",
+          "type": "integer"
+        },
+        "total_inspected": {
+          "default": 0,
+          "title": "Total Inspected",
+          "type": "integer"
+        },
+        "unique_dependencies": {
+          "default": 0,
+          "title": "Unique Dependencies",
+          "type": "integer"
+        }
+      },
+      "title": "DependencySummaryPayload",
+      "type": "object"
+    },
     "ReportDiagnosticsPayload": {
       "additionalProperties": false,
       "properties": {
@@ -634,12 +774,29 @@
         "coverage": {
           "$ref": "#/$defs/CoverageSummaryPayload"
         },
+        "declared_dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Declared Dependencies",
+          "type": "array"
+        },
         "declared_repository_urls": {
           "items": {
             "type": "string"
           },
           "title": "Declared Repository Urls",
           "type": "array"
+        },
+        "dependencies": {
+          "items": {
+            "$ref": "#/$defs/DependencyInspectionPayload"
+          },
+          "title": "Dependencies",
+          "type": "array"
+        },
+        "dependency_summary": {
+          "$ref": "#/$defs/DependencySummaryPayload"
         },
         "diagnostics": {
           "$ref": "#/$defs/ReportDiagnosticsPayload"
@@ -795,7 +952,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:trustcheck:report:1.2.0",
+  "$id": "urn:trustcheck:report:1.3.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -803,8 +960,8 @@
       "$ref": "#/$defs/TrustReportPayload"
     },
     "schema_version": {
-      "const": "1.2.0",
-      "default": "1.2.0",
+      "const": "1.3.0",
+      "default": "1.3.0",
       "title": "Schema Version",
       "type": "string"
     }

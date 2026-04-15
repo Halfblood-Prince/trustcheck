@@ -52,6 +52,7 @@ class ProjectInfoPayload(BaseModel):
     summary: str | None = None
     project_urls: dict[str, str] = Field(default_factory=dict)
     ownership: OwnershipPayload = Field(default_factory=OwnershipPayload)
+    requires_dist: list[str] | None = None
 
 
 class ProjectResponsePayload(BaseModel):

@@ -7,6 +7,8 @@ from pathlib import Path
 from trustcheck import JSON_SCHEMA_ID, JSON_SCHEMA_VERSION, TrustReport, get_json_schema
 from trustcheck.models import (
     CoverageSummary,
+    DependencyInspection,
+    DependencySummary,
     FileProvenance,
     ProvenanceConsistency,
     PublisherIdentity,
@@ -41,6 +43,7 @@ class ContractTests(unittest.TestCase):
             version="1.2.3",
             summary="Demo package",
             package_url="https://pypi.org/project/demo/1.2.3/",
+            declared_dependencies=["depalpha>=1.0"],
             declared_repository_urls=["https://github.com/example/demo"],
             repository_urls=["https://github.com/example/demo"],
             expected_repository="https://github.com/example/demo",
@@ -106,6 +109,27 @@ class ContractTests(unittest.TestCase):
                 publisher_workflow_drift=False,
                 previous_repositories=["https://github.com/example/demo"],
                 previous_workflows=[".github/workflows/release.yml"],
+            ),
+            dependencies=[
+                DependencyInspection(
+                    requirement="depalpha>=1.0",
+                    project="depalpha",
+                    version="1.4.0",
+                    depth=1,
+                    parent_project="demo",
+                    parent_version="1.2.3",
+                    package_url="https://pypi.org/project/depalpha/1.4.0/",
+                    recommendation="review-required",
+                )
+            ],
+            dependency_summary=DependencySummary(
+                requested=True,
+                total_declared=1,
+                total_inspected=1,
+                unique_dependencies=1,
+                max_depth=1,
+                highest_risk_recommendation="review-required",
+                highest_risk_projects=["depalpha"],
             ),
             risk_flags=[
                 RiskFlag(

@@ -27,6 +27,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
+  "packaging>=24,<26",
   "pypi-attestations>=0.0.29,<1",
 ]
 

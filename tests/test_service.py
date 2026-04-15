@@ -26,6 +26,7 @@ def make_project_payload(
     urls: list[dict[str, object]] | None = None,
     vulnerabilities: list[dict[str, object]] | None = None,
     releases: dict[str, list[dict[str, object]]] | None = None,
+    requires_dist: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         "info": {
@@ -41,6 +42,7 @@ def make_project_payload(
                 "organization": "Halfblood-Prince",
                 "roles": [{"role": "Owner", "user": "Halfblood-Prince"}],
             },
+            "requires_dist": requires_dist,
         },
         "urls": urls
         if urls is not None
@@ -143,15 +145,19 @@ class FakeClient:
         self.provenance_errors = provenance_errors or {}
 
     def get_project(self, project: str) -> dict[str, object]:
-        assert project == "gridoptim"
         if self.project_error is not None:
             raise self.project_error
+        if project in self.release_payloads:
+            return self.release_payloads[project]
+        assert project == "gridoptim"
         return self.project_payload
 
     def get_release(self, project: str, version: str) -> dict[str, object]:
-        assert project == "gridoptim"
         if self.release_error is not None:
             raise self.release_error
+        if project in self.release_payloads:
+            return self.release_payloads[project]
+        assert project == "gridoptim"
         if version in self.release_payloads:
             return self.release_payloads[version]
         return self.release_payload
@@ -699,6 +705,77 @@ class InspectPackageTests(unittest.TestCase):
 
         self.assertIn("expected_repository_invalid", {flag.code for flag in report.risk_flags})
         self.assertEqual(report.recommendation, "high-risk")
+
+    def test_inspect_package_collects_dependency_reports(self) -> None:
+        root_payload = make_project_payload(
+            requires_dist=[
+                "depalpha>=1.0",
+                "depbeta>=2.0; python_version >= '3.10'",
+                "skipme>=1.0; python_version < '3.0'",
+            ],
+            releases={"2.2.0": []},
+        )
+        depalpha_payload = make_project_payload(
+            version="1.4.0",
+            requires_dist=["depbeta>=2.0"],
+            releases={"1.4.0": []},
+            urls=[],
+            project_urls={},
+        )
+        depbeta_payload = make_project_payload(
+            version="2.5.0",
+            requires_dist=[],
+            releases={"2.5.0": []},
+            urls=[],
+            project_urls={},
+            vulnerabilities=[{"id": "PYSEC-9", "summary": "dependency issue"}],
+        )
+        client = FakeClient(
+            project_payload=root_payload,
+            release_payloads={
+                "depalpha": depalpha_payload,
+                "depbeta": depbeta_payload,
+            },
+        )
+
+        report = inspect_package("gridoptim", client=cast(Any, client), include_dependencies=True)
+
+        self.assertEqual(
+            report.declared_dependencies,
+            [
+                "depalpha>=1.0",
+                "depbeta>=2.0; python_version >= '3.10'",
+                "skipme>=1.0; python_version < '3.0'",
+            ],
+        )
+        self.assertEqual(
+            [(item.project, item.version, item.depth) for item in report.dependencies],
+            [("depalpha", "1.4.0", 1), ("depbeta", "2.5.0", 1)],
+        )
+        self.assertTrue(report.dependency_summary.requested)
+        self.assertEqual(report.dependency_summary.total_declared, 3)
+        self.assertEqual(report.dependency_summary.total_inspected, 2)
+        self.assertEqual(report.dependency_summary.max_depth, 1)
+        self.assertEqual(report.dependency_summary.highest_risk_recommendation, "high-risk")
+        self.assertIn("dependency_high_risk", {flag.code for flag in report.risk_flags})
+
+    def test_dependency_resolution_failure_is_recorded(self) -> None:
+        client = FakeClient(
+            project_payload=make_project_payload(
+                requires_dist=["broken>=99"],
+                releases={"2.2.0": []},
+            ),
+            release_payloads={
+                "broken": make_project_payload(version="1.0.0", releases={"1.0.0": []}, urls=[]),
+            },
+        )
+
+        report = inspect_package("gridoptim", client=cast(Any, client), include_dependencies=True)
+
+        self.assertEqual(report.dependencies[0].project, "broken")
+        self.assertEqual(report.dependencies[0].recommendation, "high-risk")
+        self.assertIn("compatible version", report.dependencies[0].error or "")
+        self.assertIn("dependency_high_risk", {flag.code for flag in report.risk_flags})
 
     def test_recommendation_mapping_behavior(self) -> None:
         metadata_only = inspect_package(

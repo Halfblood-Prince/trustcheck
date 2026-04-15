@@ -52,6 +52,12 @@ Inspect a specific version:
 trustcheck inspect sampleproject --version 4.0.0
 ```
 
+Inspect a package and its declared dependencies:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --with-deps
+```
+
 Require a release to match an expected repository:
 
 ```bash

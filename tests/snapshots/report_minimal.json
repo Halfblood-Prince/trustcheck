@@ -6,7 +6,18 @@
       "total_files": 0,
       "verified_files": 0
     },
+    "declared_dependencies": [],
     "declared_repository_urls": [],
+    "dependencies": [],
+    "dependency_summary": {
+      "highest_risk_projects": [],
+      "highest_risk_recommendation": "metadata-only",
+      "max_depth": 0,
+      "requested": false,
+      "total_declared": 0,
+      "total_inspected": 0,
+      "unique_dependencies": 0
+    },
     "diagnostics": {
       "artifact_failures": [],
       "backoff_factor": 0.25,
@@ -66,5 +77,5 @@
     "version": "0.0.1",
     "vulnerabilities": []
   },
-  "schema_version": "1.2.0"
+  "schema_version": "1.3.0"
 }

@@ -7,10 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .models import TrustReport
 
-JSON_SCHEMA_VERSION: Final = "1.2.0"
+JSON_SCHEMA_VERSION: Final = "1.3.0"
 JSON_SCHEMA_ID = f"urn:trustcheck:report:{JSON_SCHEMA_VERSION}"
-SchemaVersion: TypeAlias = Literal["1.2.0"]
-DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.2.0"
+SchemaVersion: TypeAlias = Literal["1.3.0"]
+DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.3.0"
 
 
 class RiskFlagPayload(BaseModel):
@@ -98,6 +98,34 @@ class ReleaseDriftSummaryPayload(BaseModel):
     previous_workflows: list[str] = Field(default_factory=list)
 
 
+class DependencyInspectionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requirement: str
+    project: str
+    version: str
+    depth: int
+    parent_project: str | None = None
+    parent_version: str | None = None
+    package_url: str | None = None
+    recommendation: str = "metadata-only"
+    risk_flags: list[RiskFlagPayload] = Field(default_factory=list)
+    declared_dependencies: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class DependencySummaryPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requested: bool = False
+    total_declared: int = 0
+    total_inspected: int = 0
+    unique_dependencies: int = 0
+    max_depth: int = 0
+    highest_risk_recommendation: str = "metadata-only"
+    highest_risk_projects: list[str] = Field(default_factory=list)
+
+
 class PolicyViolationPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -178,6 +206,7 @@ class TrustReportPayload(BaseModel):
     version: str
     summary: str | None = None
     package_url: str
+    declared_dependencies: list[str] = Field(default_factory=list)
     declared_repository_urls: list[str] = Field(default_factory=list)
     repository_urls: list[str] = Field(default_factory=list)
     expected_repository: str | None = None
@@ -192,6 +221,8 @@ class TrustReportPayload(BaseModel):
         default_factory=ProvenanceConsistencyPayload
     )
     release_drift: ReleaseDriftSummaryPayload = Field(default_factory=ReleaseDriftSummaryPayload)
+    dependencies: list[DependencyInspectionPayload] = Field(default_factory=list)
+    dependency_summary: DependencySummaryPayload = Field(default_factory=DependencySummaryPayload)
     risk_flags: list[RiskFlagPayload] = Field(default_factory=list)
     recommendation: str = "metadata-only"
     policy: PolicyEvaluationPayload = Field(default_factory=PolicyEvaluationPayload)

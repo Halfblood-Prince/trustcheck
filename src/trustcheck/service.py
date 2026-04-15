@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import deque
+from dataclasses import dataclass, field
 from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Any
 from urllib.parse import urlparse
 
+from packaging.markers import default_environment
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 from pypi_attestations import Distribution as AttestedDistribution
 from pypi_attestations import Provenance, VerificationError
@@ -14,6 +19,8 @@ from pypi_attestations import Provenance, VerificationError
 from .models import (
     ArtifactDiagnostic,
     CoverageSummary,
+    DependencyInspection,
+    DependencySummary,
     FileProvenance,
     ProvenanceConsistency,
     PublisherIdentity,
@@ -85,6 +92,18 @@ GITHUB_REPO_SUBPATHS = {
 }
 
 ProgressCallback = Callable[[str, int, int], None]
+
+_RECOMMENDATION_ORDER = {
+    "verified": 0,
+    "metadata-only": 1,
+    "review-required": 2,
+    "high-risk": 3,
+}
+
+
+@dataclass(slots=True)
+class DependencyTraversalContext:
+    seen: set[str] = field(default_factory=set)
 
 
 class DiagnosticsCollector:
@@ -160,14 +179,19 @@ def inspect_package(
     expected_repository: str | None = None,
     client: PypiClient | None = None,
     progress_callback: ProgressCallback | None = None,
+    include_dependencies: bool = False,
+    _dependency_context: DependencyTraversalContext | None = None,
 ) -> TrustReport:
     client = client or PypiClient()
     diagnostics = DiagnosticsCollector()
+    dependency_context = _dependency_context or DependencyTraversalContext()
+    dependency_context.seen.add(canonicalize_name(project))
 
     with _instrument_client(client, diagnostics.on_request_event):
         payload = client.get_release(project, version) if version else client.get_project(project)
         info = payload.get("info", {})
         selected_version = payload.get("info", {}).get("version") or version or "unknown"
+        declared_dependencies = _extract_declared_dependencies(info.get("requires_dist"))
         declared_repository_urls = _extract_repository_urls(info.get("project_urls") or {})
         vulnerabilities = _parse_vulnerabilities(payload.get("vulnerabilities") or [])
         ownership = info.get("ownership") or {}
@@ -185,6 +209,7 @@ def inspect_package(
             version=selected_version,
             summary=info.get("summary"),
             package_url=f"https://pypi.org/project/{project}/{selected_version}/",
+            declared_dependencies=declared_dependencies,
             declared_repository_urls=declared_repository_urls,
             repository_urls=declared_repository_urls,
             expected_repository=expected_repository,
@@ -201,6 +226,17 @@ def inspect_package(
                 current_files=files,
             ),
             diagnostics=diagnostics.to_report_diagnostics(client),
+        )
+        if include_dependencies:
+            report.dependencies = _inspect_dependencies(
+                report,
+                client,
+                dependency_context=dependency_context,
+            )
+        report.dependency_summary = _build_dependency_summary(
+            declared_dependencies,
+            report.dependencies,
+            requested=include_dependencies,
         )
         report.risk_flags = _build_risk_flags(report)
         advisory_evaluation_for(report)
@@ -324,6 +360,184 @@ def _parse_vulnerabilities(items: list[dict[str, Any]]) -> list[VulnerabilityRec
     return vulnerabilities
 
 
+def _extract_declared_dependencies(requires_dist: object) -> list[str]:
+    if not isinstance(requires_dist, list):
+        return []
+    return [str(item) for item in requires_dist if isinstance(item, str) and item.strip()]
+
+
+def _inspect_dependencies(
+    report: TrustReport,
+    client: PypiClient,
+    *,
+    dependency_context: DependencyTraversalContext,
+) -> list[DependencyInspection]:
+    inspections: list[DependencyInspection] = []
+    environment = default_environment()
+    environment.setdefault("extra", "")
+    pending: deque[tuple[str, tuple[str, str], int]] = deque(
+        (requirement_text, (report.project, report.version), 1)
+        for requirement_text in report.declared_dependencies
+    )
+
+    while pending:
+        requirement_text, dependency_parent, depth = pending.popleft()
+        inspection, nested_requirements = _inspect_dependency_requirement(
+            requirement_text,
+            client,
+            dependency_context=dependency_context,
+            parent=dependency_parent,
+            depth=depth,
+            environment=environment,
+        )
+        if inspection is None:
+            continue
+        inspections.append(inspection)
+        for nested_requirement in nested_requirements:
+            pending.append((nested_requirement, (inspection.project, inspection.version), depth + 1))
+    return inspections
+
+
+def _inspect_dependency_requirement(
+    requirement_text: str,
+    client: PypiClient,
+    *,
+    dependency_context: DependencyTraversalContext,
+    parent: tuple[str, str],
+    depth: int,
+    environment: dict[str, str],
+) -> tuple[DependencyInspection | None, list[str]]:
+    try:
+        requirement = Requirement(requirement_text)
+    except InvalidRequirement as exc:
+        return (
+            DependencyInspection(
+                requirement=requirement_text,
+                project=requirement_text,
+                version="unknown",
+                depth=depth,
+                parent_project=parent[0],
+                parent_version=parent[1],
+                recommendation="high-risk",
+                error=f"invalid dependency requirement: {exc}",
+            ),
+            [],
+        )
+
+    if requirement.marker is not None and not requirement.marker.evaluate(environment):
+        return None, []
+
+    project_name = requirement.name
+    dependency_key = canonicalize_name(project_name)
+    if dependency_key in dependency_context.seen:
+        return None, []
+    dependency_context.seen.add(dependency_key)
+
+    try:
+        payload = client.get_project(project_name)
+        selected_version = _select_dependency_version(payload, requirement)
+        nested_report = inspect_package(
+            project_name,
+            version=selected_version,
+            client=client,
+            include_dependencies=False,
+            _dependency_context=dependency_context,
+        )
+        inspection = DependencyInspection(
+            requirement=requirement_text,
+            project=nested_report.project,
+            version=nested_report.version,
+            depth=depth,
+            parent_project=parent[0],
+            parent_version=parent[1],
+            package_url=nested_report.package_url,
+            recommendation=nested_report.recommendation,
+            risk_flags=nested_report.risk_flags,
+            declared_dependencies=nested_report.declared_dependencies,
+        )
+        return inspection, nested_report.declared_dependencies
+    except PypiClientError as exc:
+        return (
+            DependencyInspection(
+                requirement=requirement_text,
+                project=project_name,
+                version="unknown",
+                depth=depth,
+                parent_project=parent[0],
+                parent_version=parent[1],
+                recommendation="high-risk",
+                error=str(exc),
+            ),
+            [],
+        )
+
+
+def _select_dependency_version(payload: dict[str, Any], requirement: Requirement) -> str:
+    info = payload.get("info") or {}
+    releases = payload.get("releases") or {}
+    versions: list[Version] = []
+    version_map: dict[Version, str] = {}
+
+    if isinstance(releases, dict):
+        for raw_version in releases:
+            try:
+                parsed = Version(str(raw_version))
+            except InvalidVersion:
+                continue
+            if requirement.specifier and not requirement.specifier.contains(parsed, prereleases=None):
+                continue
+            versions.append(parsed)
+            version_map[parsed] = str(raw_version)
+
+    if versions:
+        return version_map[max(versions)]
+
+    fallback = info.get("version")
+    if isinstance(fallback, str) and fallback:
+        return fallback
+    raise PypiClientError(
+        f"unable to resolve a compatible version for dependency {requirement.name!r}",
+        transient=False,
+        code="dependency",
+        subcode="version_resolution_failed",
+    )
+
+
+def _build_dependency_summary(
+    declared_dependencies: list[str],
+    dependencies: list[DependencyInspection],
+    *,
+    requested: bool,
+) -> DependencySummary:
+    highest_recommendation = "verified"
+    highest_projects: list[str] = []
+
+    for dependency in dependencies:
+        dependency_recommendation = dependency.recommendation or "metadata-only"
+        if (
+            _RECOMMENDATION_ORDER.get(dependency_recommendation, 1)
+            > _RECOMMENDATION_ORDER.get(highest_recommendation, 0)
+        ):
+            highest_recommendation = dependency_recommendation
+            highest_projects = [dependency.project]
+        elif dependency_recommendation == highest_recommendation:
+            if dependency.project not in highest_projects:
+                highest_projects.append(dependency.project)
+
+    if not dependencies:
+        highest_recommendation = "metadata-only"
+
+    return DependencySummary(
+        requested=requested,
+        total_declared=len(declared_dependencies),
+        total_inspected=len(dependencies),
+        unique_dependencies=len({canonicalize_name(item.project) for item in dependencies}),
+        max_depth=max((item.depth for item in dependencies), default=0),
+        highest_risk_recommendation=highest_recommendation,
+        highest_risk_projects=sorted(highest_projects),
+    )
+
+
 def _extract_repository_urls(project_urls: dict[str, str]) -> list[str]:
     explicit_repo_urls: list[str] = []
     fallback_repo_urls: list[str] = []
@@ -411,6 +625,51 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                 ],
             )
         )
+
+    if report.dependency_summary.requested and report.dependencies:
+        top_dependency_projects = ", ".join(report.dependency_summary.highest_risk_projects[:3])
+        if report.dependency_summary.highest_risk_recommendation == "high-risk":
+            flags.append(
+                RiskFlag(
+                    code="dependency_high_risk",
+                    severity="high",
+                    message="One or more inspected dependencies are high-risk.",
+                    why=[
+                        "Dependency inspection was requested and at least one dependency "
+                        "evaluated to high-risk.",
+                        *(
+                            [f"Highest-risk dependencies: {top_dependency_projects}"]
+                            if top_dependency_projects
+                            else []
+                        ),
+                    ],
+                    remediation=[
+                        "Review and pin the flagged dependencies before promoting this package.",
+                        "Block or isolate the dependency set until the high-risk findings are understood.",
+                    ],
+                )
+            )
+        elif report.dependency_summary.highest_risk_recommendation == "review-required":
+            flags.append(
+                RiskFlag(
+                    code="dependency_review_required",
+                    severity="medium",
+                    message="One or more inspected dependencies require manual review.",
+                    why=[
+                        "Dependency inspection was requested and at least one dependency "
+                        "evaluated to review-required.",
+                        *(
+                            [f"Dependencies needing review: {top_dependency_projects}"]
+                            if top_dependency_projects
+                            else []
+                        ),
+                    ],
+                    remediation=[
+                        "Review the dependency findings before approving the package.",
+                        "Consider pinning or replacing dependencies with cleaner provenance coverage.",
+                    ],
+                )
+            )
 
     if not report.repository_urls:
         flags.append(

@@ -17,6 +17,8 @@ from trustcheck.cli import (
 from trustcheck.contract import JSON_SCHEMA_VERSION
 from trustcheck.models import (
     CoverageSummary,
+    DependencyInspection,
+    DependencySummary,
     FileProvenance,
     ProvenanceConsistency,
     PublisherTrustSummary,
@@ -34,6 +36,7 @@ def make_report() -> TrustReport:
         version="2.2.0",
         summary="gridoptim package",
         package_url="https://pypi.org/project/gridoptim/2.2.0/",
+        declared_dependencies=["depalpha>=1.0"],
         declared_repository_urls=["https://github.com/Halfblood-Prince/gridoptim"],
         repository_urls=["https://github.com/Halfblood-Prince/gridoptim"],
         expected_repository="https://github.com/Halfblood-Prince/gridoptim",
@@ -75,6 +78,34 @@ def make_report() -> TrustReport:
             sdist_wheel_consistent=None,
         ),
         release_drift=ReleaseDriftSummary(),
+        dependencies=[
+            DependencyInspection(
+                requirement="depalpha>=1.0",
+                project="depalpha",
+                version="1.4.0",
+                depth=1,
+                parent_project="gridoptim",
+                parent_version="2.2.0",
+                package_url="https://pypi.org/project/depalpha/1.4.0/",
+                recommendation="review-required",
+                risk_flags=[
+                    RiskFlag(
+                        code="missing_repository_url",
+                        severity="medium",
+                        message="No repository metadata.",
+                    )
+                ],
+            )
+        ],
+        dependency_summary=DependencySummary(
+            requested=True,
+            total_declared=1,
+            total_inspected=1,
+            unique_dependencies=1,
+            max_depth=1,
+            highest_risk_recommendation="review-required",
+            highest_risk_projects=["depalpha"],
+        ),
         risk_flags=[],
         recommendation="verified",
         diagnostics=ReportDiagnostics(),
@@ -98,6 +129,8 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("why this result: cryptographic verification succeeded", stdout.getvalue())
         self.assertIn("verification: 1/1 artifact(s) verified (all-verified)", stdout.getvalue())
         self.assertIn("publisher trust: strong", stdout.getvalue())
+        self.assertIn("dependencies:", stdout.getvalue())
+        self.assertIn("highest_risk=review-required", stdout.getvalue())
         self.assertIn(
             "diagnostics: requests=0 retries=0 failures=0 cache_hits=0",
             stdout.getvalue(),
@@ -147,7 +180,10 @@ class CliBehaviorTests(unittest.TestCase):
             sorted(report.keys()),
             [
                 "coverage",
+                "declared_dependencies",
                 "declared_repository_urls",
+                "dependencies",
+                "dependency_summary",
                 "diagnostics",
                 "expected_repository",
                 "files",
@@ -196,6 +232,19 @@ class CliBehaviorTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["report"]["project"], "gridoptim")
 
+    def test_cli_with_deps_flag_enables_dependency_inspection(self) -> None:
+        stdout = io.StringIO()
+
+        def fake_inspect_package(*args, **kwargs):
+            self.assertTrue(kwargs["include_dependencies"])
+            return make_report()
+
+        with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(["inspect", "gridoptim", "--with-deps"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+
     def test_cli_text_output_shows_file_errors_in_verbose_mode(self) -> None:
         report = make_report()
         report.files[0].verified = False
@@ -221,6 +270,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("[high] no_provenance", stdout.getvalue())
         self.assertIn("why:", stdout.getvalue())
         self.assertIn("remediation:", stdout.getvalue())
+        self.assertIn("requirement: depalpha>=1.0", stdout.getvalue())
 
     def test_cli_non_verbose_output_is_concise(self) -> None:
         report = make_report()
