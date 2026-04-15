@@ -63,7 +63,10 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument(
         "--with-deps",
         action="store_true",
-        help="Inspect declared runtime dependencies recursively and summarize the worst-risk dependency.",
+        help=(
+            "Inspect declared runtime dependencies recursively and "
+            "summarize the worst-risk dependency."
+        ),
     )
     inspect_parser.add_argument(
         "--strict",

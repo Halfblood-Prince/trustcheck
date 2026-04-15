@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import deque
-from dataclasses import dataclass, field
 from collections.abc import Callable
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
@@ -394,7 +394,13 @@ def _inspect_dependencies(
             continue
         inspections.append(inspection)
         for nested_requirement in nested_requirements:
-            pending.append((nested_requirement, (inspection.project, inspection.version), depth + 1))
+            pending.append(
+                (
+                    nested_requirement,
+                    (inspection.project, inspection.version),
+                    depth + 1,
+                )
+            )
     return inspections
 
 
@@ -484,7 +490,10 @@ def _select_dependency_version(payload: dict[str, Any], requirement: Requirement
                 parsed = Version(str(raw_version))
             except InvalidVersion:
                 continue
-            if requirement.specifier and not requirement.specifier.contains(parsed, prereleases=None):
+            if requirement.specifier and not requirement.specifier.contains(
+                parsed,
+                prereleases=None,
+            ):
                 continue
             versions.append(parsed)
             version_map[parsed] = str(raw_version)
@@ -645,7 +654,10 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     ],
                     remediation=[
                         "Review and pin the flagged dependencies before promoting this package.",
-                        "Block or isolate the dependency set until the high-risk findings are understood.",
+                        (
+                            "Block or isolate the dependency set until the high-risk "
+                            "findings are understood."
+                        ),
                     ],
                 )
             )
@@ -666,7 +678,10 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                     ],
                     remediation=[
                         "Review the dependency findings before approving the package.",
-                        "Consider pinning or replacing dependencies with cleaner provenance coverage.",
+                        (
+                            "Consider pinning or replacing dependencies with cleaner "
+                            "provenance coverage."
+                        ),
                     ],
                 )
             )
