@@ -14,9 +14,9 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 
 try:
-    import tomllib
+    import tomllib  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
-    import tomli as tomllib
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 from .contract import JSON_SCHEMA_VERSION
 from .models import TrustReport
