@@ -171,8 +171,10 @@ class CliBehaviorTests(unittest.TestCase):
 
         def fake_inspect_package(*args, **kwargs):
             dependency_progress_callback = kwargs["dependency_progress_callback"]
-            dependency_progress_callback("depalpha", 1, 1, 2)
-            dependency_progress_callback("depbeta", 2, 2, 2)
+            dependency_progress_callback("depalpha", 1, 0, False)
+            dependency_progress_callback("depalpha", 1, 100, True)
+            dependency_progress_callback("depbeta", 2, 0, False)
+            dependency_progress_callback("depbeta", 2, 100, True)
             return make_report()
 
         with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
@@ -181,11 +183,19 @@ class CliBehaviorTests(unittest.TestCase):
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertIn(
-            "[progress] inspecting dependency depth=1: depalpha (50%)",
+            "\r[progress] inspecting dependency depth=1: depalpha (0%)",
             stderr.getvalue(),
         )
         self.assertIn(
-            "[progress] inspecting dependency depth=2: depbeta (100%)",
+            "[progress] inspecting dependency depth=1: depalpha (100%)\n",
+            stderr.getvalue(),
+        )
+        self.assertIn(
+            "\r[progress] inspecting dependency depth=2: depbeta (0%)",
+            stderr.getvalue(),
+        )
+        self.assertIn(
+            "[progress] inspecting dependency depth=2: depbeta (100%)\n",
             stderr.getvalue(),
         )
         self.assertIn("trustcheck report for gridoptim 2.2.0", stdout.getvalue())

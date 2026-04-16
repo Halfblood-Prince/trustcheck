@@ -92,7 +92,7 @@ GITHUB_REPO_SUBPATHS = {
 }
 
 ProgressCallback = Callable[[str, int, int], None]
-DependencyProgressCallback = Callable[[str, int, int, int], None]
+DependencyProgressCallback = Callable[[str, int, int, bool], None]
 
 _RECOMMENDATION_ORDER = {
     "verified": 0,
@@ -389,7 +389,6 @@ def _inspect_dependencies(
         (requirement_text, (report.project, report.version), 1)
         for requirement_text in report.declared_dependencies
     )
-    total_known_dependencies = len(pending)
 
     while pending:
         requirement_text, dependency_parent, depth = pending.popleft()
@@ -400,6 +399,7 @@ def _inspect_dependencies(
             parent=dependency_parent,
             depth=depth,
             environment=environment,
+            dependency_progress_callback=dependency_progress_callback,
         )
         if inspection is None:
             continue
@@ -413,14 +413,6 @@ def _inspect_dependencies(
                         depth + 1,
                     )
                 )
-                total_known_dependencies += 1
-        if dependency_progress_callback is not None:
-            dependency_progress_callback(
-                inspection.project,
-                depth,
-                len(inspections),
-                max(total_known_dependencies, len(inspections)),
-            )
     return inspections
 
 
@@ -432,6 +424,7 @@ def _inspect_dependency_requirement(
     parent: tuple[str, str],
     depth: int,
     environment: dict[str, str],
+    dependency_progress_callback: DependencyProgressCallback | None = None,
 ) -> tuple[DependencyInspection | None, list[str]]:
     try:
         requirement = Requirement(requirement_text)
@@ -458,17 +451,39 @@ def _inspect_dependency_requirement(
     if dependency_key in dependency_context.seen:
         return None, []
     dependency_context.seen.add(dependency_key)
+    if dependency_progress_callback is not None:
+        dependency_progress_callback(project_name, depth, 0, False)
 
     try:
         payload = client.get_project(project_name)
         selected_version = _select_dependency_version(payload, requirement)
+
+        def emit_dependency_artifact_progress(
+            filename: str,
+            current: int,
+            total: int,
+        ) -> None:
+            del filename
+            if dependency_progress_callback is None:
+                return
+            percent = int((current / total) * 100) if total > 0 else 100
+            dependency_progress_callback(
+                project_name,
+                depth,
+                percent,
+                current == total,
+            )
+
         nested_report = inspect_package(
             project_name,
             version=selected_version,
             client=client,
+            progress_callback=emit_dependency_artifact_progress,
             include_dependencies=False,
             _dependency_context=dependency_context,
         )
+        if dependency_progress_callback is not None and not nested_report.files:
+            dependency_progress_callback(project_name, depth, 100, True)
         inspection = DependencyInspection(
             requirement=requirement_text,
             project=nested_report.project,
