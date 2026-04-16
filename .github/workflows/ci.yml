@@ -45,9 +45,9 @@ jobs:
           path: trustcheck-sbom.json
 
       - name: Secret scan
-        uses: zricethezav/gitleaks-action@v2
+        uses: gacts/gitleaks@v1
         with:
-          args: detect --source . --no-banner --redact
+          path: .
 
   qa:
     needs: security-scans
