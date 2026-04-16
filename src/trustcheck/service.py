@@ -754,7 +754,8 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                 severity="medium",
                 message=(
                     "The package does not expose an obvious repository URL "
-                    "in project metadata."
+                    "in project metadata. It may not be open source or may "
+                    "omit a public repository."
                 ),
                 why=[
                     "No supported source repository URL was found in the package metadata.",

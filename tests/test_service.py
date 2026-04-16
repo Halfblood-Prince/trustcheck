@@ -670,6 +670,28 @@ class InspectPackageTests(unittest.TestCase):
 
         self.assertEqual(report.declared_repository_urls, [])
         self.assertIn("missing_repository_url", {flag.code for flag in report.risk_flags})
+        self.assertIn(
+            "It may not be open source or may omit a public repository.",
+            next(
+                flag.message
+                for flag in report.risk_flags
+                if flag.code == "missing_repository_url"
+            ),
+        )
+
+    def test_malformed_project_urls_payload_degrades_to_missing_repository_flag(self) -> None:
+        client = FakeClient(
+            project_payload=make_project_payload(
+                urls=[],
+                project_urls={},
+            )
+        )
+        client.project_payload["info"]["project_urls"] = []
+
+        report = inspect_package("gridoptim", client=cast(Any, client))
+
+        self.assertEqual(report.declared_repository_urls, [])
+        self.assertIn("missing_repository_url", {flag.code for flag in report.risk_flags})
 
     def test_explicit_repository_label_wins_over_homepage_label(self) -> None:
         client = FakeClient(

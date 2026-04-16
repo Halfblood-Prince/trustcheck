@@ -178,17 +178,16 @@ class PypiClientTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.subcode, "json_malformed")
 
-    def test_unexpected_project_shape_is_handled_gracefully(self) -> None:
+    def test_list_project_urls_is_normalized_to_empty_mapping(self) -> None:
         client = pypi_module.PypiClient(max_retries=0, sleep=lambda delay: None)
 
         with patch(
             "urllib.request.urlopen",
             return_value=FakeResponse(json.dumps({"info": {"project_urls": []}}).encode()),
         ):
-            with self.assertRaisesRegex(
-                pypi_module.PypiClientError, "unexpected project response shape"
-            ):
-                client.get_project("gridoptim")
+            payload = client.get_project("gridoptim")
+
+        self.assertEqual(payload["info"]["project_urls"], {})
 
     def test_unexpected_provenance_shape_is_handled_gracefully(self) -> None:
         client = pypi_module.PypiClient(max_retries=0, sleep=lambda delay: None)

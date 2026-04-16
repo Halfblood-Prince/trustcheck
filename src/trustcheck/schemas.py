@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class DigestsPayload(BaseModel):
@@ -53,6 +53,18 @@ class ProjectInfoPayload(BaseModel):
     project_urls: dict[str, str] = Field(default_factory=dict)
     ownership: OwnershipPayload = Field(default_factory=OwnershipPayload)
     requires_dist: list[str] | None = None
+
+    @field_validator("project_urls", mode="before")
+    @classmethod
+    def normalize_project_urls(cls, value: object) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        normalized: dict[str, str] = {}
+        for key, item in value.items():
+            if key is None or item is None:
+                continue
+            normalized[str(key)] = str(item)
+        return normalized
 
 
 class ProjectResponsePayload(BaseModel):
