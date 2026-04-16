@@ -26,6 +26,7 @@ from trustcheck.models import (
     ReportDiagnostics,
     RiskFlag,
     TrustReport,
+    VulnerabilityRecord,
 )
 from trustcheck.pypi import PypiClientError
 
@@ -257,6 +258,91 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["report"]["project"], "gridoptim")
+
+    def test_cli_cve_output_only_shows_vulnerabilities(self) -> None:
+        stdout = io.StringIO()
+        report = make_report()
+        report.vulnerabilities = [
+            VulnerabilityRecord(
+                id="PYSEC-2026-1",
+                summary="Example advisory",
+                aliases=["CVE-2026-0001"],
+                source="PyPI",
+                fixed_in=["2.2.1"],
+                link="https://example.com/advisory",
+            )
+        ]
+
+        with patch("trustcheck.cli.inspect_package", return_value=report):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(["inspect", "gridoptim", "--cve"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertIn("known vulnerabilities for gridoptim 2.2.0", stdout.getvalue())
+        self.assertIn("PYSEC-2026-1: Example advisory", stdout.getvalue())
+        self.assertIn("aliases: CVE-2026-0001", stdout.getvalue())
+        self.assertIn("fixed in: 2.2.1", stdout.getvalue())
+        self.assertNotIn("summary:", stdout.getvalue())
+        self.assertNotIn("risk flags:", stdout.getvalue())
+
+    def test_cli_cve_output_handles_empty_vulnerability_list(self) -> None:
+        stdout = io.StringIO()
+
+        with patch("trustcheck.cli.inspect_package", return_value=make_report()):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(["inspect", "gridoptim", "--cve"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertIn("No known vulnerability records reported by PyPI.", stdout.getvalue())
+
+    def test_cli_cve_json_output_is_minimal(self) -> None:
+        stdout = io.StringIO()
+        report = make_report()
+        report.vulnerabilities = [
+            VulnerabilityRecord(
+                id="PYSEC-2026-1",
+                summary="Example advisory",
+                aliases=["CVE-2026-0001"],
+                source="PyPI",
+                fixed_in=["2.2.1"],
+                link="https://example.com/advisory",
+            )
+        ]
+
+        with patch("trustcheck.cli.inspect_package", return_value=report):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(["inspect", "gridoptim", "--cve", "--format", "json"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(
+            sorted(payload.keys()),
+            ["package_url", "project", "version", "vulnerabilities"],
+        )
+        self.assertEqual(payload["project"], "gridoptim")
+        self.assertEqual(payload["vulnerabilities"][0]["id"], "PYSEC-2026-1")
+
+    def test_cli_cve_mode_respects_policy_failure(self) -> None:
+        stdout = io.StringIO()
+        report = make_report()
+        report.vulnerabilities = [
+            VulnerabilityRecord(id="PYSEC-2026-1", summary="Example advisory")
+        ]
+
+        with patch("trustcheck.cli.inspect_package", return_value=report):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(
+                    [
+                        "inspect",
+                        "gridoptim",
+                        "--cve",
+                        "--fail-on-vulnerability",
+                        "any",
+                    ]
+                )
+
+        self.assertEqual(exit_code, EXIT_POLICY_FAILURE)
+        self.assertIn("PYSEC-2026-1: Example advisory", stdout.getvalue())
 
     def test_cli_with_deps_flag_enables_dependency_inspection(self) -> None:
         stdout = io.StringIO()

@@ -11,3 +11,5 @@
 ## Automation guidance
 
 Treat exit code `4` as a policy gate outcome rather than a crash. In CI, this usually means the tool ran correctly and intentionally blocked promotion.
+
+This also applies to `trustcheck inspect --cve`: the command can print only vulnerability records while still returning `4` when policy settings such as `--fail-on-vulnerability any` block the release.

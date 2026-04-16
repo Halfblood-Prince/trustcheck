@@ -54,6 +54,12 @@ Inspect a specific version:
 trustcheck inspect sampleproject --version 4.0.0
 ```
 
+Show only known vulnerabilities for a release:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --cve
+```
+
 Inspect a package and its direct dependencies:
 
 ```bash
@@ -78,6 +84,12 @@ Emit JSON for another tool:
 
 ```bash
 trustcheck inspect sampleproject --version 4.0.0 --format json
+```
+
+Emit only vulnerability records as JSON:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --cve --format json
 ```
 
 Fail CI when full verification is missing:

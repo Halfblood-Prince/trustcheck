@@ -12,6 +12,7 @@ trustcheck inspect <project>
 - `--expected-repo`: require repository evidence to match an expected GitHub or GitLab repository
 - `--format text|json`: choose human-readable text or machine-readable JSON
 - `--verbose`: include per-file provenance, digest, publisher, and note fields in text output
+- `--cve`: show only the known vulnerability records reported for the selected release
 - `--with-deps`: inspect direct runtime dependencies and summarize the highest-risk dependency
 - `--with-transitive-deps`: inspect direct and transitive runtime dependencies recursively
 - `--strict`: apply the built-in strict policy
@@ -44,6 +45,12 @@ Inspect a package:
 
 ```bash
 trustcheck inspect requests
+```
+
+Show only known vulnerability records:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --cve
 ```
 
 Run with strict policy:
@@ -79,3 +86,5 @@ Use cached responses only:
 ```bash
 trustcheck inspect sampleproject --version 4.0.0 --cache-dir .trustcheck-cache --offline
 ```
+
+When `--cve` is used, `trustcheck` still collects the same package metadata and evaluates policy settings, but the output is reduced to the vulnerability records only. In JSON mode, the output is a minimal object containing `project`, `version`, `package_url`, and `vulnerabilities`.

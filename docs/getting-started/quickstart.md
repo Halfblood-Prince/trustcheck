@@ -12,6 +12,12 @@ trustcheck inspect requests
 trustcheck inspect sampleproject --version 4.0.0
 ```
 
+## Show only known vulnerabilities
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --cve
+```
+
 ## Require a known source repository
 
 ```bash
@@ -44,6 +50,12 @@ When dependency inspection is enabled, the text report adds a dependency summary
 
 ```bash
 trustcheck inspect sampleproject --version 4.0.0 --format json
+```
+
+To emit only the known vulnerability records in JSON:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --cve --format json
 ```
 
 ## Enforce a conservative gate

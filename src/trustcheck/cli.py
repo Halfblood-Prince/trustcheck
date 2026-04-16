@@ -60,6 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show detailed per-file verification evidence.",
     )
+    inspect_parser.add_argument(
+        "--cve",
+        action="store_true",
+        help="Show only known vulnerability records for the selected release.",
+    )
     dependency_group = inspect_parser.add_mutually_exclusive_group()
     dependency_group.add_argument(
         "--with-deps",
@@ -196,7 +201,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 },
             )
             evaluation = evaluate_policy(report, policy)
-            if args.format == "json":
+            if args.cve:
+                if args.format == "json":
+                    print(json.dumps(_render_cve_json(report), indent=2, sort_keys=True))
+                else:
+                    print(_render_cve_report(report))
+            elif args.format == "json":
                 print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
             else:
                 print(_render_text_report(report, verbose=args.verbose))
@@ -615,6 +625,51 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
                 lines.extend(f"      - {step}" for step in flag.remediation)
     else:
         lines.append("risk flags: none")
+    return "\n".join(lines)
+
+
+def _render_cve_json(report: TrustReport) -> dict[str, object]:
+    return {
+        "project": report.project,
+        "version": report.version,
+        "package_url": report.package_url,
+        "vulnerabilities": [
+            {
+                "id": vuln.id,
+                "summary": vuln.summary,
+                "aliases": vuln.aliases,
+                "source": vuln.source,
+                "fixed_in": vuln.fixed_in,
+                "link": vuln.link,
+            }
+            for vuln in report.vulnerabilities
+        ],
+    }
+
+
+def _render_cve_report(report: TrustReport) -> str:
+    lines = [
+        f"known vulnerabilities for {report.project} {report.version}",
+        f"package: {report.package_url}",
+    ]
+    if not report.vulnerabilities:
+        lines.append("")
+        lines.append("No known vulnerability records reported by PyPI.")
+        return "\n".join(lines)
+
+    lines.append("")
+    lines.append(f"count: {len(report.vulnerabilities)}")
+    lines.append("")
+    for vuln in report.vulnerabilities:
+        lines.append(f"- {vuln.id}: {vuln.summary}")
+        if vuln.aliases:
+            lines.append(f"  aliases: {', '.join(vuln.aliases)}")
+        if vuln.fixed_in:
+            lines.append(f"  fixed in: {', '.join(vuln.fixed_in)}")
+        if vuln.source:
+            lines.append(f"  source: {vuln.source}")
+        if vuln.link:
+            lines.append(f"  link: {vuln.link}")
     return "\n".join(lines)
 
 
