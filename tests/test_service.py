@@ -818,8 +818,10 @@ class InspectPackageTests(unittest.TestCase):
             "gridoptim",
             client=cast(Any, client),
             include_dependencies=True,
-            dependency_progress_callback=lambda project, depth, current, total: progress_events.append(
-                (project, depth, current, total)
+            dependency_progress_callback=(
+                lambda project, depth, current, total: progress_events.append(
+                    (project, depth, current, total)
+                )
             ),
         )
 
