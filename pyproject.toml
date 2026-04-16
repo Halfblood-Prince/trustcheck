@@ -1,5 +1,9 @@
 [build-system]
-requires = ["setuptools>=68", "setuptools-scm[toml]>=8", "wheel"]
+requires = [
+  "setuptools>=80",
+  "setuptools-scm[toml]>=10",
+  "wheel>=0.46",
+]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -27,7 +31,8 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "packaging>=24,<26",
+  "packaging>=24,<27",
+  "pydantic>=2.10,<3",
   "pypi-attestations>=0.0.29,<1",
   "tomli>=2,<3; python_version < '3.11'",
 ]
