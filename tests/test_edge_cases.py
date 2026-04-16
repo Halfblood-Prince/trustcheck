@@ -131,6 +131,7 @@ def make_report() -> TrustReport:
             max_depth=1,
             highest_risk_recommendation="review-required",
             highest_risk_projects=["depalpha"],
+            review_required_projects=["depalpha"],
         ),
         vulnerabilities=[
             VulnerabilityRecord(

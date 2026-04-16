@@ -472,10 +472,25 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
             f"max_depth={report.dependency_summary.max_depth} "
             f"highest_risk={report.dependency_summary.highest_risk_recommendation}"
         )
-        if report.dependency_summary.highest_risk_projects:
+        if report.dependency_summary.high_risk_projects:
             lines.append(
-                "  highest-risk dependencies: "
-                + ", ".join(report.dependency_summary.highest_risk_projects)
+                "  high-risk dependencies: "
+                + ", ".join(report.dependency_summary.high_risk_projects)
+            )
+        if report.dependency_summary.review_required_projects:
+            lines.append(
+                "  review-required dependencies: "
+                + ", ".join(report.dependency_summary.review_required_projects)
+            )
+        if report.dependency_summary.metadata_only_projects:
+            lines.append(
+                "  metadata-only dependencies: "
+                + ", ".join(report.dependency_summary.metadata_only_projects)
+            )
+        if report.dependency_summary.verified_projects:
+            lines.append(
+                "  verified dependencies: "
+                + ", ".join(report.dependency_summary.verified_projects)
             )
         if verbose and report.dependencies:
             for dependency in report.dependencies:

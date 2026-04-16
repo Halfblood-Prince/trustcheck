@@ -545,9 +545,20 @@ def _build_dependency_summary(
 ) -> DependencySummary:
     highest_recommendation = "verified"
     highest_projects: list[str] = []
+    projects_by_recommendation: dict[str, list[str]] = {
+        "high-risk": [],
+        "review-required": [],
+        "metadata-only": [],
+        "verified": [],
+    }
 
     for dependency in dependencies:
         dependency_recommendation = dependency.recommendation or "metadata-only"
+        if dependency.project not in projects_by_recommendation.setdefault(
+            dependency_recommendation,
+            [],
+        ):
+            projects_by_recommendation[dependency_recommendation].append(dependency.project)
         if (
             _RECOMMENDATION_ORDER.get(dependency_recommendation, 1)
             > _RECOMMENDATION_ORDER.get(highest_recommendation, 0)
@@ -569,6 +580,10 @@ def _build_dependency_summary(
         max_depth=max((item.depth for item in dependencies), default=0),
         highest_risk_recommendation=highest_recommendation,
         highest_risk_projects=sorted(highest_projects),
+        high_risk_projects=sorted(projects_by_recommendation["high-risk"]),
+        review_required_projects=sorted(projects_by_recommendation["review-required"]),
+        metadata_only_projects=sorted(projects_by_recommendation["metadata-only"]),
+        verified_projects=sorted(projects_by_recommendation["verified"]),
     )
 
 

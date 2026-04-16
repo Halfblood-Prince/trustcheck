@@ -124,6 +124,10 @@ class DependencySummaryPayload(BaseModel):
     max_depth: int = 0
     highest_risk_recommendation: str = "metadata-only"
     highest_risk_projects: list[str] = Field(default_factory=list)
+    high_risk_projects: list[str] = Field(default_factory=list)
+    review_required_projects: list[str] = Field(default_factory=list)
+    metadata_only_projects: list[str] = Field(default_factory=list)
+    verified_projects: list[str] = Field(default_factory=list)
 
 
 class PolicyViolationPayload(BaseModel):

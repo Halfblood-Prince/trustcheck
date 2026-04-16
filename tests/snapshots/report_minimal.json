@@ -10,13 +10,17 @@
     "declared_repository_urls": [],
     "dependencies": [],
     "dependency_summary": {
+      "high_risk_projects": [],
       "highest_risk_projects": [],
       "highest_risk_recommendation": "metadata-only",
       "max_depth": 0,
+      "metadata_only_projects": [],
       "requested": false,
+      "review_required_projects": [],
       "total_declared": 0,
       "total_inspected": 0,
-      "unique_dependencies": 0
+      "unique_dependencies": 0,
+      "verified_projects": []
     },
     "diagnostics": {
       "artifact_failures": [],

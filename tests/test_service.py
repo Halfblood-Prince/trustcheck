@@ -757,6 +757,9 @@ class InspectPackageTests(unittest.TestCase):
         self.assertEqual(report.dependency_summary.total_inspected, 2)
         self.assertEqual(report.dependency_summary.max_depth, 1)
         self.assertEqual(report.dependency_summary.highest_risk_recommendation, "high-risk")
+        self.assertEqual(report.dependency_summary.high_risk_projects, ["depbeta"])
+        self.assertEqual(report.dependency_summary.review_required_projects, ["depalpha"])
+        self.assertEqual(report.dependency_summary.metadata_only_projects, [])
         self.assertIn("dependency_high_risk", {flag.code for flag in report.risk_flags})
 
     def test_inspect_package_transitive_dependency_mode_walks_nested_dependencies(self) -> None:

@@ -160,6 +160,13 @@
     "DependencySummaryPayload": {
       "additionalProperties": false,
       "properties": {
+        "high_risk_projects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "High Risk Projects",
+          "type": "array"
+        },
         "highest_risk_projects": {
           "items": {
             "type": "string"
@@ -177,10 +184,24 @@
           "title": "Max Depth",
           "type": "integer"
         },
+        "metadata_only_projects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Metadata Only Projects",
+          "type": "array"
+        },
         "requested": {
           "default": false,
           "title": "Requested",
           "type": "boolean"
+        },
+        "review_required_projects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Review Required Projects",
+          "type": "array"
         },
         "total_declared": {
           "default": 0,
@@ -196,6 +217,13 @@
           "default": 0,
           "title": "Unique Dependencies",
           "type": "integer"
+        },
+        "verified_projects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Verified Projects",
+          "type": "array"
         }
       },
       "title": "DependencySummaryPayload",

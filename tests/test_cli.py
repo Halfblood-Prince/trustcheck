@@ -106,6 +106,7 @@ def make_report() -> TrustReport:
             max_depth=1,
             highest_risk_recommendation="review-required",
             highest_risk_projects=["depalpha"],
+            review_required_projects=["depalpha"],
         ),
         risk_flags=[],
         recommendation="verified",
@@ -132,6 +133,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("publisher trust: strong", stdout.getvalue())
         self.assertIn("dependencies:", stdout.getvalue())
         self.assertIn("highest_risk=review-required", stdout.getvalue())
+        self.assertIn("review-required dependencies: depalpha", stdout.getvalue())
         self.assertIn(
             "diagnostics: requests=0 retries=0 failures=0 cache_hits=0",
             stdout.getvalue(),

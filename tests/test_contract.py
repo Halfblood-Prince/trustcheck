@@ -130,6 +130,7 @@ class ContractTests(unittest.TestCase):
                 max_depth=1,
                 highest_risk_recommendation="review-required",
                 highest_risk_projects=["depalpha"],
+                review_required_projects=["depalpha"],
             ),
             risk_flags=[
                 RiskFlag(

@@ -105,6 +105,10 @@ class DependencySummary:
     max_depth: int = 0
     highest_risk_recommendation: str = "metadata-only"
     highest_risk_projects: list[str] = field(default_factory=list)
+    high_risk_projects: list[str] = field(default_factory=list)
+    review_required_projects: list[str] = field(default_factory=list)
+    metadata_only_projects: list[str] = field(default_factory=list)
+    verified_projects: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
