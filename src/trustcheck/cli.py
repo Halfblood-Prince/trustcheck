@@ -5,9 +5,15 @@ import json
 import os
 import sys
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
+from packaging.markers import default_environment
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.version import InvalidVersion, Version
+
+from .contract import JSON_SCHEMA_VERSION
 from .models import TrustReport
 from .policy import BUILTIN_POLICIES, evaluate_policy, resolve_policy
 from .pypi import PypiClient, PypiClientError
@@ -18,6 +24,13 @@ EXIT_UPSTREAM_FAILURE = 1
 EXIT_USAGE = 2
 EXIT_DATA_ERROR = 3
 EXIT_POLICY_FAILURE = 4
+
+
+@dataclass(slots=True)
+class ScanTarget:
+    requirement: str
+    project: str
+    version: str | None = None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -155,6 +168,116 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use cached responses only and do not make network requests.",
     )
+
+    scan_parser = subparsers.add_parser(
+        "scan",
+        help="Inspect every package listed in a requirements-style file.",
+    )
+    scan_parser.add_argument("filename", help="Path to a requirements-style file.")
+    scan_parser.add_argument(
+        "--config-file",
+        help="Path to a JSON config file with optional network settings.",
+    )
+    scan_parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format.",
+    )
+    scan_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show detailed per-file verification evidence.",
+    )
+    scan_parser.add_argument(
+        "--cve",
+        action="store_true",
+        help="Show only known vulnerability records for each scanned release.",
+    )
+    scan_dependency_group = scan_parser.add_mutually_exclusive_group()
+    scan_dependency_group.add_argument(
+        "--with-deps",
+        action="store_true",
+        help=(
+            "Inspect direct runtime dependencies for every package in the file "
+            "and summarize the worst-risk dependency."
+        ),
+    )
+    scan_dependency_group.add_argument(
+        "--with-transitive-deps",
+        action="store_true",
+        help=(
+            "Inspect direct and transitive runtime dependencies for every "
+            "package in the file."
+        ),
+    )
+    scan_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Apply the built-in strict policy.",
+    )
+    scan_parser.add_argument(
+        "--policy",
+        choices=tuple(BUILTIN_POLICIES),
+        default="default",
+        help="Built-in policy profile to evaluate after evidence collection.",
+    )
+    scan_parser.add_argument(
+        "--policy-file",
+        help="Path to a JSON file containing policy settings.",
+    )
+    scan_parser.add_argument(
+        "--require-verified-provenance",
+        choices=("none", "all"),
+        help="Override whether policy requires verified provenance for every artifact.",
+    )
+    scan_parser.add_argument(
+        "--allow-metadata-only",
+        action="store_true",
+        default=None,
+        help="Allow metadata-only outcomes under the selected policy.",
+    )
+    scan_parser.add_argument(
+        "--disallow-metadata-only",
+        action="store_false",
+        dest="allow_metadata_only",
+        default=None,
+        help="Fail policy evaluation when the result is metadata-only.",
+    )
+    scan_parser.add_argument(
+        "--fail-on-vulnerability",
+        choices=("ignore", "any"),
+        help="Override vulnerability handling for policy evaluation.",
+    )
+    scan_parser.add_argument(
+        "--fail-on-risk-severity",
+        choices=("none", "medium", "high"),
+        help="Fail policy evaluation when risk flags meet or exceed this severity.",
+    )
+    scan_parser.add_argument(
+        "--timeout",
+        type=float,
+        help="Network timeout in seconds.",
+    )
+    scan_parser.add_argument(
+        "--retries",
+        type=int,
+        help="Maximum retry count for transient failures.",
+    )
+    scan_parser.add_argument(
+        "--backoff",
+        type=float,
+        help="Retry backoff factor in seconds.",
+    )
+    scan_parser.add_argument(
+        "--cache-dir",
+        help="Optional persistent cache directory for PyPI responses.",
+    )
+    scan_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use cached responses only and do not make network requests.",
+    )
     return parser
 
 
@@ -213,6 +336,100 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not evaluation.passed:
                 return EXIT_POLICY_FAILURE
             return EXIT_OK
+        if args.command == "scan":
+            config_payload = _load_config_file(args.config_file)
+            progress_callback = None
+            dependency_progress_callback = None
+            if args.format == "text":
+                progress_callback = _build_progress_callback()
+                dependency_progress_callback = _build_dependency_progress_callback()
+            client = _build_client(
+                args,
+                config_payload=config_payload,
+                request_hook=_build_debug_request_hook(
+                    enabled=args.debug,
+                    log_format=args.log_format,
+                ),
+            )
+            policy_name = "strict" if args.strict else args.policy
+            policy = resolve_policy(
+                builtin_name=policy_name,
+                config_path=args.policy_file,
+                cli_overrides={
+                    "require_verified_provenance": args.require_verified_provenance,
+                    "allow_metadata_only": args.allow_metadata_only,
+                    "vulnerability_mode": args.fail_on_vulnerability,
+                    "fail_on_severity": args.fail_on_risk_severity,
+                },
+            )
+            targets = _load_scan_targets(args.filename, client)
+            reports: list[TrustReport] = []
+            failures: list[dict[str, str]] = []
+            overall_exit_code = EXIT_OK
+            for target in targets:
+                try:
+                    report = inspect_package(
+                        target.project,
+                        version=target.version,
+                        client=client,
+                        progress_callback=progress_callback,
+                        dependency_progress_callback=dependency_progress_callback,
+                        include_dependencies=args.with_deps,
+                        include_transitive_dependencies=args.with_transitive_deps,
+                    )
+                    evaluation = evaluate_policy(report, policy)
+                    reports.append(report)
+                    if not evaluation.passed and overall_exit_code == EXIT_OK:
+                        overall_exit_code = EXIT_POLICY_FAILURE
+                except PypiClientError as exc:
+                    failures.append(
+                        {
+                            "requirement": target.requirement,
+                            "message": _format_upstream_error(exc),
+                        }
+                    )
+                    overall_exit_code = _merge_exit_codes(
+                        overall_exit_code,
+                        EXIT_UPSTREAM_FAILURE,
+                    )
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                    failures.append(
+                        {
+                            "requirement": target.requirement,
+                            "message": (
+                                "error: received an invalid response while "
+                                f"inspecting the package: {exc}"
+                            ),
+                        }
+                    )
+                    overall_exit_code = _merge_exit_codes(
+                        overall_exit_code,
+                        EXIT_DATA_ERROR,
+                    )
+            if args.format == "json":
+                print(
+                    json.dumps(
+                        _render_scan_json(
+                            args.filename,
+                            reports,
+                            failures=failures,
+                            cve_only=args.cve,
+                        ),
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                print(
+                    _render_scan_text(
+                        args.filename,
+                        reports,
+                        failures=failures,
+                        verbose=args.verbose,
+                        cve_only=args.cve,
+                    )
+                )
+            return overall_exit_code
 
         parser.error("unknown command")
         return EXIT_USAGE
@@ -416,6 +633,101 @@ def _format_upstream_error(exc: PypiClientError) -> str:
     return (
         "error: unable to inspect package from PyPI: "
         f"{exc} [code={exc.code} subcode={exc.subcode}]"
+    )
+
+
+def _merge_exit_codes(current: int, new: int) -> int:
+    if current == EXIT_DATA_ERROR or new == EXIT_DATA_ERROR:
+        return EXIT_DATA_ERROR
+    if current == EXIT_UPSTREAM_FAILURE or new == EXIT_UPSTREAM_FAILURE:
+        return EXIT_UPSTREAM_FAILURE
+    if current == EXIT_POLICY_FAILURE or new == EXIT_POLICY_FAILURE:
+        return EXIT_POLICY_FAILURE
+    return max(current, new)
+
+
+def _load_scan_targets(path: str, client: PypiClient) -> list[ScanTarget]:
+    file_path = Path(path)
+    if not file_path.exists():
+        raise ValueError(f"scan file not found: {path}")
+
+    environment = {key: str(value) for key, value in default_environment().items()}
+    environment.setdefault("extra", "")
+    targets: list[ScanTarget] = []
+
+    for line_number, raw_line in enumerate(file_path.read_text(encoding="utf-8").splitlines(), 1):
+        line = _clean_requirement_line(raw_line)
+        if not line:
+            continue
+        if line.startswith(("-", "--")):
+            continue
+        try:
+            requirement = Requirement(line)
+        except InvalidRequirement as exc:
+            raise ValueError(
+                f"invalid requirement in {path} at line {line_number}: {exc}"
+            ) from exc
+        if requirement.marker is not None and not requirement.marker.evaluate(environment):
+            continue
+        targets.append(
+            ScanTarget(
+                requirement=line,
+                project=requirement.name,
+                version=_resolve_scan_target_version(requirement, client),
+            )
+        )
+
+    if not targets:
+        raise ValueError(f"no supported package requirements found in {path}")
+    return targets
+
+
+def _clean_requirement_line(raw_line: str) -> str:
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        return ""
+    if " #" in line:
+        line = line.split(" #", maxsplit=1)[0].rstrip()
+    return line
+
+
+def _resolve_scan_target_version(requirement: Requirement, client: PypiClient) -> str | None:
+    if not requirement.specifier:
+        return None
+
+    payload = client.get_project(requirement.name)
+    info = payload.get("info") or {}
+    releases = payload.get("releases") or {}
+    versions: list[Version] = []
+    version_map: dict[Version, str] = {}
+
+    if isinstance(releases, dict):
+        for raw_version in releases:
+            try:
+                parsed = Version(str(raw_version))
+            except InvalidVersion:
+                continue
+            if not requirement.specifier.contains(parsed, prereleases=None):
+                continue
+            versions.append(parsed)
+            version_map[parsed] = str(raw_version)
+
+    if versions:
+        return version_map[max(versions)]
+
+    fallback = info.get("version")
+    if isinstance(fallback, str) and fallback:
+        try:
+            parsed_fallback = Version(fallback)
+        except InvalidVersion:
+            parsed_fallback = None
+        if parsed_fallback is not None and requirement.specifier.contains(
+            parsed_fallback,
+            prereleases=None,
+        ):
+            return fallback
+    raise ValueError(
+        f"unable to resolve a compatible version for requirement {requirement!s}"
     )
 
 
@@ -690,6 +1002,56 @@ def _render_cve_report(report: TrustReport) -> str:
         if vuln.link:
             lines.append(f"  link: {vuln.link}")
     return "\n".join(lines)
+
+
+def _render_scan_text(
+    filename: str,
+    reports: list[TrustReport],
+    *,
+    failures: list[dict[str, str]],
+    verbose: bool,
+    cve_only: bool,
+) -> str:
+    sections = [
+        f"trustcheck scan results for {filename}",
+        f"packages: {len(reports) + len(failures)}",
+        f"successful: {len(reports)}",
+        f"failed: {len(failures)}",
+    ]
+
+    rendered_reports = [
+        _render_cve_report(report) if cve_only else _render_text_report(report, verbose=verbose)
+        for report in reports
+    ]
+    if rendered_reports:
+        sections.append("")
+        sections.extend(rendered_reports)
+
+    if failures:
+        sections.append("")
+        sections.append("scan failures:")
+        sections.extend(
+            f"  - {failure['requirement']}: {failure['message']}" for failure in failures
+        )
+    return "\n\n".join(section for section in sections if section != "")
+
+
+def _render_scan_json(
+    filename: str,
+    reports: list[TrustReport],
+    *,
+    failures: list[dict[str, str]],
+    cve_only: bool,
+) -> dict[str, object]:
+    return {
+        "file": filename,
+        "schema_version": JSON_SCHEMA_VERSION,
+        "reports": [
+            _render_cve_json(report) if cve_only else report.to_dict()["report"]
+            for report in reports
+        ],
+        "failures": failures,
+    }
 
 
 def _evidence_summary(report: TrustReport) -> str:

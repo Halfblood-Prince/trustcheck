@@ -6,6 +6,12 @@ Primary command:
 trustcheck inspect <project>
 ```
 
+Requirements file scan:
+
+```bash
+trustcheck scan <filename>
+```
+
 ## Core flags
 
 - `--version`: inspect a specific release instead of the latest project version
@@ -18,6 +24,7 @@ trustcheck inspect <project>
 - `--strict`: apply the built-in strict policy
 - `--policy default|strict|internal-metadata`: evaluate a built-in policy profile
 - `--policy-file PATH`: load policy settings from a JSON file
+- `scan <filename>`: read a requirements-style file and run package inspection for each entry
 
 ## Policy override flags
 
@@ -71,7 +78,21 @@ Inspect the full transitive dependency tree:
 trustcheck inspect sampleproject --version 4.0.0 --with-transitive-deps
 ```
 
+Scan every package listed in a requirements-style file:
+
+```bash
+trustcheck scan requirements.txt
+```
+
+Scan a requirements-style file and emit JSON:
+
+```bash
+trustcheck scan requirements.txt --format json
+```
+
 When dependency inspection is enabled, `trustcheck` reads `requires_dist` metadata, resolves compatible dependency versions from PyPI, and adds a dependency summary to the report. `--with-deps` stops at the immediate dependencies of the inspected package. `--with-transitive-deps` continues recursively through nested dependencies. The top-level result can be escalated if an inspected dependency is `review-required` or `high-risk`.
+
+When `scan` is used, `trustcheck` reads a requirements-style file, skips blank lines and comments, evaluates requirement markers for the current environment, and then inspects each listed package in sequence. Exact or compatible version specifiers are resolved to a concrete release before inspection when possible.
 
 For top-level package analysis, a complete absence of published provenance is typically surfaced as `review-required`. Stronger negative evidence such as failed verification, inconsistent provenance, or known vulnerabilities still drives `high-risk` outcomes.
 

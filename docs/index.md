@@ -65,6 +65,12 @@ Inspect the full dependency tree:
 trustcheck inspect sampleproject --version 4.0.0 --with-transitive-deps
 ```
 
+Inspect every package listed in a requirements-style file:
+
+```bash
+trustcheck scan requirements.txt
+```
+
 Fail CI when full verification is missing:
 
 ```bash

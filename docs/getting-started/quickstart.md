@@ -44,12 +44,24 @@ trustcheck inspect sampleproject --version 4.0.0 --with-deps
 trustcheck inspect sampleproject --version 4.0.0 --with-transitive-deps
 ```
 
+## Scan a requirements-style file
+
+```bash
+trustcheck scan requirements.txt
+```
+
 When dependency inspection is enabled, the text report adds a dependency summary with the number of declared and inspected dependencies, the maximum traversal depth, and the highest-risk dependency recommendation observed in the set. `--with-deps` inspects only direct dependencies. `--with-transitive-deps` continues recursively through nested dependencies too.
 
 ## Emit machine-readable JSON
 
 ```bash
 trustcheck inspect sampleproject --version 4.0.0 --format json
+```
+
+To emit combined JSON for every package in a requirements-style file:
+
+```bash
+trustcheck scan requirements.txt --format json
 ```
 
 To emit only the known vulnerability records in JSON:

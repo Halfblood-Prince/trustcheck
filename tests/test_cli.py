@@ -12,6 +12,7 @@ from trustcheck.cli import (
     EXIT_OK,
     EXIT_POLICY_FAILURE,
     EXIT_UPSTREAM_FAILURE,
+    ScanTarget,
     main,
 )
 from trustcheck.contract import JSON_SCHEMA_VERSION
@@ -355,6 +356,98 @@ class CliBehaviorTests(unittest.TestCase):
 
         self.assertEqual(exit_code, EXIT_POLICY_FAILURE)
         self.assertIn("PYSEC-2026-1: Example advisory", stdout.getvalue())
+
+    def test_cli_scan_runs_inspect_for_each_target(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        targets = [
+            ScanTarget(requirement="gridoptim==2.2.0", project="gridoptim", version="2.2.0"),
+            ScanTarget(requirement="depalpha", project="depalpha", version=None),
+        ]
+        reports = {
+            "gridoptim": make_report(),
+            "depalpha": TrustReport(
+                project="depalpha",
+                version="1.4.0",
+                summary="depalpha package",
+                package_url="https://pypi.org/project/depalpha/1.4.0/",
+                recommendation="metadata-only",
+                diagnostics=ReportDiagnostics(),
+            ),
+        }
+
+        def fake_inspect_package(project: str, **kwargs):
+            self.assertIn(project, reports)
+            self.assertFalse(kwargs["include_dependencies"])
+            self.assertFalse(kwargs["include_transitive_dependencies"])
+            return reports[project]
+
+        with patch("trustcheck.cli._load_scan_targets", return_value=targets):
+            with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    exit_code = main(["scan", "requirements.txt"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertIn("trustcheck scan results for requirements.txt", stdout.getvalue())
+        self.assertIn("successful: 2", stdout.getvalue())
+        self.assertIn("trustcheck report for gridoptim 2.2.0", stdout.getvalue())
+        self.assertIn("trustcheck report for depalpha 1.4.0", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_cli_scan_json_output_contains_reports(self) -> None:
+        stdout = io.StringIO()
+        targets = [ScanTarget(requirement="gridoptim", project="gridoptim", version=None)]
+
+        with patch("trustcheck.cli._load_scan_targets", return_value=targets):
+            with patch("trustcheck.cli.inspect_package", return_value=make_report()):
+                with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                    exit_code = main(["scan", "requirements.txt", "--format", "json"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["file"], "requirements.txt")
+        self.assertEqual(payload["schema_version"], JSON_SCHEMA_VERSION)
+        self.assertEqual(len(payload["reports"]), 1)
+        self.assertEqual(payload["reports"][0]["project"], "gridoptim")
+        self.assertEqual(payload["failures"], [])
+
+    def test_cli_scan_respects_policy_failure(self) -> None:
+        stdout = io.StringIO()
+        report = make_report()
+        report.files[0].verified = False
+        report.coverage.verified_files = 0
+        report.coverage.status = "all-attested"
+        targets = [ScanTarget(requirement="gridoptim", project="gridoptim", version=None)]
+
+        with patch("trustcheck.cli._load_scan_targets", return_value=targets):
+            with patch("trustcheck.cli.inspect_package", return_value=report):
+                with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                    exit_code = main(["scan", "requirements.txt", "--strict"])
+
+        self.assertEqual(exit_code, EXIT_POLICY_FAILURE)
+        self.assertIn("policy: strict (fail)", stdout.getvalue())
+
+    def test_cli_scan_records_package_failures_and_continues(self) -> None:
+        stdout = io.StringIO()
+        targets = [
+            ScanTarget(requirement="broken", project="broken", version=None),
+            ScanTarget(requirement="gridoptim", project="gridoptim", version=None),
+        ]
+
+        def fake_inspect_package(project: str, **kwargs):
+            if project == "broken":
+                raise PypiClientError("resource not found")
+            return make_report()
+
+        with patch("trustcheck.cli._load_scan_targets", return_value=targets):
+            with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+                with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                    exit_code = main(["scan", "requirements.txt"])
+
+        self.assertEqual(exit_code, EXIT_UPSTREAM_FAILURE)
+        self.assertIn("trustcheck report for gridoptim 2.2.0", stdout.getvalue())
+        self.assertIn("scan failures:", stdout.getvalue())
+        self.assertIn("broken: error: unable to inspect package from PyPI", stdout.getvalue())
 
     def test_cli_with_deps_flag_enables_dependency_inspection(self) -> None:
         stdout = io.StringIO()

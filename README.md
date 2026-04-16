@@ -72,6 +72,12 @@ Inspect the full transitive dependency tree:
 trustcheck inspect sampleproject --version 4.0.0 --with-transitive-deps
 ```
 
+Inspect every package listed in a requirements-style file:
+
+```bash
+trustcheck scan requirements.txt
+```
+
 Require a release to match an expected repository:
 
 ```bash
@@ -84,6 +90,12 @@ Emit JSON for another tool:
 
 ```bash
 trustcheck inspect sampleproject --version 4.0.0 --format json
+```
+
+Emit combined JSON for a requirements-style file scan:
+
+```bash
+trustcheck scan requirements.txt --format json
 ```
 
 Emit only vulnerability records as JSON:
