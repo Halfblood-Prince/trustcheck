@@ -1,0 +1,5 @@
+[project]
+dependencies = ["requests>=2.31", "urllib3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]

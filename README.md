@@ -78,6 +78,12 @@ Inspect every package listed in a requirements-style file:
 trustcheck scan requirements.txt
 ```
 
+Inspect dependencies declared in a TOML project file:
+
+```bash
+trustcheck scan pyproject.toml
+```
+
 Require a release to match an expected repository:
 
 ```bash
@@ -92,7 +98,7 @@ Emit JSON for another tool:
 trustcheck inspect sampleproject --version 4.0.0 --format json
 ```
 
-Emit combined JSON for a requirements-style file scan:
+Emit combined JSON for a requirements-style or TOML file scan:
 
 ```bash
 trustcheck scan requirements.txt --format json

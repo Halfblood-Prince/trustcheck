@@ -13,6 +13,11 @@ from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+    import tomli as tomllib
+
 from .contract import JSON_SCHEMA_VERSION
 from .models import TrustReport
 from .policy import BUILTIN_POLICIES, evaluate_policy, resolve_policy
@@ -171,9 +176,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan_parser = subparsers.add_parser(
         "scan",
-        help="Inspect every package listed in a requirements-style file.",
+        help="Inspect every package listed in a requirements-style or TOML file.",
     )
-    scan_parser.add_argument("filename", help="Path to a requirements-style file.")
+    scan_parser.add_argument("filename", help="Path to a requirements-style or TOML file.")
     scan_parser.add_argument(
         "--config-file",
         help="Path to a JSON config file with optional network settings.",
@@ -651,6 +656,9 @@ def _load_scan_targets(path: str, client: PypiClient) -> list[ScanTarget]:
     if not file_path.exists():
         raise ValueError(f"scan file not found: {path}")
 
+    if file_path.suffix.lower() == ".toml":
+        return _load_scan_targets_from_toml(file_path, client)
+
     environment = {key: str(value) for key, value in default_environment().items()}
     environment.setdefault("extra", "")
     targets: list[ScanTarget] = []
@@ -680,6 +688,166 @@ def _load_scan_targets(path: str, client: PypiClient) -> list[ScanTarget]:
     if not targets:
         raise ValueError(f"no supported package requirements found in {path}")
     return targets
+
+
+def _load_scan_targets_from_toml(file_path: Path, client: PypiClient) -> list[ScanTarget]:
+    try:
+        payload = tomllib.loads(file_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"invalid TOML in {file_path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"TOML file must contain a top-level table: {file_path}")
+
+    requirement_lines = _extract_scan_requirements_from_toml(payload)
+    if not requirement_lines:
+        raise ValueError(
+            f"no supported package requirements found in {file_path}"
+        )
+
+    environment = {key: str(value) for key, value in default_environment().items()}
+    environment.setdefault("extra", "")
+    targets: list[ScanTarget] = []
+    for line_number, line in enumerate(requirement_lines, 1):
+        try:
+            requirement = Requirement(line)
+        except InvalidRequirement as exc:
+            raise ValueError(
+                f"invalid requirement in {file_path} at entry {line_number}: {exc}"
+            ) from exc
+        if requirement.marker is not None and not requirement.marker.evaluate(environment):
+            continue
+        targets.append(
+            ScanTarget(
+                requirement=line,
+                project=requirement.name,
+                version=_resolve_scan_target_version(requirement, client),
+            )
+        )
+    if not targets:
+        raise ValueError(f"no supported package requirements found in {file_path}")
+    return targets
+
+
+def _extract_scan_requirements_from_toml(payload: dict[str, object]) -> list[str]:
+    requirements: list[str] = []
+
+    project = payload.get("project")
+    if isinstance(project, dict):
+        requirements.extend(_collect_requirement_strings(project.get("dependencies")))
+        optional_dependencies = project.get("optional-dependencies")
+        if isinstance(optional_dependencies, dict):
+            for group_requirements in optional_dependencies.values():
+                requirements.extend(_collect_requirement_strings(group_requirements))
+
+    tool = payload.get("tool")
+    if isinstance(tool, dict):
+        poetry = tool.get("poetry")
+        if isinstance(poetry, dict):
+            requirements.extend(
+                _extract_poetry_dependency_requirements(poetry.get("dependencies"))
+            )
+            groups = poetry.get("group")
+            if isinstance(groups, dict):
+                for group_payload in groups.values():
+                    if not isinstance(group_payload, dict):
+                        continue
+                    requirements.extend(
+                        _extract_poetry_dependency_requirements(
+                            group_payload.get("dependencies")
+                        )
+                    )
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for requirement in requirements:
+        if requirement not in seen:
+            deduped.append(requirement)
+            seen.add(requirement)
+    return deduped
+
+
+def _collect_requirement_strings(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _extract_poetry_dependency_requirements(value: object) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    requirements: list[str] = []
+    for name, spec in value.items():
+        if str(name).lower() == "python":
+            continue
+        requirement = _poetry_dependency_to_requirement(str(name), spec)
+        if requirement:
+            requirements.append(requirement)
+    return requirements
+
+
+def _poetry_dependency_to_requirement(name: str, spec: object) -> str | None:
+    if isinstance(spec, str):
+        cleaned = spec.strip()
+        if not cleaned or cleaned == "*":
+            return name
+        translated = _translate_poetry_version_specifier(cleaned)
+        if translated is not None:
+            return f"{name}{translated}"
+        return f"{name}{cleaned}"
+    if isinstance(spec, dict):
+        version = spec.get("version")
+        if version is None or str(version).strip() in {"", "*"}:
+            return name
+        cleaned = str(version).strip()
+        translated = _translate_poetry_version_specifier(cleaned)
+        if translated is not None:
+            return f"{name}{translated}"
+        return f"{name}{cleaned}"
+    return None
+
+
+def _translate_poetry_version_specifier(spec: str) -> str | None:
+    if spec.startswith("^"):
+        return _expand_poetry_caret_specifier(spec[1:])
+    if spec.startswith("~"):
+        return _expand_poetry_tilde_specifier(spec[1:])
+    return None
+
+
+def _expand_poetry_caret_specifier(version_text: str) -> str:
+    release = _parse_version_release_parts(version_text)
+    upper = list(release)
+    if release[0] != 0:
+        upper[0] += 1
+        upper = upper[:1]
+    elif len(release) > 1 and release[1] != 0:
+        upper[1] += 1
+        upper = upper[:2]
+    elif len(release) > 2:
+        upper[2] += 1
+        upper = upper[:3]
+    else:
+        upper[0] = 1
+        upper = upper[:1]
+    return f">={version_text},<{'.'.join(str(part) for part in upper)}"
+
+
+def _expand_poetry_tilde_specifier(version_text: str) -> str:
+    release = _parse_version_release_parts(version_text)
+    upper = list(release)
+    if len(upper) == 1:
+        upper[0] += 1
+        upper = upper[:1]
+    else:
+        upper[1] += 1
+        upper = upper[:2]
+    return f">={version_text},<{'.'.join(str(part) for part in upper)}"
+
+
+def _parse_version_release_parts(version_text: str) -> tuple[int, ...]:
+    try:
+        return Version(version_text).release
+    except InvalidVersion:
+        return (0,)
 
 
 def _clean_requirement_line(raw_line: str) -> str:

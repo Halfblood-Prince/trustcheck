@@ -29,6 +29,7 @@ classifiers = [
 dependencies = [
   "packaging>=24,<26",
   "pypi-attestations>=0.0.29,<1",
+  "tomli>=2,<3; python_version < '3.11'",
 ]
 
 [project.scripts]

@@ -13,6 +13,7 @@ from trustcheck.cli import (
     EXIT_POLICY_FAILURE,
     EXIT_UPSTREAM_FAILURE,
     ScanTarget,
+    _load_scan_targets,
     main,
 )
 from trustcheck.contract import JSON_SCHEMA_VERSION
@@ -448,6 +449,76 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("trustcheck report for gridoptim 2.2.0", stdout.getvalue())
         self.assertIn("scan failures:", stdout.getvalue())
         self.assertIn("broken: error: unable to inspect package from PyPI", stdout.getvalue())
+
+    def test_load_scan_targets_supports_project_toml_dependencies(self) -> None:
+        scan_file = Path("tests/_tmp/scan-project.toml")
+        scan_file.write_text(
+            "\n".join(
+                [
+                    "[project]",
+                    'dependencies = ["requests>=2.31", "urllib3"]',
+                    "",
+                    "[project.optional-dependencies]",
+                    'dev = ["pytest>=8"]',
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        class FakeClient:
+            def get_project(self, project: str) -> dict[str, object]:
+                versions = {
+                    "requests": "2.32.0",
+                    "pytest": "8.3.0",
+                }
+                version = versions.get(project, "2.0.0")
+                return {
+                    "info": {"version": version},
+                    "releases": {version: []},
+                }
+
+        targets = _load_scan_targets(str(scan_file), FakeClient())  # type: ignore[arg-type]
+
+        self.assertEqual(
+            [(target.project, target.version) for target in targets],
+            [("requests", "2.32.0"), ("urllib3", None), ("pytest", "8.3.0")],
+        )
+
+    def test_load_scan_targets_supports_poetry_toml_dependencies(self) -> None:
+        scan_file = Path("tests/_tmp/scan-poetry.toml")
+        scan_file.write_text(
+            "\n".join(
+                [
+                    "[tool.poetry.dependencies]",
+                    'python = "^3.10"',
+                    'requests = "^2.31"',
+                    'urllib3 = "*"',
+                    "",
+                    "[tool.poetry.group.dev.dependencies]",
+                    'pytest = "^8.0"',
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        class FakeClient:
+            def get_project(self, project: str) -> dict[str, object]:
+                versions = {
+                    "requests": "2.32.0",
+                    "pytest": "8.3.0",
+                }
+                version = versions.get(project, "2.0.0")
+                return {
+                    "info": {"version": version},
+                    "releases": {version: []},
+                }
+
+        targets = _load_scan_targets(str(scan_file), FakeClient())  # type: ignore[arg-type]
+
+        self.assertEqual(
+            [(target.project, target.version) for target in targets],
+            [("requests", "2.32.0"), ("urllib3", None), ("pytest", "8.3.0")],
+        )
 
     def test_cli_with_deps_flag_enables_dependency_inspection(self) -> None:
         stdout = io.StringIO()

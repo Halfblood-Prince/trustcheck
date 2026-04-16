@@ -24,7 +24,7 @@ trustcheck scan <filename>
 - `--strict`: apply the built-in strict policy
 - `--policy default|strict|internal-metadata`: evaluate a built-in policy profile
 - `--policy-file PATH`: load policy settings from a JSON file
-- `scan <filename>`: read a requirements-style file and run package inspection for each entry
+- `scan <filename>`: read a requirements-style or TOML dependency file and run package inspection for each entry
 
 ## Policy override flags
 
@@ -84,6 +84,12 @@ Scan every package listed in a requirements-style file:
 trustcheck scan requirements.txt
 ```
 
+Scan dependencies declared in a TOML project file:
+
+```bash
+trustcheck scan pyproject.toml
+```
+
 Scan a requirements-style file and emit JSON:
 
 ```bash
@@ -92,7 +98,7 @@ trustcheck scan requirements.txt --format json
 
 When dependency inspection is enabled, `trustcheck` reads `requires_dist` metadata, resolves compatible dependency versions from PyPI, and adds a dependency summary to the report. `--with-deps` stops at the immediate dependencies of the inspected package. `--with-transitive-deps` continues recursively through nested dependencies. The top-level result can be escalated if an inspected dependency is `review-required` or `high-risk`.
 
-When `scan` is used, `trustcheck` reads a requirements-style file, skips blank lines and comments, evaluates requirement markers for the current environment, and then inspects each listed package in sequence. Exact or compatible version specifiers are resolved to a concrete release before inspection when possible.
+When `scan` is used, `trustcheck` reads either a requirements-style file or a TOML dependency file. For requirements files, it skips blank lines and comments, evaluates requirement markers for the current environment, and then inspects each listed package in sequence. For TOML files, it reads dependencies from `[project.dependencies]`, `[project.optional-dependencies]`, `[tool.poetry.dependencies]`, and Poetry dependency groups. Exact or compatible version specifiers are resolved to a concrete release before inspection when possible.
 
 For top-level package analysis, a complete absence of published provenance is typically surfaced as `review-required`. Stronger negative evidence such as failed verification, inconsistent provenance, or known vulnerabilities still drives `high-risk` outcomes.
 

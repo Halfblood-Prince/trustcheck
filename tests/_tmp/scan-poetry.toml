@@ -1,0 +1,7 @@
+[tool.poetry.dependencies]
+python = "^3.10"
+requests = "^2.31"
+urllib3 = "*"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"

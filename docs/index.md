@@ -71,6 +71,12 @@ Inspect every package listed in a requirements-style file:
 trustcheck scan requirements.txt
 ```
 
+Inspect dependencies declared in a TOML project file:
+
+```bash
+trustcheck scan pyproject.toml
+```
+
 Fail CI when full verification is missing:
 
 ```bash

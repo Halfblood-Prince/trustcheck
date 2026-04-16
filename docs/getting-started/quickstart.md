@@ -50,6 +50,12 @@ trustcheck inspect sampleproject --version 4.0.0 --with-transitive-deps
 trustcheck scan requirements.txt
 ```
 
+## Scan a TOML dependency file
+
+```bash
+trustcheck scan pyproject.toml
+```
+
 When dependency inspection is enabled, the text report adds a dependency summary with the number of declared and inspected dependencies, the maximum traversal depth, and the highest-risk dependency recommendation observed in the set. `--with-deps` inspects only direct dependencies. `--with-transitive-deps` continues recursively through nested dependencies too.
 
 ## Emit machine-readable JSON
@@ -58,7 +64,7 @@ When dependency inspection is enabled, the text report adds a dependency summary
 trustcheck inspect sampleproject --version 4.0.0 --format json
 ```
 
-To emit combined JSON for every package in a requirements-style file:
+To emit combined JSON for every package in a requirements-style or TOML dependency file:
 
 ```bash
 trustcheck scan requirements.txt --format json
