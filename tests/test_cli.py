@@ -7,13 +7,29 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from packaging.requirements import Requirement
+
 from trustcheck.cli import (
     EXIT_DATA_ERROR,
     EXIT_OK,
     EXIT_POLICY_FAILURE,
     EXIT_UPSTREAM_FAILURE,
     ScanTarget,
+    _build_debug_request_hook,
+    _clean_requirement_line,
+    _collect_requirement_strings,
+    _expand_poetry_caret_specifier,
+    _expand_poetry_tilde_specifier,
+    _extract_scan_requirements_from_toml,
     _load_scan_targets,
+    _load_scan_targets_from_toml,
+    _merge_exit_codes,
+    _parse_version_release_parts,
+    _poetry_dependency_to_requirement,
+    _render_scan_json,
+    _render_scan_text,
+    _resolve_scan_target_version,
+    _translate_poetry_version_specifier,
     main,
 )
 from trustcheck.contract import JSON_SCHEMA_VERSION
@@ -31,6 +47,7 @@ from trustcheck.models import (
     VulnerabilityRecord,
 )
 from trustcheck.pypi import PypiClientError
+from trustcheck.schemas import ProjectInfoPayload
 
 
 def make_report() -> TrustReport:
@@ -117,6 +134,153 @@ def make_report() -> TrustReport:
 
 
 class CliBehaviorTests(unittest.TestCase):
+    def test_merge_exit_codes_prefers_more_severe_outcomes(self) -> None:
+        self.assertEqual(_merge_exit_codes(EXIT_OK, EXIT_POLICY_FAILURE), EXIT_POLICY_FAILURE)
+        self.assertEqual(
+            _merge_exit_codes(EXIT_POLICY_FAILURE, EXIT_UPSTREAM_FAILURE),
+            EXIT_UPSTREAM_FAILURE,
+        )
+        self.assertEqual(
+            _merge_exit_codes(EXIT_UPSTREAM_FAILURE, EXIT_DATA_ERROR),
+            EXIT_DATA_ERROR,
+        )
+
+    def test_clean_requirement_line_strips_comments(self) -> None:
+        self.assertEqual(_clean_requirement_line("requests>=2 # comment"), "requests>=2")
+        self.assertEqual(_clean_requirement_line("   # comment"), "")
+        self.assertEqual(_clean_requirement_line("urllib3"), "urllib3")
+
+    def test_collect_requirement_strings_filters_non_strings(self) -> None:
+        self.assertEqual(_collect_requirement_strings(["requests", "", 3]), ["requests"])
+        self.assertEqual(_collect_requirement_strings("requests"), [])
+
+    def test_extract_scan_requirements_from_toml_handles_project_and_poetry(self) -> None:
+        payload = {
+            "project": {
+                "dependencies": ["requests>=2.31"],
+                "optional-dependencies": {"dev": ["pytest>=8"]},
+            },
+            "tool": {
+                "poetry": {
+                    "dependencies": {"python": "^3.10", "urllib3": "*"},
+                    "group": {"lint": {"dependencies": {"ruff": "^0.8"}}},
+                }
+            },
+        }
+
+        self.assertEqual(
+            _extract_scan_requirements_from_toml(payload),
+            ["requests>=2.31", "pytest>=8", "urllib3", "ruff>=0.8,<0.9"],
+        )
+
+    def test_poetry_dependency_translation_helpers(self) -> None:
+        self.assertEqual(_poetry_dependency_to_requirement("urllib3", "*"), "urllib3")
+        self.assertEqual(
+            _poetry_dependency_to_requirement("requests", "^2.31"),
+            "requests>=2.31,<3",
+        )
+        self.assertEqual(
+            _poetry_dependency_to_requirement("pytest", {"version": "~8.1"}),
+            "pytest>=8.1,<8.2",
+        )
+        self.assertIsNone(_poetry_dependency_to_requirement("demo", ["bad"]))  # type: ignore[list-item]
+        self.assertEqual(_translate_poetry_version_specifier("^2.1"), ">=2.1,<3")
+        self.assertEqual(_translate_poetry_version_specifier("~1.4"), ">=1.4,<1.5")
+        self.assertIsNone(_translate_poetry_version_specifier(">=2"))
+        self.assertEqual(_expand_poetry_caret_specifier("0.2.3"), ">=0.2.3,<0.3")
+        self.assertEqual(_expand_poetry_tilde_specifier("1"), ">=1,<2")
+        self.assertEqual(_parse_version_release_parts("bad"), (0,))
+
+    def test_resolve_scan_target_version_variants(self) -> None:
+        class FakeClient:
+            def get_project(self, project: str) -> dict[str, object]:
+                if project == "requests":
+                    return {
+                        "info": {"version": "2.31.0"},
+                        "releases": {"2.30.0": [], "2.31.0": []},
+                    }
+                if project == "urllib3":
+                    return {"info": {"version": "2.2.0"}, "releases": {"broken": []}}
+                return {"info": {"version": "1.0.0"}, "releases": {}}
+
+        self.assertIsNone(_resolve_scan_target_version(Requirement("idna"), FakeClient()))
+        self.assertEqual(
+            _resolve_scan_target_version(Requirement("requests>=2.30"), FakeClient()),
+            "2.31.0",
+        )
+        self.assertEqual(
+            _resolve_scan_target_version(Requirement("urllib3>=2.0"), FakeClient()),
+            "2.2.0",
+        )
+        with self.assertRaisesRegex(ValueError, "compatible version"):
+            _resolve_scan_target_version(Requirement("certifi>=9"), FakeClient())
+
+    def test_load_scan_targets_errors_for_missing_invalid_and_empty_files(self) -> None:
+        missing = Path("tests/_tmp/does-not-exist.txt")
+        with self.assertRaisesRegex(ValueError, "scan file not found"):
+            _load_scan_targets(str(missing), object())  # type: ignore[arg-type]
+
+        invalid_file = Path("tests/_tmp/invalid-scan.txt")
+        invalid_file.write_text("not valid ===\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "invalid requirement"):
+            _load_scan_targets(str(invalid_file), object())  # type: ignore[arg-type]
+
+        empty_file = Path("tests/_tmp/empty-scan.txt")
+        empty_file.write_text("# comment only\n--index-url https://example.com\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "no supported package requirements"):
+            _load_scan_targets(str(empty_file), object())  # type: ignore[arg-type]
+
+    def test_load_scan_targets_from_toml_errors_for_bad_inputs(self) -> None:
+        bad_toml = Path("tests/_tmp/bad-scan.toml")
+        bad_toml.write_text("[project\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "invalid TOML"):
+            _load_scan_targets_from_toml(bad_toml, object())  # type: ignore[arg-type]
+
+        unsupported_toml = Path("tests/_tmp/empty-scan.toml")
+        unsupported_toml.write_text("[project]\nname='demo'\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "no supported package requirements"):
+            _load_scan_targets_from_toml(unsupported_toml, object())  # type: ignore[arg-type]
+
+    def test_render_scan_helpers_and_debug_hook(self) -> None:
+        report = make_report()
+        report.vulnerabilities = [
+            VulnerabilityRecord(id="PYSEC-1", summary="Example advisory")
+        ]
+        text = _render_scan_text(
+            "requirements.txt",
+            [report],
+            failures=[{"requirement": "broken", "message": "boom"}],
+            verbose=False,
+            cve_only=True,
+        )
+        self.assertIn("trustcheck scan results for requirements.txt", text)
+        self.assertIn("known vulnerabilities for gridoptim 2.2.0", text)
+        self.assertIn("scan failures:", text)
+
+        payload = _render_scan_json(
+            "requirements.txt",
+            [report],
+            failures=[{"requirement": "broken", "message": "boom"}],
+            cve_only=False,
+        )
+        self.assertEqual(payload["file"], "requirements.txt")
+        self.assertEqual(len(payload["reports"]), 1)
+        self.assertEqual(payload["failures"][0]["requirement"], "broken")
+
+        self.assertIsNone(_build_debug_request_hook(enabled=False, log_format="text"))
+        stderr = io.StringIO()
+        hook = _build_debug_request_hook(enabled=True, log_format="text")
+        assert hook is not None
+        with redirect_stderr(stderr):
+            hook("request", {"url": "https://pypi.org"})
+        self.assertIn("[debug] event=request url=https://pypi.org", stderr.getvalue())
+
+    def test_project_info_payload_normalizes_project_urls(self) -> None:
+        payload = ProjectInfoPayload(project_urls=["bad"]).model_dump()
+        self.assertEqual(payload["project_urls"], {})
+        payload = ProjectInfoPayload(project_urls={"Repo": 123, None: "x"}).model_dump()
+        self.assertEqual(payload["project_urls"], {"Repo": "123"})
+
     def test_cli_success_text_output(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()
