@@ -255,9 +255,10 @@ def _build_progress_callback() -> ProgressCallback:
 
 
 def _build_dependency_progress_callback() -> DependencyProgressCallback:
-    def emit(project: str, depth: int) -> None:
+    def emit(project: str, depth: int, current: int, total: int) -> None:
+        percent = int((current / total) * 100) if total > 0 else 0
         print(
-            f"[progress] inspecting dependency depth={depth}: {project}",
+            f"[progress] inspecting dependency depth={depth}: {project} ({percent}%)",
             file=sys.stderr,
             flush=True,
         )

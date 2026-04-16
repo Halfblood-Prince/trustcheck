@@ -812,18 +812,18 @@ class InspectPackageTests(unittest.TestCase):
                 "depalpha": make_project_payload(version="1.4.0", releases={"1.4.0": []}, urls=[]),
             },
         )
-        progress_events: list[tuple[str, int]] = []
+        progress_events: list[tuple[str, int, int, int]] = []
 
         inspect_package(
             "gridoptim",
             client=cast(Any, client),
             include_dependencies=True,
-            dependency_progress_callback=lambda project, depth: progress_events.append(
-                (project, depth)
+            dependency_progress_callback=lambda project, depth, current, total: progress_events.append(
+                (project, depth, current, total)
             ),
         )
 
-        self.assertEqual(progress_events, [("depalpha", 1)])
+        self.assertEqual(progress_events, [("depalpha", 1, 1, 1)])
 
     def test_dependency_resolution_failure_is_recorded(self) -> None:
         client = FakeClient(
