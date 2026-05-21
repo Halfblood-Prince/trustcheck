@@ -33,7 +33,10 @@ jobs:
           python -m pip install -e . pip-audit cyclonedx-bom
 
       - name: Dependency audit
-        run: python -m pip_audit
+        run: |
+          # PYSEC-2025-183 currently has no patched PyJWT release and is disputed by
+          # the supplier because key strength is chosen by the application.
+          python -m pip_audit --skip-editable --ignore-vuln PYSEC-2025-183
 
       - name: Generate SBOM
         run: cyclonedx-py environment --output-file trustcheck-sbom.json
