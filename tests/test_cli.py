@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -203,7 +204,19 @@ class CliBehaviorTests(unittest.TestCase):
                     return {"info": {"version": "2.2.0"}, "releases": {"broken": []}}
                 return {"info": {"version": "1.0.0"}, "releases": {}}
 
+        class NoNetworkClient:
+            def get_project(self, project: str) -> dict[str, object]:
+                raise AssertionError(f"unexpected project lookup for {project}")
+
         self.assertIsNone(_resolve_scan_target_version(Requirement("idna"), FakeClient()))
+        self.assertEqual(
+            _resolve_scan_target_version(Requirement("idna==3.7"), NoNetworkClient()),
+            "3.7",
+        )
+        self.assertEqual(
+            _resolve_scan_target_version(Requirement("idna===local-version"), NoNetworkClient()),
+            "local-version",
+        )
         self.assertEqual(
             _resolve_scan_target_version(Requirement("requests>=2.30"), FakeClient()),
             "2.31.0",
@@ -229,6 +242,25 @@ class CliBehaviorTests(unittest.TestCase):
         empty_file.write_text("# comment only\n--index-url https://example.com\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "no supported package requirements"):
             _load_scan_targets(str(empty_file), object())  # type: ignore[arg-type]
+
+    def test_load_scan_targets_records_version_resolution_failures_and_continues(self) -> None:
+        class FakeClient:
+            def get_project(self, project: str) -> dict[str, object]:
+                raise PypiClientError(
+                    f"offline cache miss for {project}",
+                    subcode="offline_cache_miss",
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scan_file = Path(tmpdir) / "resolution-failure-scan.txt"
+            scan_file.write_text("broken>=99\nurllib3\n", encoding="utf-8")
+            targets = _load_scan_targets(str(scan_file), FakeClient())  # type: ignore[arg-type]
+
+        self.assertEqual([target.project for target in targets], ["broken", "urllib3"])
+        self.assertIsNone(targets[0].version)
+        self.assertEqual(targets[0].failure_exit_code, EXIT_UPSTREAM_FAILURE)
+        self.assertIn("unable to inspect package from PyPI", targets[0].failure_message or "")
+        self.assertIsNone(targets[1].failure_message)
 
     def test_load_scan_targets_from_toml_errors_for_bad_inputs(self) -> None:
         bad_toml = Path("tests/_tmp/bad-scan.toml")
@@ -613,6 +645,34 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("trustcheck report for gridoptim 2.2.0", stdout.getvalue())
         self.assertIn("scan failures:", stdout.getvalue())
         self.assertIn("broken: error: unable to inspect package from PyPI", stdout.getvalue())
+
+    def test_cli_scan_reports_target_resolution_failures_and_continues(self) -> None:
+        stdout = io.StringIO()
+        targets = [
+            ScanTarget(
+                requirement="broken>=99",
+                project="broken",
+                failure_message="error: unable to resolve scan requirement broken>=99",
+                failure_exit_code=EXIT_DATA_ERROR,
+            ),
+            ScanTarget(requirement="gridoptim", project="gridoptim", version=None),
+        ]
+        inspected: list[str] = []
+
+        def fake_inspect_package(project: str, **kwargs):
+            inspected.append(project)
+            return make_report()
+
+        with patch("trustcheck.cli._load_scan_targets", return_value=targets):
+            with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+                with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                    exit_code = main(["scan", "requirements.txt"])
+
+        self.assertEqual(exit_code, EXIT_DATA_ERROR)
+        self.assertEqual(inspected, ["gridoptim"])
+        self.assertIn("successful: 1", stdout.getvalue())
+        self.assertIn("failed: 1", stdout.getvalue())
+        self.assertIn("broken>=99: error: unable to resolve scan requirement", stdout.getvalue())
 
     def test_load_scan_targets_supports_project_toml_dependencies(self) -> None:
         scan_file = Path("tests/_tmp/scan-project.toml")

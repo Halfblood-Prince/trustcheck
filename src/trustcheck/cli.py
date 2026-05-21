@@ -36,6 +36,8 @@ class ScanTarget:
     requirement: str
     project: str
     version: str | None = None
+    failure_message: str | None = None
+    failure_exit_code: int = EXIT_OK
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -372,6 +374,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             failures: list[dict[str, str]] = []
             overall_exit_code = EXIT_OK
             for target in targets:
+                if target.failure_message is not None:
+                    failures.append(
+                        {
+                            "requirement": target.requirement,
+                            "message": target.failure_message,
+                        }
+                    )
+                    overall_exit_code = _merge_exit_codes(
+                        overall_exit_code,
+                        target.failure_exit_code,
+                    )
+                    continue
                 try:
                     report = inspect_package(
                         target.project,
@@ -677,11 +691,17 @@ def _load_scan_targets(path: str, client: PypiClient) -> list[ScanTarget]:
             ) from exc
         if requirement.marker is not None and not requirement.marker.evaluate(environment):
             continue
+        version, failure_message, failure_exit_code = _resolve_scan_target_version_for_scan(
+            requirement,
+            client,
+        )
         targets.append(
             ScanTarget(
                 requirement=line,
                 project=requirement.name,
-                version=_resolve_scan_target_version(requirement, client),
+                version=version,
+                failure_message=failure_message,
+                failure_exit_code=failure_exit_code,
             )
         )
 
@@ -716,11 +736,17 @@ def _load_scan_targets_from_toml(file_path: Path, client: PypiClient) -> list[Sc
             ) from exc
         if requirement.marker is not None and not requirement.marker.evaluate(environment):
             continue
+        version, failure_message, failure_exit_code = _resolve_scan_target_version_for_scan(
+            requirement,
+            client,
+        )
         targets.append(
             ScanTarget(
                 requirement=line,
                 project=requirement.name,
-                version=_resolve_scan_target_version(requirement, client),
+                version=version,
+                failure_message=failure_message,
+                failure_exit_code=failure_exit_code,
             )
         )
     if not targets:
@@ -859,7 +885,26 @@ def _clean_requirement_line(raw_line: str) -> str:
     return line
 
 
+def _resolve_scan_target_version_for_scan(
+    requirement: Requirement,
+    client: PypiClient,
+) -> tuple[str | None, str | None, int]:
+    try:
+        return _resolve_scan_target_version(requirement, client), None, EXIT_OK
+    except PypiClientError as exc:
+        return None, _format_upstream_error(exc), EXIT_UPSTREAM_FAILURE
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return (
+            None,
+            f"error: unable to resolve scan requirement {requirement!s}: {exc}",
+            EXIT_DATA_ERROR,
+        )
+
+
 def _resolve_scan_target_version(requirement: Requirement, client: PypiClient) -> str | None:
+    exact_version = _exact_scan_target_version(requirement)
+    if exact_version is not None:
+        return exact_version
     if not requirement.specifier:
         return None
 
@@ -897,6 +942,18 @@ def _resolve_scan_target_version(requirement: Requirement, client: PypiClient) -
     raise ValueError(
         f"unable to resolve a compatible version for requirement {requirement!s}"
     )
+
+
+def _exact_scan_target_version(requirement: Requirement) -> str | None:
+    specifiers = list(requirement.specifier)
+    if len(specifiers) != 1:
+        return None
+    specifier = specifiers[0]
+    if specifier.operator == "===":
+        return specifier.version
+    if specifier.operator == "==" and not specifier.version.endswith(".*"):
+        return specifier.version
+    return None
 
 
 def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
