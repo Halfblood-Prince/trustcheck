@@ -71,10 +71,10 @@ jobs:
       - name: Install tooling
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . mypy ruff
+          python -m pip install -e . mypy ruff tomli
 
       - name: Run lint
-        run: ruff check src tests
+        run: ruff check src tests scripts
 
       - name: Run type checks
         run: mypy src
@@ -146,9 +146,6 @@ jobs:
   coverage:
     needs: qa
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
 
     steps:
       - name: Check out repository
@@ -168,14 +165,18 @@ jobs:
           python -m pip install -e . build pytest pytest-cov coverage
 
       - name: Run tests with coverage
-        run: python -m pytest --cov=trustcheck --cov-report=term-missing --cov-report=xml tests
+        run: |
+          python -m pytest \
+            --cov=trustcheck \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-report=json:coverage.json \
+            tests
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          fail_ci_if_error: true
-          files: coverage.xml
-          use_oidc: true
+      - name: Verify coverage badge
+        run: |
+          python scripts/update_coverage_badge.py coverage.json docs/assets/images/coverage.svg
+          git diff --exit-code -- docs/assets/images/coverage.svg
 
       - name: Build package
         run: python -m build
@@ -207,5 +208,7 @@ jobs:
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
         with:
-          name: coverage-xml
-          path: coverage.xml
+          name: coverage-reports
+          path: |
+            coverage.xml
+            coverage.json

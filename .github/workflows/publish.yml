@@ -57,10 +57,10 @@ jobs:
       - name: Install tooling
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . mypy ruff
+          python -m pip install -e . mypy ruff tomli
 
       - name: Run lint
-        run: ruff check src tests
+        run: ruff check src tests scripts
 
       - name: Run type checks
         run: mypy src

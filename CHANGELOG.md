@@ -8,7 +8,7 @@ The project follows Semantic Versioning for the supported public API described i
 
 ### Added
 
-- Added Bandit and Semgrep CI workflows plus Codecov coverage uploads and README status badges.
+- Added Bandit and Semgrep CI workflows plus a pytest coverage badge and README status badges.
 - Added optional OSV vulnerability queries, including GitHub Advisory Database records.
 - Added vulnerability severity output and cross-source advisory deduplication by aliases such as CVE IDs.
 - Added lockfile-aware scans for hashed `requirements.txt`, `uv.lock`, `poetry.lock`, and `pdm.lock`.
