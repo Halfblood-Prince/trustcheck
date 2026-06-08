@@ -58,6 +58,7 @@ class ContractTests(unittest.TestCase):
                     summary="Example vuln",
                     aliases=["CVE-2026-0001"],
                     source="PyPI",
+                    severity="HIGH",
                     fixed_in=["1.2.4"],
                     link="https://example.com/advisory",
                 )

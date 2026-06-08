@@ -73,6 +73,10 @@ strict = true
 warn_unused_configs = true
 pretty = true
 
+[[tool.mypy.overrides]]
+module = "trustcheck._version"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

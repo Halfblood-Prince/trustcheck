@@ -178,6 +178,65 @@ class FakeClient:
         return self.download_map[url]
 
 
+class LockedDependencyClient:
+    def __init__(self) -> None:
+        self.request_hook = None
+        self.release_calls: list[tuple[str, str]] = []
+        self.root_payload = make_project_payload(
+            requires_dist=["depalpha>=1.0"],
+            releases={"2.2.0": []},
+            urls=[],
+        )
+        self.project_payloads = {
+            "depalpha": make_project_payload(
+                version="1.9.0",
+                requires_dist=["depbeta>=2.0"],
+                releases={"1.4.0": [], "1.9.0": []},
+                urls=[],
+            ),
+            "depbeta": make_project_payload(
+                version="2.9.0",
+                requires_dist=[],
+                releases={"2.5.0": [], "2.9.0": []},
+                urls=[],
+            ),
+        }
+        self.release_payloads = {
+            ("depalpha", "1.4.0"): make_project_payload(
+                version="1.4.0",
+                requires_dist=["depbeta>=2.0"],
+                releases={"1.4.0": []},
+                urls=[],
+            ),
+            ("depbeta", "2.5.0"): make_project_payload(
+                version="2.5.0",
+                requires_dist=[],
+                releases={"2.5.0": []},
+                urls=[],
+            ),
+        }
+
+    def get_project(self, project: str) -> dict[str, object]:
+        if project == "gridoptim":
+            return self.root_payload
+        return self.project_payloads[project]
+
+    def get_release(self, project: str, version: str) -> dict[str, object]:
+        self.release_calls.append((project, version))
+        return self.release_payloads[(project, version)]
+
+
+class FakeOsvClient:
+    def __init__(self, responses: dict[tuple[str, str], list[dict[str, object]]]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, str]] = []
+        self.request_hook = None
+
+    def query(self, project: str, version: str) -> list[dict[str, object]]:
+        self.calls.append((project, version))
+        return self.responses.get((project, version), [])
+
+
 class InspectPackageTests(unittest.TestCase):
     def test_inspect_package_happy_path(self) -> None:
         provenance = make_provenance()
@@ -588,6 +647,124 @@ class InspectPackageTests(unittest.TestCase):
         self.assertEqual(report.vulnerabilities[1].id, "PYSEC-1")
         self.assertEqual(report.recommendation, "high-risk")
 
+    def test_osv_detects_known_vulnerable_package(self) -> None:
+        client = FakeClient(
+            release_payloads={
+                "jinja2": make_project_payload(
+                    version="2.10",
+                    releases={"2.10": []},
+                    urls=[],
+                )
+            }
+        )
+        osv_client = FakeOsvClient(
+            {
+                ("jinja2", "2.10"): [
+                    {
+                        "id": "GHSA-462w-v97r-4m45",
+                        "aliases": ["CVE-2019-10906", "PYSEC-2019-217"],
+                        "summary": "Jinja2 sandbox escape via str.format_map",
+                        "database_specific": {"severity": "high"},
+                        "affected": [
+                            {
+                                "package": {
+                                    "name": "jinja2",
+                                    "ecosystem": "PyPI",
+                                },
+                                "ranges": [
+                                    {
+                                        "type": "ECOSYSTEM",
+                                        "events": [{"fixed": "2.10.1"}],
+                                    }
+                                ],
+                            }
+                        ],
+                        "references": [
+                            {
+                                "type": "ADVISORY",
+                                "url": (
+                                    "https://github.com/advisories/"
+                                    "GHSA-462w-v97r-4m45"
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+        report = inspect_package(
+            "jinja2",
+            client=cast(Any, client),
+            include_osv=True,
+            osv_client=cast(Any, osv_client),
+        )
+
+        self.assertEqual(osv_client.calls, [("jinja2", "2.10")])
+        self.assertEqual(len(report.vulnerabilities), 1)
+        self.assertEqual(report.vulnerabilities[0].id, "GHSA-462w-v97r-4m45")
+        self.assertIn("CVE-2019-10906", report.vulnerabilities[0].aliases)
+        self.assertEqual(report.vulnerabilities[0].source, "OSV")
+        self.assertEqual(report.vulnerabilities[0].severity, "HIGH")
+        self.assertEqual(report.vulnerabilities[0].fixed_in, ["2.10.1"])
+        self.assertEqual(report.recommendation, "high-risk")
+        self.assertIn("known_vulnerabilities", {flag.code for flag in report.risk_flags})
+
+    def test_osv_duplicate_cve_is_merged_with_pypi_record(self) -> None:
+        client = FakeClient(
+            project_payload=make_project_payload(
+                vulnerabilities=[
+                    {
+                        "id": "PYSEC-2019-217",
+                        "summary": "PyPI advisory",
+                        "aliases": ["CVE-2019-10906"],
+                        "fixed_in": ["2.10.1"],
+                    }
+                ]
+            )
+        )
+        osv_client = FakeOsvClient(
+            {
+                ("gridoptim", "2.2.0"): [
+                    {
+                        "id": "GHSA-462w-v97r-4m45",
+                        "aliases": ["CVE-2019-10906"],
+                        "summary": "GitHub advisory",
+                        "database_specific": {"severity": "critical"},
+                        "affected": [
+                            {
+                                "package": {
+                                    "name": "gridoptim",
+                                    "ecosystem": "PyPI",
+                                },
+                                "ranges": [
+                                    {
+                                        "type": "ECOSYSTEM",
+                                        "events": [{"fixed": "2.10.2"}],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+        report = inspect_package(
+            "gridoptim",
+            client=cast(Any, client),
+            include_osv=True,
+            osv_client=cast(Any, osv_client),
+        )
+
+        self.assertEqual(len(report.vulnerabilities), 1)
+        vulnerability = report.vulnerabilities[0]
+        self.assertEqual(vulnerability.id, "PYSEC-2019-217")
+        self.assertEqual(vulnerability.source, "PyPI, OSV")
+        self.assertEqual(vulnerability.severity, "CRITICAL")
+        self.assertEqual(vulnerability.fixed_in, ["2.10.1", "2.10.2"])
+        self.assertIn("GHSA-462w-v97r-4m45", vulnerability.aliases)
+
     def test_repo_normalization_handles_common_edge_cases(self) -> None:
         self.assertEqual(
             _normalize_repo_url("git+https://github.com/Halfblood-Prince/Gridoptim.git?ref=main"),
@@ -823,6 +1000,93 @@ class InspectPackageTests(unittest.TestCase):
         )
         self.assertEqual(report.dependency_summary.total_inspected, 2)
         self.assertEqual(report.dependency_summary.max_depth, 2)
+
+    def test_locked_versions_are_used_for_direct_dependencies(self) -> None:
+        client = LockedDependencyClient()
+
+        report = inspect_package(
+            "gridoptim",
+            client=cast(Any, client),
+            include_dependencies=True,
+            locked_versions={"depalpha": "1.4.0", "depbeta": "2.5.0"},
+        )
+
+        self.assertEqual(
+            [(item.project, item.version, item.depth) for item in report.dependencies],
+            [("depalpha", "1.4.0", 1)],
+        )
+        self.assertEqual(client.release_calls, [("depalpha", "1.4.0")])
+
+    def test_locked_versions_are_used_for_transitive_dependencies(self) -> None:
+        client = LockedDependencyClient()
+
+        report = inspect_package(
+            "gridoptim",
+            client=cast(Any, client),
+            include_transitive_dependencies=True,
+            locked_versions={"DepAlpha": "1.4.0", "depbeta": "2.5.0"},
+        )
+
+        self.assertEqual(
+            [(item.project, item.version, item.depth) for item in report.dependencies],
+            [("depalpha", "1.4.0", 1), ("depbeta", "2.5.0", 2)],
+        )
+        self.assertEqual(
+            client.release_calls,
+            [("depalpha", "1.4.0"), ("depbeta", "2.5.0")],
+        )
+
+    def test_osv_queries_propagate_to_transitive_dependencies(self) -> None:
+        client = LockedDependencyClient()
+        osv_client = FakeOsvClient(
+            {
+                ("depbeta", "2.5.0"): [
+                    {
+                        "id": "GHSA-transitive",
+                        "summary": "Transitive vulnerability",
+                    }
+                ]
+            }
+        )
+
+        report = inspect_package(
+            "gridoptim",
+            client=cast(Any, client),
+            include_transitive_dependencies=True,
+            include_osv=True,
+            osv_client=cast(Any, osv_client),
+            locked_versions={"depalpha": "1.4.0", "depbeta": "2.5.0"},
+        )
+
+        self.assertEqual(
+            osv_client.calls,
+            [
+                ("gridoptim", "2.2.0"),
+                ("depalpha", "1.4.0"),
+                ("depbeta", "2.5.0"),
+            ],
+        )
+        depbeta = next(item for item in report.dependencies if item.project == "depbeta")
+        self.assertEqual(depbeta.recommendation, "high-risk")
+
+    def test_invalid_or_conflicting_locked_dependency_is_recorded(self) -> None:
+        cases = [
+            ("not-a-version", "is invalid"),
+            ("0.5.0", "does not satisfy"),
+        ]
+        for locked_version, error_text in cases:
+            with self.subTest(locked_version=locked_version):
+                client = LockedDependencyClient()
+                report = inspect_package(
+                    "gridoptim",
+                    client=cast(Any, client),
+                    include_dependencies=True,
+                    locked_versions={"depalpha": locked_version},
+                )
+
+                self.assertEqual(report.dependencies[0].recommendation, "high-risk")
+                self.assertIn(error_text, report.dependencies[0].error or "")
+                self.assertEqual(client.release_calls, [])
 
     def test_inspect_package_reports_dependency_progress(self) -> None:
         client = FakeClient(

@@ -12,14 +12,14 @@
 
 ## Current schema identifiers
 
-- `JSON_SCHEMA_VERSION = "1.3.0"`
-- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.3.0"`
+- `JSON_SCHEMA_VERSION = "1.4.0"`
+- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.4.0"`
 
 ## Top-level shape
 
 ```json
 {
-  "schema_version": "1.3.0",
+  "schema_version": "1.4.0",
   "report": {
     "project": "demo",
     "version": "1.2.3",

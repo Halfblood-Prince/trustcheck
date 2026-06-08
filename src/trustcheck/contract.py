@@ -7,10 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .models import TrustReport
 
-JSON_SCHEMA_VERSION: Final = "1.3.0"
+JSON_SCHEMA_VERSION: Final = "1.4.0"
 JSON_SCHEMA_ID = f"urn:trustcheck:report:{JSON_SCHEMA_VERSION}"
-SchemaVersion: TypeAlias = Literal["1.3.0"]
-DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.3.0"
+SchemaVersion: TypeAlias = Literal["1.4.0"]
+DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.4.0"
 
 
 class RiskFlagPayload(BaseModel):
@@ -30,6 +30,7 @@ class VulnerabilityRecordPayload(BaseModel):
     summary: str
     aliases: list[str] = Field(default_factory=list)
     source: str | None = None
+    severity: str | None = None
     fixed_in: list[str] = Field(default_factory=list)
     link: str | None = None
 

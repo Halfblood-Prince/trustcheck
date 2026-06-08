@@ -8,6 +8,11 @@ The project follows Semantic Versioning for the supported public API described i
 
 ### Added
 
+- Added Bandit and Semgrep CI workflows plus Codecov coverage uploads and README status badges.
+- Added optional OSV vulnerability queries, including GitHub Advisory Database records.
+- Added vulnerability severity output and cross-source advisory deduplication by aliases such as CVE IDs.
+- Added lockfile-aware scans for hashed `requirements.txt`, `uv.lock`, `poetry.lock`, and `pdm.lock`.
+- Preserved resolved lockfile versions during direct and transitive dependency inspection.
 - Formalized the machine-readable report contract as schema version `1.0.0`.
 - Added the public contract helpers `trustcheck.JSON_SCHEMA_VERSION`, `trustcheck.JSON_SCHEMA_ID`, and `trustcheck.get_json_schema()`.
 - Added contract snapshot tests for the JSON schema and representative report payloads.

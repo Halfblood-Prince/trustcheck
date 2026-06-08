@@ -955,6 +955,18 @@
           "default": null,
           "title": "Link"
         },
+        "severity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Severity"
+        },
         "source": {
           "anyOf": [
             {
@@ -980,7 +992,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:trustcheck:report:1.3.0",
+  "$id": "urn:trustcheck:report:1.4.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -988,8 +1000,8 @@
       "$ref": "#/$defs/TrustReportPayload"
     },
     "schema_version": {
-      "const": "1.3.0",
-      "default": "1.3.0",
+      "const": "1.4.0",
+      "default": "1.4.0",
       "title": "Schema Version",
       "type": "string"
     }

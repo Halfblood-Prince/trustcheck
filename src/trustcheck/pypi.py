@@ -146,6 +146,7 @@ class PypiClient:
         return payload
 
     def _request_bytes(self, url: str, *, accept: str | None = None) -> bytes:
+        self._validate_request_url(url)
         if self.offline:
             cached = self._read_disk_cache(url, accept=accept)
             if cached is not None:
@@ -166,7 +167,12 @@ class PypiClient:
             self._emit("request", url=url, attempt=attempt + 1, accept=accept)
             req = request.Request(url, headers=headers)
             try:
-                with request.urlopen(req, timeout=self.timeout) as response:
+                # The URL scheme is constrained to HTTP(S) before the request is built.
+                # nosemgrep
+                with request.urlopen(  # nosec B310
+                    req,
+                    timeout=self.timeout,
+                ) as response:
                     payload = bytes(response.read())
                     self._emit(
                         "response",
@@ -200,6 +206,16 @@ class PypiClient:
             self.sleep(backoff)
 
         raise AssertionError("unreachable")
+
+    def _validate_request_url(self, url: str) -> None:
+        if parse.urlparse(url).scheme not in {"http", "https"}:
+            raise PypiClientError(
+                f"request URL must use HTTP or HTTPS: {url}",
+                transient=False,
+                url=url,
+                code="upstream",
+                subcode="url_scheme_invalid",
+            )
 
     def _http_error(self, exc: error.HTTPError, url: str) -> PypiClientError:
         if exc.code == 404:

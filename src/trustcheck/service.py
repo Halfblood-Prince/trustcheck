@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -16,6 +16,7 @@ from packaging.version import InvalidVersion, Version
 from pypi_attestations import Distribution as AttestedDistribution
 from pypi_attestations import Provenance, VerificationError
 
+from .advisories import OsvClient, merge_vulnerabilities, parse_osv_vulnerabilities
 from .models import (
     ArtifactDiagnostic,
     CoverageSummary,
@@ -183,6 +184,9 @@ def inspect_package(
     dependency_progress_callback: DependencyProgressCallback | None = None,
     include_dependencies: bool = False,
     include_transitive_dependencies: bool = False,
+    include_osv: bool = False,
+    osv_client: OsvClient | None = None,
+    locked_versions: Mapping[str, str] | None = None,
     _dependency_context: DependencyTraversalContext | None = None,
 ) -> TrustReport:
     client = client or PypiClient()
@@ -197,6 +201,22 @@ def inspect_package(
         declared_dependencies = _extract_declared_dependencies(info.get("requires_dist"))
         declared_repository_urls = _extract_repository_urls(info.get("project_urls") or {})
         vulnerabilities = _parse_vulnerabilities(payload.get("vulnerabilities") or [])
+        if include_osv:
+            osv_client = osv_client or OsvClient(
+                timeout=float(getattr(client, "timeout", 10.0)),
+                max_retries=int(getattr(client, "max_retries", 2)),
+                backoff_factor=float(getattr(client, "backoff_factor", 0.25)),
+                offline=bool(getattr(client, "offline", False)),
+            )
+            with _instrument_client(osv_client, diagnostics.on_request_event):
+                osv_vulnerabilities = parse_osv_vulnerabilities(
+                    osv_client.query(project, selected_version),
+                    project=project,
+                )
+            vulnerabilities = merge_vulnerabilities(
+                vulnerabilities,
+                osv_vulnerabilities,
+            )
         ownership = info.get("ownership") or {}
         files = _collect_files(
             project,
@@ -238,6 +258,12 @@ def inspect_package(
                 dependency_context=dependency_context,
                 dependency_progress_callback=dependency_progress_callback,
                 recursive=include_transitive_dependencies,
+                include_osv=include_osv,
+                osv_client=osv_client,
+                locked_versions={
+                    canonicalize_name(name): str(locked_version)
+                    for name, locked_version in (locked_versions or {}).items()
+                },
             )
         report.dependency_summary = _build_dependency_summary(
             declared_dependencies,
@@ -333,7 +359,7 @@ def _collect_files(
 
 @contextmanager
 def _instrument_client(
-    client: PypiClient,
+    client: Any,
     hook: Callable[[str, dict[str, Any]], None],
 ) -> Any:
     previous_hook = getattr(client, "request_hook", None)
@@ -358,7 +384,8 @@ def _parse_vulnerabilities(items: list[dict[str, Any]]) -> list[VulnerabilityRec
                 id=item.get("id") or "unknown",
                 summary=item.get("summary") or item.get("details") or "No summary provided.",
                 aliases=list(item.get("aliases") or []),
-                source=item.get("source"),
+                source=item.get("source") or "PyPI",
+                severity=item.get("severity"),
                 fixed_in=list(item.get("fixed_in") or []),
                 link=item.get("link"),
             )
@@ -379,6 +406,9 @@ def _inspect_dependencies(
     dependency_context: DependencyTraversalContext,
     dependency_progress_callback: DependencyProgressCallback | None = None,
     recursive: bool,
+    include_osv: bool,
+    osv_client: OsvClient | None,
+    locked_versions: Mapping[str, str],
 ) -> list[DependencyInspection]:
     inspections: list[DependencyInspection] = []
     environment: dict[str, str] = {
@@ -400,6 +430,9 @@ def _inspect_dependencies(
             depth=depth,
             environment=environment,
             dependency_progress_callback=dependency_progress_callback,
+            include_osv=include_osv,
+            osv_client=osv_client,
+            locked_versions=locked_versions,
         )
         if inspection is None:
             continue
@@ -425,6 +458,9 @@ def _inspect_dependency_requirement(
     depth: int,
     environment: dict[str, str],
     dependency_progress_callback: DependencyProgressCallback | None = None,
+    include_osv: bool,
+    osv_client: OsvClient | None,
+    locked_versions: Mapping[str, str],
 ) -> tuple[DependencyInspection | None, list[str]]:
     try:
         requirement = Requirement(requirement_text)
@@ -455,8 +491,15 @@ def _inspect_dependency_requirement(
         dependency_progress_callback(project_name, depth, 0, False)
 
     try:
-        payload = client.get_project(project_name)
-        selected_version = _select_dependency_version(payload, requirement)
+        locked_version = locked_versions.get(dependency_key)
+        if locked_version is not None:
+            selected_version = _validate_locked_dependency_version(
+                requirement,
+                locked_version,
+            )
+        else:
+            payload = client.get_project(project_name)
+            selected_version = _select_dependency_version(payload, requirement)
 
         def emit_dependency_artifact_progress(
             filename: str,
@@ -480,6 +523,8 @@ def _inspect_dependency_requirement(
             client=client,
             progress_callback=emit_dependency_artifact_progress,
             include_dependencies=False,
+            include_osv=include_osv,
+            osv_client=osv_client,
             _dependency_context=dependency_context,
         )
         if dependency_progress_callback is not None and not nested_report.files:
@@ -511,6 +556,31 @@ def _inspect_dependency_requirement(
             ),
             [],
         )
+
+
+def _validate_locked_dependency_version(requirement: Requirement, locked_version: str) -> str:
+    try:
+        parsed = Version(locked_version)
+    except InvalidVersion as exc:
+        raise PypiClientError(
+            f"locked version {locked_version!r} for dependency "
+            f"{requirement.name!r} is invalid",
+            transient=False,
+            code="dependency",
+            subcode="locked_version_invalid",
+        ) from exc
+    if requirement.specifier and not requirement.specifier.contains(
+        parsed,
+        prereleases=True,
+    ):
+        raise PypiClientError(
+            f"locked version {locked_version!r} for dependency "
+            f"{requirement.name!r} does not satisfy {requirement.specifier}",
+            transient=False,
+            code="dependency",
+            subcode="locked_version_conflict",
+        )
+    return locked_version
 
 
 def _select_dependency_version(payload: dict[str, Any], requirement: Requirement) -> str:
@@ -676,11 +746,11 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                 code="known_vulnerabilities",
                 severity="high",
                 message=(
-                    f"PyPI reports {len(report.vulnerabilities)} known "
+                    f"Advisory sources report {len(report.vulnerabilities)} known "
                     "vulnerability record(s) for this release."
                 ),
                 why=[
-                    "PyPI returned "
+                    "Configured advisory sources returned "
                     f"{len(report.vulnerabilities)} vulnerability record(s) "
                     "for this version.",
                     *[

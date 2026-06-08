@@ -34,6 +34,7 @@ from trustcheck.cli import (
     main,
 )
 from trustcheck.contract import JSON_SCHEMA_VERSION
+from trustcheck.lockfiles import load_lockfile
 from trustcheck.models import (
     CoverageSummary,
     DependencyInspection,
@@ -262,6 +263,185 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("unable to inspect package from PyPI", targets[0].failure_message or "")
         self.assertIsNone(targets[1].failure_message)
 
+    def test_load_scan_targets_supports_hashed_locked_requirements(self) -> None:
+        class NoNetworkClient:
+            def get_project(self, project: str) -> dict[str, object]:
+                raise AssertionError(f"unexpected project lookup for {project}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scan_file = Path(tmpdir) / "requirements.txt"
+            scan_file.write_text(
+                "\n".join(
+                    [
+                        "--require-hashes",
+                        "direct-dep==1.4.0 \\",
+                        "    --hash=sha256:aaa \\",
+                        "    --hash=sha256:bbb",
+                        "transitive-dep==2.5.0 --hash=sha256:ccc",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            targets = _load_scan_targets(str(scan_file), NoNetworkClient())  # type: ignore[arg-type]
+
+        self.assertEqual(
+            [(target.project, target.version) for target in targets],
+            [("direct-dep", "1.4.0"), ("transitive-dep", "2.5.0")],
+        )
+        self.assertEqual(
+            targets[0].locked_versions,
+            {"direct-dep": "1.4.0", "transitive-dep": "2.5.0"},
+        )
+        self.assertIs(targets[0].locked_versions, targets[1].locked_versions)
+
+    def test_load_scan_targets_supports_uv_lock(self) -> None:
+        class NoNetworkClient:
+            def get_project(self, project: str) -> dict[str, object]:
+                raise AssertionError(f"unexpected project lookup for {project}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_file = Path(tmpdir) / "uv.lock"
+            lock_file.write_text(
+                "\n".join(
+                    [
+                        "version = 1",
+                        "",
+                        "[[package]]",
+                        'name = "local-project"',
+                        'version = "0.1.0"',
+                        'source = { editable = "." }',
+                        "",
+                        "[[package]]",
+                        'name = "direct-dep"',
+                        'version = "1.4.0"',
+                        'source = { registry = "https://pypi.org/simple" }',
+                        "",
+                        "[[package]]",
+                        'name = "transitive-dep"',
+                        'version = "2.5.0"',
+                        'source = { registry = "https://pypi.org/simple" }',
+                        "resolution-markers = [\"python_version >= '3.10'\"]",
+                        "",
+                        "[[package]]",
+                        'name = "inactive-dep"',
+                        'version = "9.0.0"',
+                        'source = { registry = "https://pypi.org/simple" }',
+                        "resolution-markers = [\"python_version < '3.0'\"]",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            targets = _load_scan_targets(str(lock_file), NoNetworkClient())  # type: ignore[arg-type]
+
+        self.assertEqual(
+            [(target.project, target.version) for target in targets],
+            [("direct-dep", "1.4.0"), ("transitive-dep", "2.5.0")],
+        )
+        self.assertEqual(
+            targets[0].locked_versions,
+            {"direct-dep": "1.4.0", "transitive-dep": "2.5.0"},
+        )
+
+    def test_load_scan_targets_supports_poetry_lock(self) -> None:
+        class NoNetworkClient:
+            def get_project(self, project: str) -> dict[str, object]:
+                raise AssertionError(f"unexpected project lookup for {project}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_file = Path(tmpdir) / "poetry.lock"
+            lock_file.write_text(
+                "\n".join(
+                    [
+                        "[[package]]",
+                        'name = "direct-dep"',
+                        'version = "1.4.0"',
+                        'markers = { main = "python_version >= \'3.10\'" }',
+                        "",
+                        "[[package]]",
+                        'name = "transitive-dep"',
+                        'version = "2.5.0"',
+                        "",
+                        "[[package]]",
+                        'name = "git-dep"',
+                        'version = "3.0.0"',
+                        'source = { type = "git", url = "https://example.com/repo.git" }',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            targets = _load_scan_targets(str(lock_file), NoNetworkClient())  # type: ignore[arg-type]
+
+        self.assertEqual(
+            [(target.project, target.version) for target in targets],
+            [("direct-dep", "1.4.0"), ("transitive-dep", "2.5.0")],
+        )
+
+    def test_load_scan_targets_supports_pdm_lock(self) -> None:
+        class NoNetworkClient:
+            def get_project(self, project: str) -> dict[str, object]:
+                raise AssertionError(f"unexpected project lookup for {project}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_file = Path(tmpdir) / "pdm.lock"
+            lock_file.write_text(
+                "\n".join(
+                    [
+                        "[metadata]",
+                        'groups = ["default"]',
+                        "",
+                        "[[package]]",
+                        'name = "direct-dep"',
+                        'version = "1.4.0"',
+                        "",
+                        "[[package]]",
+                        'name = "transitive-dep"',
+                        'version = "2.5.0"',
+                        "",
+                        "[[package]]",
+                        'name = "local-dep"',
+                        'version = "3.0.0"',
+                        'path = "../local-dep"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            targets = _load_scan_targets(str(lock_file), NoNetworkClient())  # type: ignore[arg-type]
+
+        self.assertEqual(
+            [(target.project, target.version) for target in targets],
+            [("direct-dep", "1.4.0"), ("transitive-dep", "2.5.0")],
+        )
+
+    def test_lockfile_loader_rejects_invalid_and_ambiguous_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invalid_file = Path(tmpdir) / "uv.lock"
+            invalid_file.write_text("[[package]\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "invalid TOML lockfile"):
+                load_lockfile(invalid_file)
+
+            missing_packages = Path(tmpdir) / "poetry.lock"
+            missing_packages.write_text("[metadata]\nlock-version = '2.0'\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "no supported locked packages"):
+                load_lockfile(missing_packages)
+
+            ambiguous_file = Path(tmpdir) / "pdm.lock"
+            ambiguous_file.write_text(
+                "\n".join(
+                    [
+                        "[[package]]",
+                        'name = "demo"',
+                        'version = "1.0.0"',
+                        "",
+                        "[[package]]",
+                        'name = "demo"',
+                        'version = "2.0.0"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "multiple active locked versions"):
+                load_lockfile(ambiguous_file)
+
     def test_load_scan_targets_from_toml_errors_for_bad_inputs(self) -> None:
         bad_toml = Path("tests/_tmp/bad-scan.toml")
         bad_toml.write_text("[project\n", encoding="utf-8")
@@ -478,6 +658,7 @@ class CliBehaviorTests(unittest.TestCase):
                 summary="Example advisory",
                 aliases=["CVE-2026-0001"],
                 source="PyPI",
+                severity="HIGH",
                 fixed_in=["2.2.1"],
                 link="https://example.com/advisory",
             )
@@ -491,7 +672,10 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("known vulnerabilities for gridoptim 2.2.0", stdout.getvalue())
         self.assertIn("PYSEC-2026-1: Example advisory", stdout.getvalue())
         self.assertIn("aliases: CVE-2026-0001", stdout.getvalue())
+        self.assertIn("source: PyPI", stdout.getvalue())
+        self.assertIn("severity: HIGH", stdout.getvalue())
         self.assertIn("fixed in: 2.2.1", stdout.getvalue())
+        self.assertIn("link: https://example.com/advisory", stdout.getvalue())
         self.assertNotIn("summary:", stdout.getvalue())
         self.assertNotIn("risk flags:", stdout.getvalue())
 
@@ -503,7 +687,10 @@ class CliBehaviorTests(unittest.TestCase):
                 exit_code = main(["inspect", "gridoptim", "--cve"])
 
         self.assertEqual(exit_code, EXIT_OK)
-        self.assertIn("No known vulnerability records reported by PyPI.", stdout.getvalue())
+        self.assertIn(
+            "No known vulnerability records reported by configured sources.",
+            stdout.getvalue(),
+        )
 
     def test_cli_cve_json_output_is_minimal(self) -> None:
         stdout = io.StringIO()
@@ -514,6 +701,7 @@ class CliBehaviorTests(unittest.TestCase):
                 summary="Example advisory",
                 aliases=["CVE-2026-0001"],
                 source="PyPI",
+                severity="HIGH",
                 fixed_in=["2.2.1"],
                 link="https://example.com/advisory",
             )
@@ -531,6 +719,21 @@ class CliBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(payload["project"], "gridoptim")
         self.assertEqual(payload["vulnerabilities"][0]["id"], "PYSEC-2026-1")
+        self.assertEqual(payload["vulnerabilities"][0]["severity"], "HIGH")
+
+    def test_cli_with_osv_enables_external_advisory_query(self) -> None:
+        stdout = io.StringIO()
+
+        def fake_inspect_package(*args, **kwargs):
+            self.assertTrue(kwargs["include_osv"])
+            self.assertIsNotNone(kwargs["osv_client"])
+            return make_report()
+
+        with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(["inspect", "gridoptim", "--with-osv"])
+
+        self.assertEqual(exit_code, EXIT_OK)
 
     def test_cli_cve_mode_respects_policy_failure(self) -> None:
         stdout = io.StringIO()
@@ -607,6 +810,75 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(len(payload["reports"]), 1)
         self.assertEqual(payload["reports"][0]["project"], "gridoptim")
         self.assertEqual(payload["failures"], [])
+
+    def test_cli_scan_passes_locked_versions_to_dependency_inspection(self) -> None:
+        stdout = io.StringIO()
+        locked_versions = {"depalpha": "1.4.0", "depbeta": "2.5.0"}
+        targets = [
+            ScanTarget(
+                requirement="depalpha==1.4.0",
+                project="depalpha",
+                version="1.4.0",
+                locked_versions=locked_versions,
+            )
+        ]
+
+        def fake_inspect_package(*args, **kwargs):
+            self.assertTrue(kwargs["include_transitive_dependencies"])
+            self.assertEqual(kwargs["locked_versions"], locked_versions)
+            return make_report()
+
+        with patch("trustcheck.cli._load_scan_targets", return_value=targets):
+            with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+                with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                    exit_code = main(
+                        ["scan", "poetry.lock", "--with-transitive-deps"]
+                    )
+
+        self.assertEqual(exit_code, EXIT_OK)
+
+    def test_cli_normal_output_shows_vulnerability_intelligence(self) -> None:
+        stdout = io.StringIO()
+        report = make_report()
+        report.vulnerabilities = [
+            VulnerabilityRecord(
+                id="GHSA-aaaa-bbbb-cccc",
+                summary="Example advisory",
+                source="OSV",
+                severity="CRITICAL",
+                fixed_in=["2.2.1"],
+                link="https://github.com/advisories/GHSA-aaaa-bbbb-cccc",
+            )
+        ]
+
+        with patch("trustcheck.cli.inspect_package", return_value=report):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(["inspect", "gridoptim"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertIn("source=OSV", stdout.getvalue())
+        self.assertIn("severity=CRITICAL", stdout.getvalue())
+        self.assertIn("fixed_in=2.2.1", stdout.getvalue())
+        self.assertIn(
+            "advisory=https://github.com/advisories/GHSA-aaaa-bbbb-cccc",
+            stdout.getvalue(),
+        )
+
+    def test_osv_failure_names_advisory_service(self) -> None:
+        error = PypiClientError(
+            "OSV unavailable",
+            code="advisory",
+            subcode="http_transient",
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with patch("trustcheck.cli.inspect_package", side_effect=error):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                exit_code = main(["inspect", "gridoptim", "--with-osv"])
+
+        self.assertEqual(exit_code, EXIT_UPSTREAM_FAILURE)
+        self.assertIn("unable to inspect package from advisory service", stderr.getvalue())
 
     def test_cli_scan_respects_policy_failure(self) -> None:
         stdout = io.StringIO()

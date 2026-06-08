@@ -102,7 +102,7 @@ print(json.dumps(payload, indent=2))
 
 ## `inspect_package`
 
-Use `inspect_package(project, version=None, expected_repository=None, client=None, progress_callback=None, include_dependencies=False, include_transitive_dependencies=False)` to collect evidence and build a `TrustReport`.
+Use `inspect_package(project, version=None, expected_repository=None, client=None, progress_callback=None, include_dependencies=False, include_transitive_dependencies=False, include_osv=False, osv_client=None, locked_versions=None)` to collect evidence and build a `TrustReport`.
 
 In most applications, you only need to provide:
 
@@ -111,6 +111,8 @@ In most applications, you only need to provide:
 - optionally `expected_repository`
 - optionally `include_dependencies=True` when you want direct dependency inspection
 - optionally `include_transitive_dependencies=True` when you want recursive dependency inspection
+- optionally `include_osv=True` to query OSV for the exact selected versions
+- optionally `locked_versions={"dependency-name": "1.2.3"}` to retain resolved direct and transitive versions
 
 ### Progress callback example
 

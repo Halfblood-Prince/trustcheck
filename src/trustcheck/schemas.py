@@ -27,6 +27,7 @@ class VulnerabilityPayload(BaseModel):
     details: str | None = None
     aliases: list[str] = Field(default_factory=list)
     source: str | None = None
+    severity: str | None = None
     fixed_in: list[str] = Field(default_factory=list)
     link: str | None = None
 

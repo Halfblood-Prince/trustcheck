@@ -178,6 +178,14 @@ class PypiClientTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.subcode, "json_malformed")
 
+    def test_non_http_request_url_is_rejected(self) -> None:
+        client = pypi_module.PypiClient(max_retries=0)
+
+        with self.assertRaises(pypi_module.PypiClientError) as ctx:
+            client.download_distribution("file:///tmp/package.whl")
+
+        self.assertEqual(ctx.exception.subcode, "url_scheme_invalid")
+
     def test_list_project_urls_is_normalized_to_empty_mapping(self) -> None:
         client = pypi_module.PypiClient(max_retries=0, sleep=lambda delay: None)
 

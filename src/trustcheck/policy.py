@@ -127,7 +127,8 @@ def evaluate_policy(report: TrustReport, settings: PolicySettings) -> PolicyEval
                 severity="high",
                 message=(
                     "Policy blocks releases with any known vulnerabilities; "
-                    f"PyPI reported {len(report.vulnerabilities)} vulnerability record(s)."
+                    "configured advisory sources reported "
+                    f"{len(report.vulnerabilities)} vulnerability record(s)."
                 ),
             )
         )

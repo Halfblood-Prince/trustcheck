@@ -146,6 +146,9 @@ jobs:
   coverage:
     needs: qa
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Check out repository
@@ -166,6 +169,13 @@ jobs:
 
       - name: Run tests with coverage
         run: python -m pytest --cov=trustcheck --cov-report=term-missing --cov-report=xml tests
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          fail_ci_if_error: true
+          files: coverage.xml
+          use_oidc: true
 
       - name: Build package
         run: python -m build

@@ -19,12 +19,13 @@ trustcheck scan <filename>
 - `--format text|json`: choose human-readable text or machine-readable JSON
 - `--verbose`: include per-file provenance, digest, publisher, and note fields in text output
 - `--cve`: show only the known vulnerability records reported for the selected release
+- `--with-osv`: enrich PyPI vulnerability records with OSV and GitHub Advisory Database data
 - `--with-deps`: inspect direct runtime dependencies and summarize the highest-risk dependency
 - `--with-transitive-deps`: inspect direct and transitive runtime dependencies recursively
 - `--strict`: apply the built-in strict policy
 - `--policy default|strict|internal-metadata`: evaluate a built-in policy profile
 - `--policy-file PATH`: load policy settings from a JSON file
-- `scan <filename>`: read a requirements-style or TOML dependency file and run package inspection for each entry
+- `scan <filename>`: read a requirements, project TOML, or supported lockfile and inspect each entry
 
 ## Policy override flags
 
@@ -60,6 +61,12 @@ Show only known vulnerability records:
 trustcheck inspect sampleproject --version 4.0.0 --cve
 ```
 
+Query OSV in addition to PyPI and show source, severity, fixes, and advisory links:
+
+```bash
+trustcheck inspect jinja2 --version 2.10.0 --with-osv --cve
+```
+
 Run with strict policy:
 
 ```bash
@@ -90,6 +97,12 @@ Scan dependencies declared in a TOML project file:
 trustcheck scan pyproject.toml
 ```
 
+Scan resolved dependencies from `uv.lock`, `poetry.lock`, or `pdm.lock`:
+
+```bash
+trustcheck scan uv.lock --with-transitive-deps
+```
+
 Scan a requirements-style file and emit JSON:
 
 ```bash
@@ -98,7 +111,7 @@ trustcheck scan requirements.txt --format json
 
 When dependency inspection is enabled, `trustcheck` reads `requires_dist` metadata, resolves compatible dependency versions from PyPI, and adds a dependency summary to the report. `--with-deps` stops at the immediate dependencies of the inspected package. `--with-transitive-deps` continues recursively through nested dependencies. The top-level result can be escalated if an inspected dependency is `review-required` or `high-risk`.
 
-When `scan` is used, `trustcheck` reads either a requirements-style file or a TOML dependency file. For requirements files, it skips blank lines and comments, evaluates requirement markers for the current environment, and then inspects each listed package in sequence. For TOML files, it reads dependencies from `[project.dependencies]`, `[project.optional-dependencies]`, `[tool.poetry.dependencies]`, and Poetry dependency groups. Exact or compatible version specifiers are resolved to a concrete release before inspection when possible.
+When `scan` is used, `trustcheck` reads a requirements-style file, a TOML project file, or a supported lockfile. Requirements files support exact pins with multiline `--hash` entries. TOML project files read dependencies from `[project.dependencies]`, `[project.optional-dependencies]`, `[tool.poetry.dependencies]`, and Poetry dependency groups. Lockfile scans support `uv.lock`, `poetry.lock`, and `pdm.lock`, skip local or VCS-only entries, and inspect exact resolved package versions. With dependency inspection enabled, locked versions are retained for both direct and transitive packages instead of being replaced by the newest compatible PyPI release.
 
 For top-level package analysis, a complete absence of published provenance is typically surfaced as `review-required`. Stronger negative evidence such as failed verification, inconsistent provenance, or known vulnerabilities still drives `high-risk` outcomes.
 
@@ -114,4 +127,4 @@ Use cached responses only:
 trustcheck inspect sampleproject --version 4.0.0 --cache-dir .trustcheck-cache --offline
 ```
 
-When `--cve` is used, `trustcheck` still collects the same package metadata and evaluates policy settings, but the output is reduced to the vulnerability records only. In JSON mode, the output is a minimal object containing `project`, `version`, `package_url`, and `vulnerabilities`.
+When `--cve` is used, `trustcheck` still collects the same package metadata and evaluates policy settings, but the output is reduced to the vulnerability records only. In JSON mode, the output is a minimal object containing `project`, `version`, `package_url`, and `vulnerabilities`. `--with-osv` is opt-in and queries the exact selected package version. Records sharing a CVE or other advisory alias are merged across PyPI and OSV.

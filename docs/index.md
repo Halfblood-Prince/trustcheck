@@ -15,7 +15,7 @@ For a selected package version, `trustcheck` can:
 - extract Trusted Publisher identity details such as repository and workflow
 - compare expected repository input against declared and attested repository signals
 - flag publisher repository and workflow drift against the previous release
-- surface PyPI vulnerability records for the selected version
+- surface PyPI vulnerability records and optional OSV/GitHub advisory intelligence
 - inspect declared runtime dependencies and summarize the worst-risk dependency in the set
 - emit a concise human-readable report or structured JSON
 

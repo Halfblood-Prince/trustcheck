@@ -164,10 +164,11 @@
         ],
         "id": "PYSEC-2026-1",
         "link": "https://example.com/advisory",
+        "severity": "HIGH",
         "source": "PyPI",
         "summary": "Example vuln"
       }
     ]
   },
-  "schema_version": "1.3.0"
+  "schema_version": "1.4.0"
 }

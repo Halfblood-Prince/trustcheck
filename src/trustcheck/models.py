@@ -19,6 +19,7 @@ class VulnerabilityRecord:
     summary: str
     aliases: list[str] = field(default_factory=list)
     source: str | None = None
+    severity: str | None = None
     fixed_in: list[str] = field(default_factory=list)
     link: str | None = None
 

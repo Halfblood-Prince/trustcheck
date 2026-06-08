@@ -3,22 +3,26 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
 
 from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-try:
-    import tomllib  # type: ignore[import-not-found]
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
-    import tomli as tomllib  # type: ignore[import-not-found]
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - Python 3.10 fallback
+    import tomli as tomllib
 
+from .advisories import OsvClient
 from .contract import JSON_SCHEMA_VERSION
+from .lockfiles import is_supported_lockfile, load_lockfile
 from .models import TrustReport
 from .policy import BUILTIN_POLICIES, evaluate_policy, resolve_policy
 from .pypi import PypiClient, PypiClientError
@@ -38,6 +42,7 @@ class ScanTarget:
     version: str | None = None
     failure_message: str | None = None
     failure_exit_code: int = EXIT_OK
+    locked_versions: dict[str, str] = field(default_factory=dict)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -84,6 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--cve",
         action="store_true",
         help="Show only known vulnerability records for the selected release.",
+    )
+    inspect_parser.add_argument(
+        "--with-osv",
+        action="store_true",
+        help="Query OSV for additional vulnerability records and GitHub advisories.",
     )
     dependency_group = inspect_parser.add_mutually_exclusive_group()
     dependency_group.add_argument(
@@ -178,9 +188,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan_parser = subparsers.add_parser(
         "scan",
-        help="Inspect every package listed in a requirements-style or TOML file.",
+        help="Inspect packages listed in a requirements, project, or lock file.",
     )
-    scan_parser.add_argument("filename", help="Path to a requirements-style or TOML file.")
+    scan_parser.add_argument(
+        "filename",
+        help="Path to requirements.txt, pyproject.toml, uv.lock, poetry.lock, or pdm.lock.",
+    )
     scan_parser.add_argument(
         "--config-file",
         help="Path to a JSON config file with optional network settings.",
@@ -200,6 +213,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--cve",
         action="store_true",
         help="Show only known vulnerability records for each scanned release.",
+    )
+    scan_parser.add_argument(
+        "--with-osv",
+        action="store_true",
+        help="Query OSV for each resolved package version.",
     )
     scan_dependency_group = scan_parser.add_mutually_exclusive_group()
     scan_dependency_group.add_argument(
@@ -308,6 +326,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     log_format=args.log_format,
                 ),
             )
+            osv_client = _build_osv_client(client) if args.with_osv else None
             report = inspect_package(
                 args.project,
                 version=args.version,
@@ -317,6 +336,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dependency_progress_callback=dependency_progress_callback,
                 include_dependencies=args.with_deps,
                 include_transitive_dependencies=args.with_transitive_deps,
+                include_osv=args.with_osv,
+                osv_client=osv_client,
             )
             policy_name = "strict" if args.strict else args.policy
             policy = resolve_policy(
@@ -358,6 +379,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     log_format=args.log_format,
                 ),
             )
+            osv_client = _build_osv_client(client) if args.with_osv else None
             policy_name = "strict" if args.strict else args.policy
             policy = resolve_policy(
                 builtin_name=policy_name,
@@ -395,6 +417,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                         dependency_progress_callback=dependency_progress_callback,
                         include_dependencies=args.with_deps,
                         include_transitive_dependencies=args.with_transitive_deps,
+                        include_osv=args.with_osv,
+                        osv_client=osv_client,
+                        locked_versions=target.locked_versions,
                     )
                     evaluation = evaluate_policy(report, policy)
                     reports.append(report)
@@ -549,6 +574,16 @@ def _build_client(
     )
 
 
+def _build_osv_client(client: PypiClient) -> OsvClient:
+    return OsvClient(
+        timeout=client.timeout,
+        max_retries=client.max_retries,
+        backoff_factor=client.backoff_factor,
+        offline=client.offline,
+        request_hook=client.request_hook,
+    )
+
+
 def _load_config_file(path: str | None) -> dict[str, object]:
     if not path:
         return {}
@@ -649,8 +684,9 @@ def _build_debug_request_hook(
 
 
 def _format_upstream_error(exc: PypiClientError) -> str:
+    source = "advisory service" if exc.code == "advisory" else "PyPI"
     return (
-        "error: unable to inspect package from PyPI: "
+        f"error: unable to inspect package from {source}: "
         f"{exc} [code={exc.code} subcode={exc.subcode}]"
     )
 
@@ -670,44 +706,29 @@ def _load_scan_targets(path: str, client: PypiClient) -> list[ScanTarget]:
     if not file_path.exists():
         raise ValueError(f"scan file not found: {path}")
 
+    if is_supported_lockfile(file_path):
+        resolution = load_lockfile(file_path)
+        return _build_scan_targets(
+            resolution.requirements,
+            client,
+            source_path=file_path,
+            locked_versions=resolution.versions,
+        )
+
     if file_path.suffix.lower() == ".toml":
         return _load_scan_targets_from_toml(file_path, client)
 
-    environment = {key: str(value) for key, value in default_environment().items()}
-    environment.setdefault("extra", "")
-    targets: list[ScanTarget] = []
-
-    for line_number, raw_line in enumerate(file_path.read_text(encoding="utf-8").splitlines(), 1):
-        line = _clean_requirement_line(raw_line)
-        if not line:
-            continue
-        if line.startswith(("-", "--")):
-            continue
-        try:
-            requirement = Requirement(line)
-        except InvalidRequirement as exc:
-            raise ValueError(
-                f"invalid requirement in {path} at line {line_number}: {exc}"
-            ) from exc
-        if requirement.marker is not None and not requirement.marker.evaluate(environment):
-            continue
-        version, failure_message, failure_exit_code = _resolve_scan_target_version_for_scan(
-            requirement,
-            client,
-        )
-        targets.append(
-            ScanTarget(
-                requirement=line,
-                project=requirement.name,
-                version=version,
-                failure_message=failure_message,
-                failure_exit_code=failure_exit_code,
-            )
-        )
-
-    if not targets:
-        raise ValueError(f"no supported package requirements found in {path}")
-    return targets
+    requirement_lines = _read_requirements_file(file_path)
+    locked_versions = _locked_versions_from_requirements(
+        requirement_lines,
+        source_path=file_path,
+    )
+    return _build_scan_targets(
+        requirement_lines,
+        client,
+        source_path=file_path,
+        locked_versions=locked_versions,
+    )
 
 
 def _load_scan_targets_from_toml(file_path: Path, client: PypiClient) -> list[ScanTarget]:
@@ -724,15 +745,32 @@ def _load_scan_targets_from_toml(file_path: Path, client: PypiClient) -> list[Sc
             f"no supported package requirements found in {file_path}"
         )
 
+    return _build_scan_targets(
+        requirement_lines,
+        client,
+        source_path=file_path,
+        entry_label="entry",
+    )
+
+
+def _build_scan_targets(
+    requirement_lines: list[str],
+    client: PypiClient,
+    *,
+    source_path: Path,
+    locked_versions: dict[str, str] | None = None,
+    entry_label: str = "line",
+) -> list[ScanTarget]:
     environment = {key: str(value) for key, value in default_environment().items()}
     environment.setdefault("extra", "")
+    resolved_versions = locked_versions or {}
     targets: list[ScanTarget] = []
     for line_number, line in enumerate(requirement_lines, 1):
         try:
             requirement = Requirement(line)
         except InvalidRequirement as exc:
             raise ValueError(
-                f"invalid requirement in {file_path} at entry {line_number}: {exc}"
+                f"invalid requirement in {source_path} at {entry_label} {line_number}: {exc}"
             ) from exc
         if requirement.marker is not None and not requirement.marker.evaluate(environment):
             continue
@@ -747,11 +785,70 @@ def _load_scan_targets_from_toml(file_path: Path, client: PypiClient) -> list[Sc
                 version=version,
                 failure_message=failure_message,
                 failure_exit_code=failure_exit_code,
+                locked_versions=resolved_versions,
             )
         )
     if not targets:
-        raise ValueError(f"no supported package requirements found in {file_path}")
+        raise ValueError(f"no supported package requirements found in {source_path}")
     return targets
+
+
+def _read_requirements_file(file_path: Path) -> list[str]:
+    requirements: list[str] = []
+    pending = ""
+    for raw_line in file_path.read_text(encoding="utf-8").splitlines():
+        stripped = raw_line.rstrip()
+        continued = stripped.endswith("\\")
+        fragment = stripped[:-1].rstrip() if continued else stripped
+        pending = f"{pending} {fragment.strip()}".strip()
+        if continued:
+            continue
+
+        line = _strip_requirement_hashes(_clean_requirement_line(pending))
+        pending = ""
+        if line and not line.startswith(("-", "--")):
+            requirements.append(line)
+
+    if pending:
+        line = _strip_requirement_hashes(_clean_requirement_line(pending))
+        if line and not line.startswith(("-", "--")):
+            requirements.append(line)
+    return requirements
+
+
+def _strip_requirement_hashes(line: str) -> str:
+    if not line:
+        return line
+    return re.split(r"\s+--hash(?:=|\s+)", line, maxsplit=1)[0].rstrip()
+
+
+def _locked_versions_from_requirements(
+    requirement_lines: list[str],
+    *,
+    source_path: Path,
+) -> dict[str, str]:
+    environment = {key: str(value) for key, value in default_environment().items()}
+    environment.setdefault("extra", "")
+    versions: dict[str, str] = {}
+    for line_number, line in enumerate(requirement_lines, 1):
+        try:
+            requirement = Requirement(line)
+        except InvalidRequirement:
+            continue
+        if requirement.marker is not None and not requirement.marker.evaluate(environment):
+            continue
+        version = _exact_scan_target_version(requirement)
+        if version is None:
+            continue
+        key = canonicalize_name(requirement.name)
+        existing_version = versions.get(key)
+        if existing_version is not None and existing_version != version:
+            raise ValueError(
+                f"multiple active locked versions for {requirement.name!r} in "
+                f"{source_path}: {existing_version} and {version}"
+            )
+        versions[key] = version
+    return versions
 
 
 def _extract_scan_requirements_from_toml(payload: dict[str, object]) -> list[str]:
@@ -1090,6 +1187,15 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
         lines.append("vulnerabilities:")
         for vuln in report.vulnerabilities:
             lines.append(f"  - {vuln.id}: {vuln.summary}")
+            details = [
+                f"source={vuln.source or 'unknown'}",
+                f"severity={vuln.severity or 'unknown'}",
+            ]
+            if vuln.fixed_in:
+                details.append(f"fixed_in={','.join(vuln.fixed_in)}")
+            if vuln.link:
+                details.append(f"advisory={vuln.link}")
+            lines.append(f"    {' '.join(details)}")
 
     if verbose:
         lines.append("")
@@ -1195,6 +1301,7 @@ def _render_cve_json(report: TrustReport) -> dict[str, object]:
                 "summary": vuln.summary,
                 "aliases": vuln.aliases,
                 "source": vuln.source,
+                "severity": vuln.severity,
                 "fixed_in": vuln.fixed_in,
                 "link": vuln.link,
             }
@@ -1210,7 +1317,7 @@ def _render_cve_report(report: TrustReport) -> str:
     ]
     if not report.vulnerabilities:
         lines.append("")
-        lines.append("No known vulnerability records reported by PyPI.")
+        lines.append("No known vulnerability records reported by configured sources.")
         return "\n".join(lines)
 
     lines.append("")
@@ -1220,10 +1327,10 @@ def _render_cve_report(report: TrustReport) -> str:
         lines.append(f"- {vuln.id}: {vuln.summary}")
         if vuln.aliases:
             lines.append(f"  aliases: {', '.join(vuln.aliases)}")
+        lines.append(f"  source: {vuln.source or 'unknown'}")
+        lines.append(f"  severity: {vuln.severity or 'unknown'}")
         if vuln.fixed_in:
             lines.append(f"  fixed in: {', '.join(vuln.fixed_in)}")
-        if vuln.source:
-            lines.append(f"  source: {vuln.source}")
         if vuln.link:
             lines.append(f"  link: {vuln.link}")
     return "\n".join(lines)
