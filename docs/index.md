@@ -18,6 +18,7 @@ For a selected package version, `trustcheck` can:
 - surface PyPI vulnerability records and optional OSV/GitHub advisory intelligence
 - inspect declared runtime dependencies and summarize the worst-risk dependency in the set
 - scan requirements files, project TOML, and `uv.lock`, `poetry.lock`, or `pdm.lock`
+- statically inspect wheel and sdist contents without importing package code
 - emit a concise human-readable report or structured JSON
 
 ## Install
@@ -84,6 +85,12 @@ Inspect exact versions from a supported lockfile:
 trustcheck scan uv.lock --with-transitive-deps
 ```
 
+Inspect wheel and sdist contents:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --inspect-artifacts --verbose
+```
+
 Fail CI when full verification is missing:
 
 ```bash
@@ -103,7 +110,7 @@ print(report.to_dict()["report"]["coverage"]["status"])
 print(report.dependency_summary.highest_risk_recommendation)
 ```
 
-Machine-readable reports currently use JSON schema `1.4.0`. The package release
+Machine-readable reports currently use JSON schema `1.5.0`. The package release
 and report schema are versioned independently.
 
 <script

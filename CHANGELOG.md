@@ -6,7 +6,13 @@ The project follows Semantic Versioning for the supported public API described i
 
 ## Unreleased
 
-No changes yet.
+### Added
+
+- Added opt-in static wheel and sdist inspection with `--inspect-artifacts`.
+- Added wheel `RECORD` hash and size validation, console-script listing, native extension detection, and unexpected top-level file reporting.
+- Added sdist checks for suspicious scripts, oversized or unusual files, and wheel/sdist metadata differences.
+- Added `wheel_record_invalid`, `artifact_contains_native_code`, `metadata_mismatch`, and `suspicious_entry_point` risk flags.
+- Extended the machine-readable per-file report with artifact findings and advanced the schema to `1.5.0`.
 
 ## [1.9.0] - 2026-06-09
 

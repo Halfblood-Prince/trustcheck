@@ -81,6 +81,31 @@ The dependency view is flattened in the report for operator readability and auto
 `uv.lock`, `poetry.lock`, and `pdm.lock`. When dependency traversal is enabled,
 those locked versions are retained for direct and transitive packages.
 
+## Artifact content inspection
+
+`--inspect-artifacts` adds static inspection of downloaded wheel and sdist
+archives. The inspector does not extract archives to disk, import modules, call
+entry points, or execute package code.
+
+Wheel checks include:
+
+- secure hash and size validation for every file listed in `RECORD`
+- detection of files missing from `RECORD` or listed but absent from the wheel
+- console-script listing and suspicious target detection
+- native extension detection
+- unexpected top-level file reporting
+- `METADATA` Name, Version, and Requires-Dist comparison
+
+Sdist checks include:
+
+- suspicious install or executable script indicators
+- oversized, unusual, nested-archive, and special-member reporting
+- `PKG-INFO` metadata comparison with the selected release and wheel metadata
+
+An invalid wheel `RECORD` or metadata mismatch is high-risk. Native code and
+suspicious executable entry points are medium-severity findings that require
+review rather than being treated as automatically high-risk.
+
 ## Limitations
 
 - PyPI metadata quality varies by project
@@ -89,5 +114,7 @@ those locked versions are retained for direct and transitive packages.
 - lockfile scanning consumes existing resolutions but does not run a dependency solver
 - local, editable, path, and VCS-only lockfile entries are skipped because they cannot be inspected as PyPI releases
 - dependency inspection without a lockfile or `locked_versions` mapping resolves compatible releases from current PyPI metadata
+- artifact inspection is static and cannot prove that arbitrary source code is safe
+- native binaries are detected but are not disassembled or dynamically analyzed
 - provenance verification may depend on local environment support required by underlying tooling
 - text output is intentionally concise and may omit low-level detail unless `--verbose` is used

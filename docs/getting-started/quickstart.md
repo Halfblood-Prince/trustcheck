@@ -65,6 +65,21 @@ trustcheck scan uv.lock --with-transitive-deps
 Supported lockfiles are `uv.lock`, `poetry.lock`, and `pdm.lock`. Exact locked
 versions are retained during direct and transitive dependency inspection.
 
+## Inspect artifact contents
+
+```bash
+trustcheck inspect sampleproject \
+  --version 4.0.0 \
+  --inspect-artifacts \
+  --verbose
+```
+
+Artifact inspection is opt-in. It reads wheel and sdist archives without
+extracting them, importing modules, or executing package code. Wheel inspection
+validates `RECORD`, lists console scripts, and detects native extensions and
+unexpected top-level files. Sdist inspection reports suspicious scripts,
+oversized or unusual files, and metadata differences.
+
 When dependency inspection is enabled, the text report adds a dependency summary with the number of declared and inspected dependencies, the maximum traversal depth, and the highest-risk dependency recommendation observed in the set. `--with-deps` inspects only direct dependencies. `--with-transitive-deps` continues recursively through nested dependencies too.
 
 ## Emit machine-readable JSON

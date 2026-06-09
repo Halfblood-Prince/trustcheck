@@ -7,10 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .models import TrustReport
 
-JSON_SCHEMA_VERSION: Final = "1.4.0"
+JSON_SCHEMA_VERSION: Final = "1.5.0"
 JSON_SCHEMA_ID = f"urn:trustcheck:report:{JSON_SCHEMA_VERSION}"
-SchemaVersion: TypeAlias = Literal["1.4.0"]
-DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.4.0"
+SchemaVersion: TypeAlias = Literal["1.5.0"]
+DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.5.0"
 
 
 class RiskFlagPayload(BaseModel):
@@ -45,6 +45,33 @@ class PublisherIdentityPayload(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
+class ArtifactInspectionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    inspected: bool = False
+    kind: str = "unknown"
+    archive_valid: bool | None = None
+    file_count: int = 0
+    total_uncompressed_size: int = 0
+    record_valid: bool | None = None
+    record_errors: list[str] = Field(default_factory=list)
+    console_scripts: list[str] = Field(default_factory=list)
+    suspicious_entry_points: list[str] = Field(default_factory=list)
+    native_files: list[str] = Field(default_factory=list)
+    unexpected_top_level_files: list[str] = Field(default_factory=list)
+    suspicious_files: list[str] = Field(default_factory=list)
+    oversized_files: list[str] = Field(default_factory=list)
+    unusual_files: list[str] = Field(default_factory=list)
+    metadata_name: str | None = None
+    metadata_version: str | None = None
+    metadata_requires_dist: list[str] = Field(default_factory=list)
+    wheel_version: str | None = None
+    wheel_root_is_purelib: bool | None = None
+    wheel_tags: list[str] = Field(default_factory=list)
+    metadata_mismatches: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
 class FileProvenancePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -58,6 +85,7 @@ class FileProvenancePayload(BaseModel):
     observed_sha256: str | None = None
     publisher_identities: list[PublisherIdentityPayload] = Field(default_factory=list)
     error: str | None = None
+    artifact: ArtifactInspectionPayload = Field(default_factory=ArtifactInspectionPayload)
 
 
 class CoverageSummaryPayload(BaseModel):

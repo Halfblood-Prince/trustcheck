@@ -36,6 +36,7 @@ from trustcheck.cli import (
 from trustcheck.contract import JSON_SCHEMA_VERSION
 from trustcheck.lockfiles import load_lockfile
 from trustcheck.models import (
+    ArtifactInspection,
     CoverageSummary,
     DependencyInspection,
     DependencySummary,
@@ -1044,6 +1045,19 @@ class CliBehaviorTests(unittest.TestCase):
 
         self.assertEqual(exit_code, EXIT_OK)
 
+    def test_cli_inspect_artifacts_flag_enables_static_inspection(self) -> None:
+        stdout = io.StringIO()
+
+        def fake_inspect_package(*args, **kwargs):
+            self.assertTrue(kwargs["inspect_artifacts"])
+            return make_report()
+
+        with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(["inspect", "gridoptim", "--inspect-artifacts"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+
     def test_cli_text_output_shows_file_errors_in_verbose_mode(self) -> None:
         report = make_report()
         report.files[0].verified = False
@@ -1058,6 +1072,20 @@ class CliBehaviorTests(unittest.TestCase):
                 remediation=["Require a release that publishes provenance before use."],
             )
         ]
+        report.files[0].artifact = ArtifactInspection(
+            inspected=True,
+            kind="wheel",
+            archive_valid=True,
+            file_count=5,
+            total_uncompressed_size=2048,
+            record_valid=False,
+            record_errors=["gridoptim/__init__.py hash does not match RECORD"],
+            console_scripts=["gridoptim = gridoptim.cli:main"],
+            native_files=["gridoptim/native.pyd"],
+            unexpected_top_level_files=["NOTICE.txt"],
+            metadata_name="gridoptim",
+            metadata_version="2.2.0",
+        )
         stdout = io.StringIO()
 
         with patch("trustcheck.cli.inspect_package", return_value=report):
@@ -1070,6 +1098,10 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("why:", stdout.getvalue())
         self.assertIn("remediation:", stdout.getvalue())
         self.assertIn("requirement: depalpha>=1.0", stdout.getvalue())
+        self.assertIn("artifact inspection:", stdout.getvalue())
+        self.assertIn("wheel RECORD: invalid", stdout.getvalue())
+        self.assertIn("console scripts:", stdout.getvalue())
+        self.assertIn("gridoptim/native.pyd", stdout.getvalue())
 
     def test_cli_non_verbose_output_is_concise(self) -> None:
         report = make_report()

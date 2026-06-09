@@ -28,6 +28,7 @@ trustcheck --version
 - `--with-osv`: enrich PyPI vulnerability records with OSV and GitHub Advisory Database data
 - `--with-deps`: inspect direct runtime dependencies and summarize the highest-risk dependency
 - `--with-transitive-deps`: inspect direct and transitive runtime dependencies recursively
+- `--inspect-artifacts`: statically inspect downloaded wheels and sdists
 - `--strict`: apply the built-in strict policy
 - `--policy default|strict|internal-metadata`: evaluate a built-in policy profile
 - `--policy-file PATH`: load policy settings from a JSON file
@@ -115,12 +116,25 @@ Scan a requirements-style file and emit JSON:
 trustcheck scan requirements.txt --format json
 ```
 
+Inspect artifact contents for a package:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --inspect-artifacts --verbose
+```
+
+`--inspect-artifacts` never imports or executes package code. For wheels it
+validates every non-`RECORD` file against its secure `RECORD` hash and size,
+lists console scripts, detects native extensions, and reports unexpected
+top-level files. For sdists it reports suspicious scripts, oversized or unusual
+files, and metadata differences. When combined with dependency inspection, the
+same static checks are applied to inspected dependency artifacts.
+
 When dependency inspection is enabled, `trustcheck` reads `requires_dist` metadata, resolves compatible dependency versions from PyPI, and adds a dependency summary to the report. `--with-deps` stops at the immediate dependencies of the inspected package. `--with-transitive-deps` continues recursively through nested dependencies. The top-level result can be escalated if an inspected dependency is `review-required` or `high-risk`.
 
 When `scan` is used, `trustcheck` reads a requirements-style file, a TOML project file, or a supported lockfile. Requirements files support exact pins with multiline `--hash` entries. TOML project files read dependencies from `[project.dependencies]`, `[project.optional-dependencies]`, `[tool.poetry.dependencies]`, and Poetry dependency groups. Lockfile scans support `uv.lock`, `poetry.lock`, and `pdm.lock`, skip local or VCS-only entries, and inspect exact resolved package versions. With dependency inspection enabled, locked versions are retained for both direct and transitive packages instead of being replaced by the newest compatible PyPI release.
 
 Package releases and the machine-readable report schema are versioned
-independently. This release uses report schema `1.4.0`.
+independently. Artifact inspection is represented in report schema `1.5.0`.
 
 For top-level package analysis, a complete absence of published provenance is typically surfaced as `review-required`. Stronger negative evidence such as failed verification, inconsistent provenance, or known vulnerabilities still drives `high-risk` outcomes.
 

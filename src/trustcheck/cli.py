@@ -99,6 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show detailed per-file verification evidence.",
     )
     inspect_parser.add_argument(
+        "--inspect-artifacts",
+        action="store_true",
+        help="Statically inspect wheel and sdist contents without executing package code.",
+    )
+    inspect_parser.add_argument(
         "--cve",
         action="store_true",
         help="Show only known vulnerability records for the selected release.",
@@ -221,6 +226,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="store_true",
         help="Show detailed per-file verification evidence.",
+    )
+    scan_parser.add_argument(
+        "--inspect-artifacts",
+        action="store_true",
+        help="Statically inspect wheel and sdist contents without executing package code.",
     )
     scan_parser.add_argument(
         "--cve",
@@ -350,6 +360,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 include_dependencies=args.with_deps,
                 include_transitive_dependencies=args.with_transitive_deps,
                 include_osv=args.with_osv,
+                inspect_artifacts=args.inspect_artifacts,
                 osv_client=osv_client,
             )
             policy_name = "strict" if args.strict else args.policy
@@ -431,6 +442,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         include_dependencies=args.with_deps,
                         include_transitive_dependencies=args.with_transitive_deps,
                         include_osv=args.with_osv,
+                        inspect_artifacts=args.inspect_artifacts,
                         osv_client=osv_client,
                         locked_versions=target.locked_versions,
                     )
@@ -1235,6 +1247,88 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
                     )
             if file.error:
                 lines.append(f"    note: {file.error}")
+            if file.artifact.inspected:
+                lines.append("    artifact inspection:")
+                lines.append(f"      kind: {file.artifact.kind}")
+                lines.append(
+                    "      archive valid: "
+                    + (
+                        "unknown"
+                        if file.artifact.archive_valid is None
+                        else "yes" if file.artifact.archive_valid else "no"
+                    )
+                )
+                lines.append(f"      files: {file.artifact.file_count}")
+                lines.append(
+                    "      uncompressed size: "
+                    f"{file.artifact.total_uncompressed_size} bytes"
+                )
+                if file.artifact.record_valid is not None:
+                    lines.append(
+                        "      wheel RECORD: "
+                        f"{'valid' if file.artifact.record_valid else 'invalid'}"
+                    )
+                if file.artifact.metadata_name or file.artifact.metadata_version:
+                    lines.append(
+                        "      metadata: "
+                        f"name={file.artifact.metadata_name or '-'} "
+                        f"version={file.artifact.metadata_version or '-'}"
+                    )
+                if file.artifact.wheel_version:
+                    lines.append(
+                        "      wheel metadata: "
+                        f"version={file.artifact.wheel_version} "
+                        "root_is_purelib="
+                        f"{file.artifact.wheel_root_is_purelib} "
+                        f"tags={','.join(file.artifact.wheel_tags) or '-'}"
+                    )
+                _append_artifact_findings(
+                    lines,
+                    "console scripts",
+                    file.artifact.console_scripts,
+                )
+                _append_artifact_findings(
+                    lines,
+                    "native files",
+                    file.artifact.native_files,
+                )
+                _append_artifact_findings(
+                    lines,
+                    "unexpected top-level files",
+                    file.artifact.unexpected_top_level_files,
+                )
+                _append_artifact_findings(
+                    lines,
+                    "suspicious entry points",
+                    file.artifact.suspicious_entry_points,
+                )
+                _append_artifact_findings(
+                    lines,
+                    "suspicious files",
+                    file.artifact.suspicious_files,
+                )
+                _append_artifact_findings(
+                    lines,
+                    "oversized files",
+                    file.artifact.oversized_files,
+                )
+                _append_artifact_findings(
+                    lines,
+                    "unusual files",
+                    file.artifact.unusual_files,
+                )
+                _append_artifact_findings(
+                    lines,
+                    "RECORD errors",
+                    file.artifact.record_errors,
+                )
+                _append_artifact_findings(
+                    lines,
+                    "metadata mismatches",
+                    file.artifact.metadata_mismatches,
+                )
+                if file.artifact.error:
+                    lines.append(f"      error: {file.artifact.error}")
 
     lines.append("")
     lines.append("diagnostics:")
@@ -1301,6 +1395,17 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
     else:
         lines.append("risk flags: none")
     return "\n".join(lines)
+
+
+def _append_artifact_findings(
+    lines: list[str],
+    label: str,
+    findings: list[str],
+) -> None:
+    if not findings:
+        return
+    lines.append(f"      {label}:")
+    lines.extend(f"        - {finding}" for finding in findings)
 
 
 def _render_cve_json(report: TrustReport) -> dict[str, object]:

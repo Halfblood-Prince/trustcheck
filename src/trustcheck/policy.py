@@ -49,11 +49,11 @@ def advisory_evaluation_for(report: TrustReport) -> PolicyEvaluation:
     if any(flag.severity == "high" for flag in report.risk_flags):
         recommendation = "high-risk"
         violations = _violations_from_flags(report.risk_flags, minimum="high")
-    elif report.files and all(file.verified for file in report.files):
-        recommendation = "verified"
     elif any(flag.severity == "medium" for flag in report.risk_flags):
         recommendation = "review-required"
         violations = _violations_from_flags(report.risk_flags, minimum="medium")
+    elif report.files and all(file.verified for file in report.files):
+        recommendation = "verified"
 
     report.recommendation = recommendation
     report.policy = PolicyEvaluation(

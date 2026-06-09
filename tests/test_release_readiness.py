@@ -75,9 +75,10 @@ class ReleaseReadinessTests(unittest.TestCase):
         self.assertIn(f"## [{RELEASE_VERSION}] - 2026-06-09", changelog)
         self.assertIn(
             f"Package release `{RELEASE_VERSION}` emits "
-            f"machine-readable report schema `{JSON_SCHEMA_VERSION}`.",
+            "machine-readable report schema `1.4.0`.",
             changelog,
         )
+        self.assertIn(f"advanced the schema to `{JSON_SCHEMA_VERSION}`", changelog)
         self.assertIn(f"JSON schema `{JSON_SCHEMA_VERSION}`", readme)
         self.assertIn(f"JSON schema `{JSON_SCHEMA_VERSION}`", docs_index)
         self.assertIn(
@@ -87,7 +88,7 @@ class ReleaseReadinessTests(unittest.TestCase):
         self.assertIn(JSON_SCHEMA_ID, json_contract)
         self.assertIn(f"Current release milestone: `{RELEASE_VERSION}`", docs_changelog)
         self.assertIn(
-            f"Machine-readable report schema: `{JSON_SCHEMA_VERSION}`",
+            f"Current development report schema: `{JSON_SCHEMA_VERSION}`",
             docs_changelog,
         )
 

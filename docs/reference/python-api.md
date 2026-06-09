@@ -102,7 +102,7 @@ print(json.dumps(payload, indent=2))
 
 ## `inspect_package`
 
-Use `inspect_package(project, version=None, expected_repository=None, client=None, progress_callback=None, include_dependencies=False, include_transitive_dependencies=False, include_osv=False, osv_client=None, locked_versions=None)` to collect evidence and build a `TrustReport`.
+Use `inspect_package(project, version=None, expected_repository=None, client=None, progress_callback=None, include_dependencies=False, include_transitive_dependencies=False, include_osv=False, inspect_artifacts=False, osv_client=None, locked_versions=None)` to collect evidence and build a `TrustReport`.
 
 In most applications, you only need to provide:
 
@@ -112,7 +112,11 @@ In most applications, you only need to provide:
 - optionally `include_dependencies=True` when you want direct dependency inspection
 - optionally `include_transitive_dependencies=True` when you want recursive dependency inspection
 - optionally `include_osv=True` to query OSV for the exact selected versions
+- optionally `inspect_artifacts=True` to statically inspect downloaded wheels and sdists
 - optionally `locked_versions={"dependency-name": "1.2.3"}` to retain resolved direct and transitive versions
+
+Artifact inspection reads archive contents only. It does not import or execute
+the inspected package.
 
 ### Progress callback example
 

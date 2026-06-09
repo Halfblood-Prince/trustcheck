@@ -34,6 +34,32 @@ class PublisherIdentity:
 
 
 @dataclass(slots=True)
+class ArtifactInspection:
+    inspected: bool = False
+    kind: str = "unknown"
+    archive_valid: bool | None = None
+    file_count: int = 0
+    total_uncompressed_size: int = 0
+    record_valid: bool | None = None
+    record_errors: list[str] = field(default_factory=list)
+    console_scripts: list[str] = field(default_factory=list)
+    suspicious_entry_points: list[str] = field(default_factory=list)
+    native_files: list[str] = field(default_factory=list)
+    unexpected_top_level_files: list[str] = field(default_factory=list)
+    suspicious_files: list[str] = field(default_factory=list)
+    oversized_files: list[str] = field(default_factory=list)
+    unusual_files: list[str] = field(default_factory=list)
+    metadata_name: str | None = None
+    metadata_version: str | None = None
+    metadata_requires_dist: list[str] = field(default_factory=list)
+    wheel_version: str | None = None
+    wheel_root_is_purelib: bool | None = None
+    wheel_tags: list[str] = field(default_factory=list)
+    metadata_mismatches: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass(slots=True)
 class FileProvenance:
     filename: str
     url: str
@@ -45,6 +71,7 @@ class FileProvenance:
     observed_sha256: str | None = None
     publisher_identities: list[PublisherIdentity] = field(default_factory=list)
     error: str | None = None
+    artifact: ArtifactInspection = field(default_factory=ArtifactInspection)
 
 
 @dataclass(slots=True)

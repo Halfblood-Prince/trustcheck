@@ -59,6 +59,30 @@
     "expected_repository": "https://github.com/example/demo",
     "files": [
       {
+        "artifact": {
+          "archive_valid": null,
+          "console_scripts": [],
+          "error": null,
+          "file_count": 0,
+          "inspected": false,
+          "kind": "unknown",
+          "metadata_mismatches": [],
+          "metadata_name": null,
+          "metadata_requires_dist": [],
+          "metadata_version": null,
+          "native_files": [],
+          "oversized_files": [],
+          "record_errors": [],
+          "record_valid": null,
+          "suspicious_entry_points": [],
+          "suspicious_files": [],
+          "total_uncompressed_size": 0,
+          "unexpected_top_level_files": [],
+          "unusual_files": [],
+          "wheel_root_is_purelib": null,
+          "wheel_tags": [],
+          "wheel_version": null
+        },
         "attestation_count": 1,
         "error": null,
         "filename": "demo-1.2.3-py3-none-any.whl",
@@ -170,5 +194,5 @@
       }
     ]
   },
-  "schema_version": "1.4.0"
+  "schema_version": "1.5.0"
 }

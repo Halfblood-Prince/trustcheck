@@ -17,6 +17,7 @@ from pypi_attestations import Distribution as AttestedDistribution
 from pypi_attestations import Provenance, VerificationError
 
 from .advisories import OsvClient, merge_vulnerabilities, parse_osv_vulnerabilities
+from .artifacts import compare_artifact_metadata, inspect_artifact
 from .models import (
     ArtifactDiagnostic,
     CoverageSummary,
@@ -185,6 +186,7 @@ def inspect_package(
     include_dependencies: bool = False,
     include_transitive_dependencies: bool = False,
     include_osv: bool = False,
+    inspect_artifacts: bool = False,
     osv_client: OsvClient | None = None,
     locked_versions: Mapping[str, str] | None = None,
     _dependency_context: DependencyTraversalContext | None = None,
@@ -225,7 +227,11 @@ def inspect_package(
             client,
             progress_callback=progress_callback,
             diagnostics=diagnostics,
+            inspect_artifacts=inspect_artifacts,
+            expected_requires_dist=declared_dependencies,
         )
+        if inspect_artifacts:
+            compare_artifact_metadata(file.artifact for file in files)
 
         report = TrustReport(
             project=project,
@@ -259,6 +265,7 @@ def inspect_package(
                 dependency_progress_callback=dependency_progress_callback,
                 recursive=include_transitive_dependencies,
                 include_osv=include_osv,
+                inspect_artifacts=inspect_artifacts,
                 osv_client=osv_client,
                 locked_versions={
                     canonicalize_name(name): str(locked_version)
@@ -284,6 +291,8 @@ def _collect_files(
     *,
     progress_callback: ProgressCallback | None = None,
     diagnostics: DiagnosticsCollector | None = None,
+    inspect_artifacts: bool = False,
+    expected_requires_dist: list[str] | None = None,
 ) -> list[FileProvenance]:
     urls = payload.get("urls") or []
     results: list[FileProvenance] = []
@@ -299,6 +308,43 @@ def _collect_files(
             sha256=(item.get("digests") or {}).get("sha256"),
             has_provenance=False,
         )
+        artifact_bytes: bytes | None = None
+        download_error: PypiClientError | None = None
+        if inspect_artifacts:
+            try:
+                artifact_bytes = client.download_distribution(provenance.url)
+                provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+                provenance.artifact = inspect_artifact(
+                    filename,
+                    artifact_bytes,
+                    expected_project=project,
+                    expected_version=version,
+                    expected_requires_dist=expected_requires_dist,
+                )
+                if provenance.artifact.error and diagnostics is not None:
+                    diagnostics.add_artifact_failure(
+                        filename=filename,
+                        stage="artifact-inspection",
+                        code="artifact",
+                        subcode="archive_invalid",
+                        message=provenance.artifact.error,
+                    )
+            except PypiClientError as exc:
+                download_error = exc
+                provenance.artifact.inspected = True
+                if _is_wheel(filename):
+                    provenance.artifact.kind = "wheel"
+                elif _is_sdist(filename):
+                    provenance.artifact.kind = "sdist"
+                provenance.artifact.error = str(exc)
+                if diagnostics is not None:
+                    diagnostics.add_artifact_failure(
+                        filename=filename,
+                        stage="artifact-download",
+                        code=exc.code,
+                        subcode=exc.subcode,
+                        message=str(exc),
+                    )
         try:
             prov_payload = client.get_provenance(project, version, filename)
             attestation_provenance = Provenance.model_validate(prov_payload)
@@ -307,7 +353,10 @@ def _collect_files(
             provenance.attestation_count = sum(len(bundle.attestations) for bundle in bundles)
             provenance.publisher_identities = _parse_publisher_identities(bundles)
 
-            artifact_bytes = client.download_distribution(provenance.url)
+            if artifact_bytes is None:
+                if download_error is not None:
+                    raise download_error
+                artifact_bytes = client.download_distribution(provenance.url)
             provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
             if provenance.sha256 and provenance.observed_sha256 != provenance.sha256:
                 raise VerificationError("downloaded artifact digest does not match PyPI metadata")
@@ -407,6 +456,7 @@ def _inspect_dependencies(
     dependency_progress_callback: DependencyProgressCallback | None = None,
     recursive: bool,
     include_osv: bool,
+    inspect_artifacts: bool,
     osv_client: OsvClient | None,
     locked_versions: Mapping[str, str],
 ) -> list[DependencyInspection]:
@@ -431,6 +481,7 @@ def _inspect_dependencies(
             environment=environment,
             dependency_progress_callback=dependency_progress_callback,
             include_osv=include_osv,
+            inspect_artifacts=inspect_artifacts,
             osv_client=osv_client,
             locked_versions=locked_versions,
         )
@@ -459,6 +510,7 @@ def _inspect_dependency_requirement(
     environment: dict[str, str],
     dependency_progress_callback: DependencyProgressCallback | None = None,
     include_osv: bool,
+    inspect_artifacts: bool,
     osv_client: OsvClient | None,
     locked_versions: Mapping[str, str],
 ) -> tuple[DependencyInspection | None, list[str]]:
@@ -524,6 +576,7 @@ def _inspect_dependency_requirement(
             progress_callback=emit_dependency_artifact_progress,
             include_dependencies=False,
             include_osv=include_osv,
+            inspect_artifacts=inspect_artifacts,
             osv_client=osv_client,
             _dependency_context=dependency_context,
         )
@@ -739,6 +792,110 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
     artifact_failure_by_filename = {
         failure.filename: failure for failure in report.diagnostics.artifact_failures
     }
+    invalid_records = [
+        file
+        for file in report.files
+        if file.artifact.inspected
+        and file.artifact.kind == "wheel"
+        and file.artifact.record_valid is False
+    ]
+    native_artifacts = [
+        file for file in report.files if file.artifact.native_files
+    ]
+    metadata_mismatches = [
+        file for file in report.files if file.artifact.metadata_mismatches
+    ]
+    suspicious_artifacts = [
+        file
+        for file in report.files
+        if file.artifact.suspicious_entry_points or file.artifact.suspicious_files
+    ]
+
+    if invalid_records:
+        flags.append(
+            RiskFlag(
+                code="wheel_record_invalid",
+                severity="high",
+                message="One or more wheels failed RECORD integrity validation.",
+                why=[
+                    *[
+                        f"{file.filename}: {error}"
+                        for file in invalid_records
+                        for error in file.artifact.record_errors[:3]
+                    ][:5],
+                ],
+                remediation=[
+                    "Do not install a wheel whose RECORD hashes or file list are invalid.",
+                    "Download the artifact again and compare it with the publisher's release.",
+                ],
+            )
+        )
+
+    if native_artifacts:
+        flags.append(
+            RiskFlag(
+                code="artifact_contains_native_code",
+                severity="medium",
+                message="One or more release artifacts contain native code.",
+                why=[
+                    *[
+                        f"{file.filename}: {native_file}"
+                        for file in native_artifacts
+                        for native_file in file.artifact.native_files[:3]
+                    ][:5],
+                    "Native extensions require platform-specific review and cannot "
+                    "be assessed as Python source alone.",
+                ],
+                remediation=[
+                    "Confirm the native extension is expected for this package and platform.",
+                    "Prefer artifacts built by a trusted workflow with verified provenance.",
+                ],
+            )
+        )
+
+    if metadata_mismatches:
+        flags.append(
+            RiskFlag(
+                code="metadata_mismatch",
+                severity="high",
+                message="Artifact package metadata does not match the selected release.",
+                why=[
+                    *[
+                        f"{file.filename}: {mismatch}"
+                        for file in metadata_mismatches
+                        for mismatch in file.artifact.metadata_mismatches[:3]
+                    ][:5],
+                ],
+                remediation=[
+                    "Do not install artifacts whose Name, Version, or dependency metadata "
+                    "does not match the release.",
+                    "Confirm that the wheel and sdist were built from the same source release.",
+                ],
+            )
+        )
+
+    if suspicious_artifacts:
+        flags.append(
+            RiskFlag(
+                code="suspicious_entry_point",
+                severity="medium",
+                message="Artifact inspection found a suspicious executable entry point or script.",
+                why=[
+                    *[
+                        f"{file.filename}: {finding}"
+                        for file in suspicious_artifacts
+                        for finding in (
+                            file.artifact.suspicious_entry_points
+                            + file.artifact.suspicious_files
+                        )[:3]
+                    ][:5],
+                ],
+                remediation=[
+                    "Review the referenced entry point or script without executing it.",
+                    "Confirm that install-time or command execution behavior is expected.",
+                ],
+            )
+        )
 
     if report.vulnerabilities:
         flags.append(

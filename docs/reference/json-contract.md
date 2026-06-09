@@ -12,17 +12,17 @@
 
 ## Current schema identifiers
 
-- `JSON_SCHEMA_VERSION = "1.4.0"`
-- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.4.0"`
+- `JSON_SCHEMA_VERSION = "1.5.0"`
+- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.5.0"`
 
-Package versions and report schema versions are independent. Package release
-`1.9.0` continues to emit schema `1.4.0` because its JSON shape is unchanged.
+Package versions and report schema versions are independent. Schema `1.5.0`
+adds per-file artifact inspection findings.
 
 ## Top-level shape
 
 ```json
 {
-  "schema_version": "1.4.0",
+  "schema_version": "1.5.0",
   "report": {
     "project": "demo",
     "version": "1.2.3",
@@ -127,6 +127,22 @@ When dependency inspection is enabled with `--with-deps`, `--with-transitive-dep
 - `report.dependency_summary`: aggregate counts and the highest-risk recommendation seen among inspected dependencies
 
 If dependency inspection is not requested, these fields are still present in the contract with empty or default values so JSON consumers can rely on a stable shape.
+
+## Artifact inspection fields
+
+Every item in `report.files` contains an `artifact` object. When artifact
+inspection is not requested, `artifact.inspected` is `false` and the remaining
+fields use empty defaults.
+
+With `--inspect-artifacts` or `inspect_artifacts=True`, the block includes:
+
+- archive type, validity, member count, and total uncompressed size
+- wheel `record_valid` and `record_errors`
+- console scripts and suspicious entry points
+- native, unexpected top-level, suspicious, oversized, and unusual files
+- parsed Name, Version, and Requires-Dist metadata
+- parsed Wheel-Version, Root-Is-Purelib, and Tag metadata
+- metadata mismatches between PyPI, wheel, and sdist evidence
 
 ## Runtime schema access
 

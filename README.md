@@ -35,6 +35,7 @@ For a selected package version, `trustcheck` can:
 - compare expected repository input against declared and attested signals
 - flag publisher drift, missing verification, and known vulnerabilities
 - scan requirements files, project TOML, and `uv.lock`, `poetry.lock`, or `pdm.lock`
+- optionally inspect wheel and sdist contents without importing or executing package code
 - emit concise text output or structured JSON for automation
 
 ## Installation
@@ -48,7 +49,7 @@ Requirements:
 - Python `>=3.10`
 - Network access to PyPI
 
-Machine-readable reports currently use JSON schema `1.4.0`. Package and report
+Machine-readable reports currently use JSON schema `1.5.0`. Package and report
 schema versions are independent so documentation-only package releases do not
 force contract churn.
 
@@ -107,6 +108,16 @@ Inspect exact direct and transitive versions from a supported lockfile:
 ```bash
 trustcheck scan uv.lock --with-transitive-deps
 ```
+
+Statically inspect wheel and sdist contents:
+
+```bash
+trustcheck inspect sampleproject --version 4.0.0 --inspect-artifacts --verbose
+```
+
+Artifact inspection validates wheel `RECORD` hashes, lists console scripts,
+detects native extensions and unusual files, and compares wheel and sdist
+metadata. It reads archive bytes only and never imports the inspected package.
 
 Require a release to match an expected repository:
 

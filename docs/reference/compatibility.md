@@ -11,6 +11,7 @@ The following interfaces are supported across compatible releases:
 - top-level JSON fields `schema_version` and `report`
 - currently documented report field names
 - the `include_dependencies` and `include_transitive_dependencies` keywords on `inspect_package(...)`
+- the `inspect_artifacts` keyword on `inspect_package(...)`
 - the machine-readable `report.diagnostics` block
 - the machine-readable `report.policy` evaluation block
 - the meaning of `schema_version`, `JSON_SCHEMA_ID`, and `get_json_schema()`
@@ -29,6 +30,7 @@ Backward-compatible releases may add fields in places designed to grow:
 - the `report` object
 - `ownership` and ownership role data
 - publisher `raw` payloads
+- per-file artifact inspection findings
 - lists that reflect PyPI or provenance evidence sources
 
 ## Breaking changes

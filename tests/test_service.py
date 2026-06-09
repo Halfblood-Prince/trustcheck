@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import unittest
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -7,6 +8,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 from pypi_attestations import VerificationError
+from test_artifacts import build_wheel
 
 from trustcheck.models import PolicyViolation, RiskFlag, TrustReport
 from trustcheck.policy import advisory_evaluation_for
@@ -270,6 +272,77 @@ class InspectPackageTests(unittest.TestCase):
             "https://github.com/halfblood-prince/gridoptim",
         )
         self.assertEqual(report.risk_flags, [])
+
+    def test_artifact_inspection_flags_tampered_wheel_record(self) -> None:
+        wheel = build_wheel(
+            project="gridoptim",
+            version="2.2.0",
+            tamper_module_after_record=True,
+        )
+        url = "https://files.pythonhosted.org/packages/gridoptim.whl"
+        payload = make_project_payload(
+            requires_dist=["packaging>=24"],
+            urls=[
+                {
+                    "filename": "gridoptim-2.2.0-py3-none-any.whl",
+                    "url": url,
+                    "digests": {"sha256": hashlib.sha256(wheel).hexdigest()},
+                }
+            ]
+        )
+        client = FakeClient(project_payload=payload, download_map={url: wheel})
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = make_provenance()
+            report = inspect_package(
+                "gridoptim",
+                client=cast(Any, client),
+                inspect_artifacts=True,
+            )
+
+        self.assertTrue(report.files[0].verified)
+        self.assertFalse(report.files[0].artifact.record_valid)
+        self.assertIn("wheel_record_invalid", {flag.code for flag in report.risk_flags})
+        self.assertEqual(report.recommendation, "high-risk")
+
+    def test_native_artifact_is_review_required_not_high_risk(self) -> None:
+        wheel = build_wheel(
+            project="gridoptim",
+            version="2.2.0",
+            native_file=True,
+        )
+        url = "https://files.pythonhosted.org/packages/gridoptim.whl"
+        payload = make_project_payload(
+            requires_dist=["packaging>=24"],
+            urls=[
+                {
+                    "filename": "gridoptim-2.2.0-py3-none-any.whl",
+                    "url": url,
+                    "digests": {"sha256": hashlib.sha256(wheel).hexdigest()},
+                }
+            ]
+        )
+        client = FakeClient(project_payload=payload, download_map={url: wheel})
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = make_provenance()
+            report = inspect_package(
+                "gridoptim",
+                client=cast(Any, client),
+                inspect_artifacts=True,
+            )
+
+        native_flag = next(
+            flag
+            for flag in report.risk_flags
+            if flag.code == "artifact_contains_native_code"
+        )
+        self.assertEqual(native_flag.severity, "medium")
+        self.assertEqual(report.recommendation, "review-required")
+        self.assertNotIn(
+            "high",
+            {flag.severity for flag in report.risk_flags},
+        )
 
     def test_project_lookup_failure_bubbles_up(self) -> None:
         client = FakeClient(project_error=PypiClientError("unable to reach PyPI: timed out"))

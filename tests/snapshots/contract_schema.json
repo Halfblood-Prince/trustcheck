@@ -34,6 +34,194 @@
       "title": "ArtifactDiagnosticPayload",
       "type": "object"
     },
+    "ArtifactInspectionPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "archive_valid": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Archive Valid"
+        },
+        "console_scripts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Console Scripts",
+          "type": "array"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "file_count": {
+          "default": 0,
+          "title": "File Count",
+          "type": "integer"
+        },
+        "inspected": {
+          "default": false,
+          "title": "Inspected",
+          "type": "boolean"
+        },
+        "kind": {
+          "default": "unknown",
+          "title": "Kind",
+          "type": "string"
+        },
+        "metadata_mismatches": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Metadata Mismatches",
+          "type": "array"
+        },
+        "metadata_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata Name"
+        },
+        "metadata_requires_dist": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Metadata Requires Dist",
+          "type": "array"
+        },
+        "metadata_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata Version"
+        },
+        "native_files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Native Files",
+          "type": "array"
+        },
+        "oversized_files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Oversized Files",
+          "type": "array"
+        },
+        "record_errors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Record Errors",
+          "type": "array"
+        },
+        "record_valid": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Record Valid"
+        },
+        "suspicious_entry_points": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Suspicious Entry Points",
+          "type": "array"
+        },
+        "suspicious_files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Suspicious Files",
+          "type": "array"
+        },
+        "total_uncompressed_size": {
+          "default": 0,
+          "title": "Total Uncompressed Size",
+          "type": "integer"
+        },
+        "unexpected_top_level_files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unexpected Top Level Files",
+          "type": "array"
+        },
+        "unusual_files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unusual Files",
+          "type": "array"
+        },
+        "wheel_root_is_purelib": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wheel Root Is Purelib"
+        },
+        "wheel_tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Wheel Tags",
+          "type": "array"
+        },
+        "wheel_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wheel Version"
+        }
+      },
+      "title": "ArtifactInspectionPayload",
+      "type": "object"
+    },
     "CoverageSummaryPayload": {
       "additionalProperties": false,
       "properties": {
@@ -232,6 +420,9 @@
     "FileProvenancePayload": {
       "additionalProperties": false,
       "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactInspectionPayload"
+        },
         "attestation_count": {
           "default": 0,
           "title": "Attestation Count",
@@ -992,7 +1183,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:trustcheck:report:1.4.0",
+  "$id": "urn:trustcheck:report:1.5.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -1000,8 +1191,8 @@
       "$ref": "#/$defs/TrustReportPayload"
     },
     "schema_version": {
-      "const": "1.4.0",
-      "default": "1.4.0",
+      "const": "1.5.0",
+      "default": "1.5.0",
       "title": "Schema Version",
       "type": "string"
     }
