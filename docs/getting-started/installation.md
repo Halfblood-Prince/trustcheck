@@ -17,6 +17,12 @@ pip install trustcheck
 trustcheck --help
 ```
 
+Show the installed package version and report schema version:
+
+```bash
+trustcheck --version
+```
+
 ## Upgrade
 
 ```bash

@@ -9,6 +9,13 @@ from urllib import error
 
 from trustcheck.advisories import (
     OsvClient,
+    _extract_osv_fixed_versions,
+    _extract_osv_link,
+    _higher_severity,
+    _matching_affected_items,
+    _merge_sources,
+    _severity_score,
+    _string_list,
     merge_vulnerabilities,
     parse_osv_vulnerabilities,
 )
@@ -304,3 +311,54 @@ class AdvisoryNormalizationTests(unittest.TestCase):
             [VulnerabilityRecord(id="CVE-2", summary="second")],
         )
         self.assertEqual([record.id for record in records], ["CVE-1", "CVE-2"])
+
+    def test_normalization_helpers_tolerate_sparse_and_unknown_values(self) -> None:
+        self.assertIsNone(_merge_sources(None, ""))
+        self.assertEqual(_merge_sources("PyPI, OSV", "OSV"), "PyPI, OSV")
+        self.assertEqual(_higher_severity(None, "HIGH"), "HIGH")
+        self.assertEqual(_higher_severity("HIGH", None), "HIGH")
+        self.assertEqual(_higher_severity("CUSTOM", "CRITICAL"), "CUSTOM")
+        self.assertEqual(_higher_severity("HIGH", "MEDIUM"), "HIGH")
+        self.assertEqual(_severity_score(["skip", {"score": "7.1"}]), "7.1")
+        self.assertIsNone(_severity_score({"score": "7.1"}))
+        self.assertEqual(_string_list(["CVE-1", "", 3]), ["CVE-1"])
+
+    def test_osv_helpers_skip_malformed_affected_ranges_and_references(self) -> None:
+        item = {
+            "affected": [
+                "not-an-object",
+                {},
+                {"package": "not-an-object"},
+                {"package": {"name": "demo", "ecosystem": "npm"}},
+                {
+                    "package": {"name": "Demo"},
+                    "ranges": [
+                        "not-an-object",
+                        {"type": "GIT", "events": [{"fixed": "git-sha"}]},
+                        {"type": "ECOSYSTEM", "events": "not-a-list"},
+                        {
+                            "type": "ECOSYSTEM",
+                            "events": [
+                                "not-an-object",
+                                {"fixed": ""},
+                                {"fixed": "2.0.0"},
+                            ],
+                        },
+                    ],
+                },
+            ],
+            "references": [
+                "not-an-object",
+                {"type": "FIX", "url": "https://example.com/fix"},
+                {"type": "WEB", "url": "ftp://example.com/advisory"},
+                {"type": "REPORT", "url": "https://example.com/report"},
+            ],
+        }
+
+        matches = _matching_affected_items(item, project="demo")
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(_extract_osv_fixed_versions(item, project="demo"), ["2.0.0"])
+        self.assertEqual(
+            _extract_osv_link(item, "GHSA-demo"),
+            "https://example.com/report",
+        )

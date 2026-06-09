@@ -20,6 +20,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover - Python 3.10 fallback
     import tomli as tomllib
 
+from . import __version__
 from .advisories import OsvClient
 from .contract import JSON_SCHEMA_VERSION
 from .lockfiles import is_supported_lockfile, load_lockfile
@@ -48,7 +49,19 @@ class ScanTarget:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trustcheck",
-        description="Inspect PyPI package trust and provenance signals.",
+        description=(
+            "Inspect PyPI package trust, provenance, vulnerabilities, "
+            "and dependency files."
+        ),
+        epilog=f"Machine-readable report schema: {JSON_SCHEMA_VERSION}.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=(
+            f"%(prog)s {__version__} "
+            f"(report schema {JSON_SCHEMA_VERSION})"
+        ),
     )
     parser.add_argument(
         "--debug",

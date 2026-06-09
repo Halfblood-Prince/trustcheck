@@ -344,6 +344,12 @@ class PolicyCoverageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "require_verified_provenance"):
             policy_from_mapping({"require_verified_provenance": "sometimes"})
 
+        with self.assertRaisesRegex(ValueError, "vulnerability_mode"):
+            policy_from_mapping({"vulnerability_mode": "critical"})
+
+        with self.assertRaisesRegex(ValueError, "fail_on_severity"):
+            policy_from_mapping({"fail_on_severity": "low"})
+
     def test_resolve_policy_rejects_unknown_builtin(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown built-in policy"):
             resolve_policy(builtin_name="missing")

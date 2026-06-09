@@ -34,6 +34,7 @@ For a selected package version, `trustcheck` can:
 - surface Trusted Publisher repository and workflow identity hints
 - compare expected repository input against declared and attested signals
 - flag publisher drift, missing verification, and known vulnerabilities
+- scan requirements files, project TOML, and `uv.lock`, `poetry.lock`, or `pdm.lock`
 - emit concise text output or structured JSON for automation
 
 ## Installation
@@ -46,6 +47,10 @@ Requirements:
 
 - Python `>=3.10`
 - Network access to PyPI
+
+Machine-readable reports currently use JSON schema `1.4.0`. Package and report
+schema versions are independent so documentation-only package releases do not
+force contract churn.
 
 ## Quick start
 
@@ -154,6 +159,12 @@ Full documentation: https://halfblood-prince.github.io/trustcheck/
 - Trust model: [Verification model and repository matching](https://halfblood-prince.github.io/trustcheck/reference/trust-model/)
 - Automation: [CI integration](https://halfblood-prince.github.io/trustcheck/guides/ci-integration/)
 - Project details: [Development and release process](https://halfblood-prince.github.io/trustcheck/guides/development/) and [Changelog](https://halfblood-prince.github.io/trustcheck/changelog/)
+
+Project support:
+
+- Bugs and feature requests: [GitHub Issues](https://github.com/Halfblood-Prince/trustcheck/issues)
+- Sensitive security reports: [GitHub private vulnerability reporting](https://github.com/Halfblood-Prince/trustcheck/security/advisories/new)
+- Security policy: [SECURITY.md](https://github.com/Halfblood-Prince/trustcheck/security/policy)
 
 ## License
 

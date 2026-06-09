@@ -15,6 +15,9 @@
 - `JSON_SCHEMA_VERSION = "1.4.0"`
 - `JSON_SCHEMA_ID = "urn:trustcheck:report:1.4.0"`
 
+Package versions and report schema versions are independent. Package release
+`1.9.0` continues to emit schema `1.4.0` because its JSON shape is unchanged.
+
 ## Top-level shape
 
 ```json

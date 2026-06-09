@@ -43,9 +43,9 @@ trustcheck = "trustcheck.cli:main"
 [project.urls]
 Repository = "https://github.com/Halfblood-Prince/trustcheck"
 Documentation = "https://halfblood-prince.github.io/trustcheck/"
-Issues = "https://discord.com/channels/267624335836053506/1490011081958101194"
+Issues = "https://github.com/Halfblood-Prince/trustcheck/issues"
 Changelog = "https://github.com/Halfblood-Prince/trustcheck/releases"
-Security = "https://discord.com/channels/267624335836053506/1490011081958101194"
+Security = "https://github.com/Halfblood-Prince/trustcheck/security/advisories/new"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

@@ -6,22 +6,34 @@ The project follows Semantic Versioning for the supported public API described i
 
 ## Unreleased
 
+No changes yet.
+
+## [1.9.0] - 2026-06-09
+
+Package release `1.9.0` emits machine-readable report schema `1.4.0`.
+
 ### Added
 
 - Added Bandit and Semgrep CI workflows plus a pytest coverage badge and README status badges.
 - Added optional OSV vulnerability queries, including GitHub Advisory Database records.
 - Added vulnerability severity output and cross-source advisory deduplication by aliases such as CVE IDs.
 - Added lockfile-aware scans for hashed `requirements.txt`, `uv.lock`, `poetry.lock`, and `pdm.lock`.
-- Preserved resolved lockfile versions during direct and transitive dependency inspection.
-- Formalized the machine-readable report contract as schema version `1.0.0`.
+- Formalized the machine-readable report contract at schema version `1.4.0`.
 - Added the public contract helpers `trustcheck.JSON_SCHEMA_VERSION`, `trustcheck.JSON_SCHEMA_ID`, and `trustcheck.get_json_schema()`.
 - Added contract snapshot tests for the JSON schema and representative report payloads.
 - Documented the supported public Python API and compatibility guarantees for automation users.
 - Split evidence collection from policy evaluation with a dedicated policy layer.
 - Added built-in policy profiles, CLI policy overrides, and JSON policy-file support.
-- Extended the machine-readable report with a `policy` evaluation block and advanced the schema to `1.1.0`.
 - Added configurable network timeout, retry, backoff, cache, and offline controls via CLI, environment variables, and JSON config.
 - Added deterministic upstream error subcodes plus structured debug logging for request lifecycle events.
-- Extended the machine-readable report with a `diagnostics` block and advanced the schema to `1.2.0`.
 - Added dependency audit, secret scanning, and CodeQL workflows for the package itself.
 - Hardened release automation with explicit PyPI artifact attestations, build provenance attestation, SBOM generation, and published checksums.
+
+### Changed
+
+- Preserved resolved lockfile versions during direct and transitive dependency inspection.
+- Aligned the README, documentation site, CLI help, changelog, and JSON contract documentation around the same supported feature set.
+- Replaced temporary Discord issue and security links with stable GitHub project pages and private vulnerability reporting.
+
+[Unreleased]: https://github.com/Halfblood-Prince/trustcheck/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/Halfblood-Prince/trustcheck/compare/v1.8.0...v1.9.0

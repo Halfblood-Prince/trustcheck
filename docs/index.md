@@ -17,6 +17,7 @@ For a selected package version, `trustcheck` can:
 - flag publisher repository and workflow drift against the previous release
 - surface PyPI vulnerability records and optional OSV/GitHub advisory intelligence
 - inspect declared runtime dependencies and summarize the worst-risk dependency in the set
+- scan requirements files, project TOML, and `uv.lock`, `poetry.lock`, or `pdm.lock`
 - emit a concise human-readable report or structured JSON
 
 ## Install
@@ -77,6 +78,12 @@ Inspect dependencies declared in a TOML project file:
 trustcheck scan pyproject.toml
 ```
 
+Inspect exact versions from a supported lockfile:
+
+```bash
+trustcheck scan uv.lock --with-transitive-deps
+```
+
 Fail CI when full verification is missing:
 
 ```bash
@@ -95,6 +102,9 @@ print(report.recommendation)
 print(report.to_dict()["report"]["coverage"]["status"])
 print(report.dependency_summary.highest_risk_recommendation)
 ```
+
+Machine-readable reports currently use JSON schema `1.4.0`. The package release
+and report schema are versioned independently.
 
 <script
   src="https://context7.com/widget.js"

@@ -12,6 +12,12 @@ Requirements file scan:
 trustcheck scan <filename>
 ```
 
+Show the installed package and report schema versions:
+
+```bash
+trustcheck --version
+```
+
 ## Core flags
 
 - `--version`: inspect a specific release instead of the latest project version
@@ -112,6 +118,9 @@ trustcheck scan requirements.txt --format json
 When dependency inspection is enabled, `trustcheck` reads `requires_dist` metadata, resolves compatible dependency versions from PyPI, and adds a dependency summary to the report. `--with-deps` stops at the immediate dependencies of the inspected package. `--with-transitive-deps` continues recursively through nested dependencies. The top-level result can be escalated if an inspected dependency is `review-required` or `high-risk`.
 
 When `scan` is used, `trustcheck` reads a requirements-style file, a TOML project file, or a supported lockfile. Requirements files support exact pins with multiline `--hash` entries. TOML project files read dependencies from `[project.dependencies]`, `[project.optional-dependencies]`, `[tool.poetry.dependencies]`, and Poetry dependency groups. Lockfile scans support `uv.lock`, `poetry.lock`, and `pdm.lock`, skip local or VCS-only entries, and inspect exact resolved package versions. With dependency inspection enabled, locked versions are retained for both direct and transitive packages instead of being replaced by the newest compatible PyPI release.
+
+Package releases and the machine-readable report schema are versioned
+independently. This release uses report schema `1.4.0`.
 
 For top-level package analysis, a complete absence of published provenance is typically surfaced as `review-required`. Stronger negative evidence such as failed verification, inconsistent provenance, or known vulnerabilities still drives `high-risk` outcomes.
 

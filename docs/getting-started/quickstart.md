@@ -56,6 +56,15 @@ trustcheck scan requirements.txt
 trustcheck scan pyproject.toml
 ```
 
+## Scan a supported lockfile
+
+```bash
+trustcheck scan uv.lock --with-transitive-deps
+```
+
+Supported lockfiles are `uv.lock`, `poetry.lock`, and `pdm.lock`. Exact locked
+versions are retained during direct and transitive dependency inspection.
+
 When dependency inspection is enabled, the text report adds a dependency summary with the number of declared and inspected dependencies, the maximum traversal depth, and the highest-risk dependency recommendation observed in the set. `--with-deps` inspects only direct dependencies. `--with-transitive-deps` continues recursively through nested dependencies too.
 
 ## Emit machine-readable JSON

@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import socket
 import ssl
+import tempfile
 import unittest
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import patch
 from urllib import error
 
@@ -312,3 +314,121 @@ class PypiClientTests(unittest.TestCase):
                 client.get_project("gridoptim")
 
         self.assertEqual(ctx.exception.subcode, "offline_cache_miss")
+
+    def test_cache_disabled_does_not_retain_json_or_distribution_payloads(self) -> None:
+        responses = [
+            FakeResponse(json.dumps({"info": {"version": "1.0.0"}}).encode()),
+            FakeResponse(json.dumps({"info": {"version": "1.0.0"}}).encode()),
+            FakeResponse(b"first-wheel"),
+            FakeResponse(b"second-wheel"),
+        ]
+        client = pypi_module.PypiClient(enable_cache=False)
+
+        with patch("urllib.request.urlopen", side_effect=responses) as urlopen:
+            client.get_project("demo")
+            client.get_project("demo")
+            first = client.download_distribution("https://example.com/demo.whl")
+            second = client.download_distribution("https://example.com/demo.whl")
+
+        self.assertIsNone(client._json_cache)
+        self.assertIsNone(client._bytes_cache)
+        self.assertEqual(first, b"first-wheel")
+        self.assertEqual(second, b"second-wheel")
+        self.assertEqual(urlopen.call_count, 4)
+
+    def test_release_and_provenance_paths_quote_user_input(self) -> None:
+        client = pypi_module.PypiClient()
+        project_payload = {"info": {"version": "1+local"}}
+        provenance_payload = {"version": 1, "attestation_bundles": []}
+
+        with patch.object(
+            pypi_module.PypiClient,
+            "_get_json",
+            autospec=True,
+            side_effect=[project_payload, provenance_payload],
+        ) as get_json:
+            release = client.get_release("demo package", "1+local")
+            provenance = client.get_provenance(
+                "demo package",
+                "1+local",
+                "demo package.whl",
+            )
+
+        self.assertEqual(release["info"]["version"], "1+local")
+        self.assertEqual(provenance["version"], 1)
+        self.assertEqual(
+            get_json.call_args_list[0].args[1],
+            "/pypi/demo%20package/1%2Blocal/json",
+        )
+        self.assertEqual(
+            get_json.call_args_list[1].args[1],
+            "/integrity/demo%20package/1%2Blocal/demo%20package.whl/provenance",
+        )
+
+    def test_offline_download_returns_disk_cached_bytes(self) -> None:
+        client = pypi_module.PypiClient(offline=True)
+        with patch.object(
+            pypi_module.PypiClient,
+            "_read_disk_cache",
+            return_value=b"cached-wheel",
+        ):
+            payload = client.download_distribution("https://example.com/demo.whl")
+
+        self.assertEqual(payload, b"cached-wheel")
+
+    def test_disk_cached_json_populates_memory_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = pypi_module.PypiClient(cache_dir=tmpdir)
+            url = "https://pypi.org/pypi/demo/json"
+            cache_path = client._cache_path(url, accept=pypi_module.JSON_ACCEPT)
+            assert cache_path is not None
+            Path(cache_path).write_bytes(b'{"info":{"version":"1.0.0"}}')
+
+            first = client.get_project("demo")
+            Path(cache_path).unlink()
+            second = client.get_project("demo")
+
+        self.assertEqual(first, second)
+        self.assertEqual(second["info"]["version"], "1.0.0")
+
+    def test_nested_url_error_reasons_and_network_helpers(self) -> None:
+        class ReasonWrapper:
+            def __init__(self, reason: object) -> None:
+                self.reason = reason
+
+        class EmptyReason:
+            def __str__(self) -> str:
+                return ""
+
+        client = pypi_module.PypiClient()
+        nested = ReasonWrapper(ReasonWrapper(None))
+
+        self.assertIsInstance(client._unwrap_url_error_reason(nested), ReasonWrapper)
+        self.assertTrue(client._is_transient_network_reason(TimeoutError("timed out")))
+        self.assertTrue(
+            client._is_transient_network_reason(
+                OSError(socket.EAI_AGAIN, "temporary failure")
+            )
+        )
+        self.assertTrue(client._is_transient_network_reason(OSError("timed out")))
+        self.assertFalse(client._is_transient_network_reason("connection refused"))
+        self.assertFalse(client._is_transient_network_reason(object()))
+        self.assertEqual(client._format_network_reason(EmptyReason()), "EmptyReason")
+        self.assertEqual(
+            client._network_subcode(OSError("temporary failure"), True),
+            "network_transient",
+        )
+        self.assertEqual(
+            client._network_subcode(OSError("permanent failure"), False),
+            "network_error",
+        )
+
+    def test_invalid_project_shape_has_stable_subcode(self) -> None:
+        client = pypi_module.PypiClient()
+        with self.assertRaises(pypi_module.PypiClientError) as ctx:
+            client._validate_project_payload(
+                {"urls": [{"url": "https://example.com/demo.whl"}]},
+                "/pypi/demo/json",
+            )
+
+        self.assertEqual(ctx.exception.subcode, "project_shape_invalid")

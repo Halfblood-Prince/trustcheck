@@ -8,10 +8,13 @@ If you believe an issue affects an older release, please report it anyway and in
 
 ## Reporting a Vulnerability
 
-Security concerns may be reported through a public GitHub issue or through the project's channel in the official Python Discord server:
+Report suspected vulnerabilities through GitHub's private vulnerability reporting form:
 
-- GitHub Issues: use the repository's issue tracker
-- Discord: [![Discord](https://img.shields.io/badge/Discord-Security%20Discussion-5865F2?logo=discord&logoColor=white)](https://discord.com/channels/267624335836053506/1468524576479641744/threads/1490011081958101194)
+- [Open a private security advisory](https://github.com/Halfblood-Prince/trustcheck/security/advisories/new)
+
+Do not open a public issue for a vulnerability before coordinated disclosure.
+Use [GitHub Issues](https://github.com/Halfblood-Prince/trustcheck/issues) only
+for non-sensitive bugs, documentation problems, and feature requests.
 
 When reporting, include:
 
