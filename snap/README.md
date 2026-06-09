@@ -5,6 +5,13 @@ The root `snap/snapcraft.yaml` builds the `trustcheck` CLI as a strict,
 interfaces so it can query package registries and scan dependency files
 without classic confinement.
 
+The same manifest supplies the Snap Store title, summary, Markdown product
+description, project links, and `snap/gui/icon.png` storefront icon. Keep
+those fields user-facing and update them whenever the supported scan surface
+changes. After publishing the verified snap, the release workflow runs
+`snapcraft upload-metadata --force` so the Store profile receives the new
+summary, description, and icon.
+
 Build and test locally on a supported Ubuntu host:
 
 ```bash

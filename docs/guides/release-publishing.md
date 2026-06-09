@@ -42,7 +42,7 @@ release workflow writes the release edit URL to its job summary.
 The older Marketplace listing named `TrustCheck Python Package Scanner`
 belongs to the separate `Halfblood-Prince/trustcheck-action` repository. It
 does not receive releases from this repository. The root action now uses the
-distinct Marketplace display name `TrustCheck Dependency Security Gate` so
+distinct Marketplace display name `TrustCheck Package Scanner` so
 this repository can be listed independently. Retire the old listing after
 the new one is active if only one public listing should remain.
 
@@ -76,7 +76,9 @@ Release QA validates the credential with `snapcraft whoami` and confirms
 access to the registered `trustcheck` name before any publisher starts. The
 Snap Store publisher then downloads the exact snap that passed QA and
 publishes it with `snapcore/action-publish` to `stable`; it never rebuilds
-during publication.
+during publication. After release, it runs `snapcraft upload-metadata --force`
+against that same verified snap so the Store page receives the committed
+summary, Markdown description, and icon.
 
 ## Creating a release
 

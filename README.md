@@ -16,7 +16,7 @@
 [![PyPI](https://img.shields.io/pypi/v/trustcheck.svg)](https://pypi.org/project/trustcheck/)
 [![Python 3.10 | 3.11 | 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/trustcheck?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/trustcheck)
-[![GitHub Action](https://img.shields.io/badge/GitHub%20Action-trustcheck-blue?logo=githubactions&logoColor=white)](https://github.com/Halfblood-Prince/trustcheck/blob/main/action.yml)
+[![TrustCheck Package Scanner](https://img.shields.io/badge/GitHub%20Action-TrustCheck%20Package%20Scanner-blue?logo=githubactions&logoColor=white)](https://github.com/Halfblood-Prince/trustcheck/blob/main/action.yml)
 
 `trustcheck` is a Python package and CLI for evaluating the trust posture of PyPI releases before they are installed, promoted, or approved.
 
@@ -56,9 +56,10 @@ Machine-readable reports currently use JSON schema `1.5.0`. Package and report
 schema versions are independent so documentation-only package releases do not
 force contract churn.
 
-## GitHub Action
+## TrustCheck Package Scanner
 
-Use the first-class action to scan a checked-in dependency file before merge:
+Use the TrustCheck Package Scanner action to scan a checked-in dependency file
+before merge:
 
 ```yaml
 steps:

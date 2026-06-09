@@ -22,6 +22,15 @@ class SnapPackagingTests(unittest.TestCase):
         snapcraft = (ROOT / "snap" / "snapcraft.yaml").read_text(encoding="utf-8")
 
         self.assertIn("name: trustcheck", snapcraft)
+        self.assertIn("title: TrustCheck Package Scanner", snapcraft)
+        self.assertIn(
+            "summary: Audit Python packages, provenance, dependencies, and vulnerabilities",
+            snapcraft,
+        )
+        self.assertIn("icon: snap/gui/icon.png", snapcraft)
+        self.assertIn("**What TrustCheck examines**", snapcraft)
+        self.assertIn("**Quick start**", snapcraft)
+        self.assertIn("trustcheck scan requirements.txt --policy strict", snapcraft)
         self.assertIn("base: core24", snapcraft)
         self.assertIn("grade: stable", snapcraft)
         self.assertIn("confinement: strict", snapcraft)
@@ -44,6 +53,16 @@ class SnapPackagingTests(unittest.TestCase):
 
         self.assertLess(fallback_override, version_override)
         self.assertLess(version_override, default_build)
+
+    def test_snap_store_icon_meets_snapcraft_requirements(self) -> None:
+        icon = ROOT / "snap" / "gui" / "icon.png"
+
+        self.assertTrue(icon.is_file())
+        contents = icon.read_bytes()
+        self.assertLess(icon.stat().st_size, 256 * 1024)
+        self.assertEqual(contents[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(int.from_bytes(contents[16:20], "big"), 256)
+        self.assertEqual(int.from_bytes(contents[20:24], "big"), 256)
 
     def test_snap_qa_precedes_all_parallel_publishers(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
@@ -103,6 +122,12 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertIn("uses: snapcore/action-publish@v1", publisher)
         self.assertIn("snap: ${{ steps.snap.outputs.path }}", publisher)
         self.assertIn("release: stable", publisher)
+        self.assertIn("sudo snap install snapcraft --classic", publisher)
+        self.assertIn('snapcraft upload-metadata "$SNAP_PATH" --force', publisher)
+        self.assertLess(
+            publisher.index("uses: snapcore/action-publish@v1"),
+            publisher.index('snapcraft upload-metadata "$SNAP_PATH" --force'),
+        )
 
     def test_store_and_marketplace_one_time_setup_is_documented(self) -> None:
         guide = (ROOT / "docs" / "guides" / "release-publishing.md").read_text(
@@ -114,6 +139,7 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertIn("Publish this Action to the GitHub Marketplace", guide)
         self.assertIn("Marketplace Developer Agreement", guide)
         self.assertIn("Halfblood-Prince/trustcheck-action", guide)
+        self.assertIn("TrustCheck Package Scanner", guide)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,11 @@ The project follows Semantic Versioning for the supported public API described i
 - Added `wheel_record_invalid`, `artifact_contains_native_code`, `metadata_mismatch`, and `suspicious_entry_point` risk flags.
 - Extended the machine-readable per-file report with artifact findings and advanced the schema to `1.5.0`.
 
+### Changed
+
+- Renamed the reusable GitHub Action and Marketplace display name to `TrustCheck Package Scanner`.
+- Expanded the Snap Store listing with richer feature copy, quick-start examples, project links, and a dedicated storefront icon.
+
 ## [1.9.0] - 2026-06-09
 
 Package release `1.9.0` emits machine-readable report schema `1.4.0`.

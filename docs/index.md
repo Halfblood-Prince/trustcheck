@@ -33,7 +33,7 @@ pip install trustcheck
 trustcheck inspect sampleproject --version 4.0.0
 ```
 
-Or add the reusable GitHub Action:
+Or add the reusable TrustCheck Package Scanner action:
 
 ```yaml
 steps:

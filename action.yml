@@ -1,4 +1,4 @@
-name: TrustCheck Dependency Security Gate
+name: TrustCheck Package Scanner
 description: Scan PyPI packages and Python dependency files with trust, provenance, and policy checks.
 author: Halfblood-Prince
 

@@ -1,7 +1,8 @@
-# CI integration
+# TrustCheck Package Scanner
 
-The repository includes a first-class composite GitHub Action. Callers do not
-need to install Python packages or invoke the CLI themselves.
+TrustCheck Package Scanner is the repository's first-class composite GitHub
+Action. Callers do not need to install Python packages or invoke the CLI
+themselves.
 
 ## Minimal dependency gate
 

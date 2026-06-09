@@ -482,6 +482,9 @@ jobs:
           fi
           echo "path=$snap_path" >> "$GITHUB_OUTPUT"
 
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+
       - name: Publish to Snap Store stable
         uses: snapcore/action-publish@v1
         env:
@@ -489,3 +492,9 @@ jobs:
         with:
           snap: ${{ steps.snap.outputs.path }}
           release: stable
+
+      - name: Update Snap Store listing metadata
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAP_PATH: ${{ steps.snap.outputs.path }}
+        run: snapcraft upload-metadata "$SNAP_PATH" --force

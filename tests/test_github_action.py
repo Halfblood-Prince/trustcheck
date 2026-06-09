@@ -200,6 +200,7 @@ class GitHubActionTests(unittest.TestCase):
         upload_position = action.index("- name: Upload trustcheck JSON report")
         enforcement_position = action.index("- name: Enforce trustcheck result")
 
+        self.assertTrue(action.startswith("name: TrustCheck Package Scanner\n"))
         self.assertLess(upload_position, enforcement_position)
         self.assertIn("actions/upload-artifact@v7", action)
         self.assertIn("continue-on-error: true", action)

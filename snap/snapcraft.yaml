@@ -1,22 +1,58 @@
 name: trustcheck
-title: TrustCheck
+title: TrustCheck Package Scanner
 version: "0+git"
-summary: Inspect PyPI package trust before installation
+summary: Audit Python packages, provenance, dependencies, and vulnerabilities
 description: |
-  TrustCheck evaluates PyPI package metadata, provenance, vulnerabilities,
-  dependency trust, and optional static wheel and sdist findings. It can scan
-  individual packages, requirements files, pyproject.toml, uv.lock,
-  poetry.lock, and pdm.lock without importing inspected package code.
+  **Know what you are installing before it reaches production.**
+
+  TrustCheck Package Scanner brings package trust, provenance, vulnerability,
+  dependency, and artifact checks into one focused command-line workflow. Use
+  it for an individual PyPI release or scan an entire Python dependency file
+  before installation, promotion, or approval.
+
+  **What TrustCheck examines**
+
+  - PyPI project and release metadata
+  - Published provenance and artifact digest attestations
+  - Trusted Publisher repository and workflow identity
+  - Repository mismatches and publisher drift
+  - Known vulnerabilities from PyPI and optional OSV data
+  - Direct and transitive runtime dependencies
+  - Wheels and source distributions through static inspection
+
+  **Built for real Python projects**
+
+  Scan package names, `requirements.txt`, `pyproject.toml`, `uv.lock`,
+  `poetry.lock`, and `pdm.lock`. Choose the balanced default policy, require
+  stricter verification, or supply a custom JSON policy for your own release
+  rules. Reports are available as readable terminal output or structured JSON
+  for automation.
+
+  **Quick start**
+
+      trustcheck inspect requests
+      trustcheck inspect sampleproject --version 4.0.0 --strict
+      trustcheck scan requirements.txt --policy strict
+
+  Artifact inspection reads archive contents without importing or executing
+  the package being examined. The snap uses strict confinement and requests
+  only network access plus access to dependency files you choose from your
+  home directory or removable media.
 
 base: core24
 grade: stable
 confinement: strict
 license: Proprietary
+icon: snap/gui/icon.png
 
-website: https://halfblood-prince.github.io/trustcheck/
-source-code: https://github.com/Halfblood-Prince/trustcheck
-issues: https://github.com/Halfblood-Prince/trustcheck/issues
-contact: https://github.com/Halfblood-Prince/trustcheck/issues
+website:
+  - https://halfblood-prince.github.io/trustcheck/
+source-code:
+  - https://github.com/Halfblood-Prince/trustcheck
+issues:
+  - https://github.com/Halfblood-Prince/trustcheck/issues
+contact:
+  - https://github.com/Halfblood-Prince/trustcheck/issues
 
 platforms:
   amd64:

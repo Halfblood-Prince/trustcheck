@@ -1,4 +1,4 @@
-name: Action integration
+name: TrustCheck Package Scanner integration
 
 on:
   pull_request:
@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Scan a package with the local action
+      - name: Scan a package with TrustCheck Package Scanner
         id: trustcheck
         uses: ./
         with:
