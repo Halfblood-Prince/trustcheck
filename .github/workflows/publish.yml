@@ -280,7 +280,7 @@ jobs:
       - name: Lint snap
         env:
           SNAP_PATH: ${{ steps.snapcraft.outputs.snap }}
-        run: snapcraft lint "$SNAP_PATH"
+        run: sudo -u "$USER" -E snapcraft lint "$SNAP_PATH"
 
       - name: Verify built snap metadata
         env:
