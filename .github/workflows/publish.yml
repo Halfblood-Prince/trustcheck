@@ -235,8 +235,101 @@ jobs:
           name: dist-${{ github.sha }}
           path: dist/*
 
-  publish:
-    needs: coverage-build
+  snap-qa:
+    needs:
+      - qa
+      - test-matrix
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set release version in Snap metadata
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          release_version="${TAG_NAME#v}"
+          sed -i -E "s/^version: .*/version: \"${release_version}\"/" snap/snapcraft.yaml
+          grep -F "version: \"${release_version}\"" snap/snapcraft.yaml
+
+      - name: Require Snap Store credentials
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -z "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
+            echo "Repository secret SNAPCRAFT_STORE_CREDENTIALS is required." >&2
+            exit 1
+          fi
+
+      - name: Build snap
+        id: snapcraft
+        uses: snapcore/action-build@v1
+
+      - name: Validate Snap Store access
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          snapcraft whoami
+          snapcraft status trustcheck
+
+      - name: Lint snap
+        env:
+          SNAP_PATH: ${{ steps.snapcraft.outputs.snap }}
+        run: snapcraft lint "$SNAP_PATH"
+
+      - name: Verify built snap metadata
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+          SNAP_PATH: ${{ steps.snapcraft.outputs.snap }}
+        run: |
+          release_version="${RELEASE_VERSION#v}"
+          metadata_file="$(mktemp)"
+          unsquashfs -cat "$SNAP_PATH" meta/snap.yaml > "$metadata_file"
+          grep -Fx "name: trustcheck" "$metadata_file"
+          grep -Eq "^version: ['\"]?${release_version}['\"]?$" "$metadata_file"
+          grep -Fx "confinement: strict" "$metadata_file"
+          grep -F "command: bin/trustcheck" "$metadata_file"
+
+      - name: Install and smoke test snap
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+          SNAP_PATH: ${{ steps.snapcraft.outputs.snap }}
+        run: |
+          release_version="${RELEASE_VERSION#v}"
+          sudo snap install --dangerous "$SNAP_PATH"
+          version_output="$(/snap/bin/trustcheck --version)"
+          echo "$version_output"
+          [[ "$version_output" == "trustcheck ${release_version} (report schema "* ]]
+          /snap/bin/trustcheck --help > /dev/null
+
+      - name: Generate snap checksum
+        env:
+          SNAP_PATH: ${{ steps.snapcraft.outputs.snap }}
+        run: sha256sum "$SNAP_PATH" > "${SNAP_PATH}.sha256"
+
+      - name: Attest snap build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ steps.snapcraft.outputs.snap }}
+
+      - name: Upload verified snap
+        uses: actions/upload-artifact@v7
+        with:
+          name: snap-${{ github.sha }}
+          path: |
+            ${{ steps.snapcraft.outputs.snap }}
+            ${{ steps.snapcraft.outputs.snap }}.sha256
+          if-no-files-found: error
+
+  publish-pypi:
+    needs:
+      - coverage-build
+      - snap-qa
     runs-on: ubuntu-latest
 
     steps:
@@ -258,46 +351,10 @@ jobs:
           packages-dir: dist/packages
           verbose: true
 
-  github-release:
+  publish-github-action:
     needs:
-      - publish
-      - verify-tag
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: dist-${{ github.sha }}
-          path: dist
-
-      - name: Create GitHub Release with generated notes
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ github.ref_name }}
-          target_commitish: ${{ github.sha }}
-          generate_release_notes: true
-          append_body: true
-          body: |
-            Published from immutable commit `${{ github.sha }}`.
-            Published via PyPI Trusted Publishing with artifact attestations enabled.
-
-            Release artifacts:
-            - `dist/*`
-            - `dist/SHA256SUMS.txt`
-            - `dist/trustcheck-sbom.json`
-
-            GitHub Action:
-            - Immutable: `uses: Halfblood-Prince/trustcheck@${{ github.ref_name }}`
-            - Compatible major: `uses: Halfblood-Prince/trustcheck@${{ needs['verify-tag'].outputs.action_major_tag }}`
-          files: |
-            dist/*
-            dist/SHA256SUMS.txt
-            dist/trustcheck-sbom.json
-
-  release-action:
-    needs:
-      - github-release
+      - coverage-build
+      - snap-qa
       - verify-tag
     runs-on: ubuntu-latest
 
@@ -311,10 +368,47 @@ jobs:
       - name: Validate action metadata
         run: test -f action.yml
 
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: dist-${{ github.sha }}
+          path: dist
+
+      - name: Download verified snap
+        uses: actions/download-artifact@v8
+        with:
+          name: snap-${{ github.sha }}
+          path: snap-artifact
+
+      - name: Create GitHub Release with generated notes
+        uses: softprops/action-gh-release@v3
+        with:
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          append_body: true
+          body: |
+            Published from immutable commit `${{ github.sha }}`.
+            The release workflow publishes PyPI, GitHub Action, and Snap Store
+            distributions in parallel after shared package and Snap QA.
+
+            Release artifacts:
+            - `dist/*`
+            - `dist/SHA256SUMS.txt`
+            - `dist/trustcheck-sbom.json`
+            - verified `trustcheck_*.snap` with checksum
+
+            GitHub Action:
+            - Immutable: `uses: Halfblood-Prince/trustcheck@${{ github.ref_name }}`
+            - Compatible major: `uses: Halfblood-Prince/trustcheck@${{ needs['verify-tag'].outputs.action_major_tag }}`
+          files: |
+            dist/*
+            snap-artifact/*
+
       - name: Publish moving major action tag
         env:
           ACTION_MAJOR_TAG: ${{ needs['verify-tag'].outputs.action_major_tag }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           get_endpoint="repos/${GITHUB_REPOSITORY}/git/ref/tags/${ACTION_MAJOR_TAG}"
@@ -352,3 +446,46 @@ jobs:
             echo "- Moving compatible ref: \`${ACTION_MAJOR_TAG}\`"
             echo "- Commit: \`${GITHUB_SHA}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record Marketplace association step
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          {
+            echo
+            echo "### Marketplace"
+            echo
+            echo "GitHub requires Marketplace association in the release web UI."
+            echo "[Edit ${RELEASE_TAG} and select **Publish this Action to the GitHub Marketplace**](https://github.com/${GITHUB_REPOSITORY}/releases/edit/${RELEASE_TAG})."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-snap:
+    needs:
+      - coverage-build
+      - snap-qa
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download verified snap
+        uses: actions/download-artifact@v8
+        with:
+          name: snap-${{ github.sha }}
+          path: snap-artifact
+
+      - name: Locate snap
+        id: snap
+        run: |
+          snap_path="$(find snap-artifact -maxdepth 1 -type f -name '*.snap' -print -quit)"
+          if [ -z "$snap_path" ]; then
+            echo "Verified snap artifact was not found." >&2
+            exit 1
+          fi
+          echo "path=$snap_path" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to Snap Store stable
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.snap.outputs.path }}
+          release: stable

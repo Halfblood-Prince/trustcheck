@@ -1,0 +1,45 @@
+name: trustcheck
+title: TrustCheck
+version: "0+git"
+summary: Inspect PyPI package trust before installation
+description: |
+  TrustCheck evaluates PyPI package metadata, provenance, vulnerabilities,
+  dependency trust, and optional static wheel and sdist findings. It can scan
+  individual packages, requirements files, pyproject.toml, uv.lock,
+  poetry.lock, and pdm.lock without importing inspected package code.
+
+base: core24
+grade: stable
+confinement: strict
+license: Proprietary
+
+website: https://halfblood-prince.github.io/trustcheck/
+source-code: https://github.com/Halfblood-Prince/trustcheck
+issues: https://github.com/Halfblood-Prince/trustcheck/issues
+contact: https://github.com/Halfblood-Prince/trustcheck/issues
+
+platforms:
+  amd64:
+
+apps:
+  trustcheck:
+    command: bin/trustcheck
+    plugs:
+      - home
+      - network
+      - removable-media
+
+parts:
+  trustcheck:
+    plugin: python
+    source: .
+    python-packages:
+      - pip
+      - setuptools
+      - wheel
+    stage-packages:
+      - ca-certificates
+    override-build: |
+      release_version="${CRAFT_PROJECT_VERSION:-${SNAPCRAFT_PROJECT_VERSION:-0+git}}"
+      export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK="$release_version"
+      craftctl default

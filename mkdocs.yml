@@ -24,6 +24,7 @@ nav:
   - Guides:
       - CI integration: guides/ci-integration.md
       - Development and release process: guides/development.md
+      - Release publishing: guides/release-publishing.md
   - Changelog: changelog.md
 
 theme:

@@ -29,6 +29,13 @@ trustcheck --version
 pip install --upgrade trustcheck
 ```
 
+## Snap Store status
+
+The repository includes a strict `core24` Snap package and release QA. Snap
+installation will be documented here after the `trustcheck` store name is
+registered and the first stable revision is published. Until then, PyPI is
+the supported public installation channel.
+
 ## Notes
 
 CI runs should stay aligned with the package's advertised Python support. When you need fully reproducible automation, pin both the Python version and the `trustcheck` version.

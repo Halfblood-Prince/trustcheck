@@ -220,11 +220,11 @@ class GitHubActionTests(unittest.TestCase):
         workflow = Path(".github/workflows/publish.yml").read_text(encoding="utf-8")
 
         self.assertIn('- "v*.*.*"', workflow)
-        self.assertNotIn('- "v*"\n', workflow)
+        self.assertNotIn("target_commitish:", workflow)
         self.assertIn("Validate stable release version", workflow)
         self.assertIn("action_major_tag:", workflow)
         self.assertIn("needs['verify-tag'].outputs.action_major_tag", workflow)
-        self.assertIn("release-action:", workflow)
+        self.assertIn("publish-github-action:", workflow)
         self.assertIn("Publish moving major action tag", workflow)
         self.assertIn('get_endpoint="repos/${GITHUB_REPOSITORY}/git/ref/tags/', workflow)
         self.assertIn("--method PATCH", workflow)
@@ -232,6 +232,8 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("--method POST", workflow)
         self.assertIn("Immutable: `uses: Halfblood-Prince/trustcheck@", workflow)
         self.assertIn("Compatible major: `uses: Halfblood-Prince/trustcheck@", workflow)
+        self.assertIn("secrets.RELEASE_TOKEN || github.token", workflow)
+        self.assertIn("Record Marketplace association step", workflow)
 
     def test_environment_rejects_invalid_boolean(self) -> None:
         with self.assertRaisesRegex(ValueError, "with-osv"):

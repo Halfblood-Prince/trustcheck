@@ -7,5 +7,11 @@ __pycache__/
 .tmp-build/
 build/
 dist/
+*.snap
+.snapcraft/
+parts/
+prime/
+stage/
+site/
 pytest-cache-files-*/
 src/trustcheck/_version.py

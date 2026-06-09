@@ -13,6 +13,12 @@ The project follows Semantic Versioning for the supported public API described i
 - Added action outputs for recommendation, policy status, and JSON report path, with automatic workflow artifact upload before CLI exit-code enforcement.
 - Added an action integration workflow covering a passing package and an intentional policy failure.
 - Expanded the release workflow to publish immutable GitHub Action releases and update the compatible moving major tag such as `v1`.
+- Added optional `RELEASE_TOKEN` authentication for repositories that reject release creation by `GITHUB_TOKEN`, and removed the unnecessary release `target_commitish` that can cause `403` errors for existing annotated tags.
+- Added strict `core24` Snapcraft packaging for the `trustcheck` CLI.
+- Added release-time Snap build, lint, install, metadata, and CLI version checks.
+- Added Snap Store publication using scoped `SNAPCRAFT_STORE_CREDENTIALS`.
+- Restructured release publication so PyPI, GitHub Action, and Snap Store jobs run in parallel after shared package and Snap QA.
+- Documented one-time PyPI Trusted Publisher, GitHub Marketplace, and Snap Store setup, including GitHub's manual Marketplace release association requirement.
 - Added opt-in static wheel and sdist inspection with `--inspect-artifacts`.
 - Added wheel `RECORD` hash and size validation, console-script listing, native extension detection, and unexpected top-level file reporting.
 - Added sdist checks for suspicious scripts, oversized or unusual files, and wheel/sdist metadata differences.
