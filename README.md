@@ -70,6 +70,8 @@ The action installs and runs `trustcheck`, uploads `trustcheck-report.json` as
 a workflow artifact, and fails the job with the CLI's exit code when policy
 evaluation fails. `target` also accepts a PyPI package name, `pyproject.toml`,
 `uv.lock`, `poetry.lock`, or `pdm.lock`.
+Each stable release publishes an immutable full version tag and updates the
+compatible major action tag used above.
 
 See the [CI integration guide](https://halfblood-prince.github.io/trustcheck/guides/ci-integration/)
 for custom policies, OSV, dependency traversal, outputs, and report naming.

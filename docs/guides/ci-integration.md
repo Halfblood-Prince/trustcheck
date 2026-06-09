@@ -25,6 +25,10 @@ The action always asks the CLI for JSON, writes the result to
 with the original CLI exit code. A policy failure therefore still uploads its
 report before failing the job.
 
+Stable releases publish an immutable action ref such as `v1.10.0` and update
+the compatible major ref `v1`. Use `@v1` for compatible updates or pin the full
+release tag when immutable workflow dependencies are required.
+
 ## Supported targets
 
 The `target` input accepts:

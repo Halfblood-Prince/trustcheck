@@ -41,6 +41,8 @@ The repository includes:
 - CodeQL analysis for the Python codebase
 - release publishing from immutable tagged commits
 - annotated tag enforcement for releases
+- stable `vMAJOR.MINOR.PATCH` release-tag validation
+- automatic publication of the moving GitHub Action major tag, such as `v1`
 - GitHub Release creation with generated notes
 - release artifact checksum generation
 - SBOM generation for release artifacts

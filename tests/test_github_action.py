@@ -216,6 +216,23 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("continue-on-error: true", workflow)
         self.assertIn("trustcheck-action-fail-policy.json", workflow)
 
+    def test_publish_workflow_releases_immutable_and_major_action_tags(self) -> None:
+        workflow = Path(".github/workflows/publish.yml").read_text(encoding="utf-8")
+
+        self.assertIn('- "v*.*.*"', workflow)
+        self.assertNotIn('- "v*"\n', workflow)
+        self.assertIn("Validate stable release version", workflow)
+        self.assertIn("action_major_tag:", workflow)
+        self.assertIn("needs['verify-tag'].outputs.action_major_tag", workflow)
+        self.assertIn("release-action:", workflow)
+        self.assertIn("Publish moving major action tag", workflow)
+        self.assertIn('get_endpoint="repos/${GITHUB_REPOSITORY}/git/ref/tags/', workflow)
+        self.assertIn("--method PATCH", workflow)
+        self.assertIn("-F force=true", workflow)
+        self.assertIn("--method POST", workflow)
+        self.assertIn("Immutable: `uses: Halfblood-Prince/trustcheck@", workflow)
+        self.assertIn("Compatible major: `uses: Halfblood-Prince/trustcheck@", workflow)
+
     def test_environment_rejects_invalid_boolean(self) -> None:
         with self.assertRaisesRegex(ValueError, "with-osv"):
             ActionSettings.from_environment(
