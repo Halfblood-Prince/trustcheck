@@ -34,6 +34,16 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertIn("- removable-media", snapcraft)
         self.assertIn("SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK", snapcraft)
         self.assertIn("CRAFT_PROJECT_VERSION", snapcraft)
+        self.assertIn("$CRAFT_PART_BUILD/pyproject.toml", snapcraft)
+
+        fallback_override = snapcraft.index("fallback_version =")
+        version_override = snapcraft.index(
+            "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK"
+        )
+        default_build = snapcraft.index("craftctl default")
+
+        self.assertLess(fallback_override, version_override)
+        self.assertLess(version_override, default_build)
 
     def test_snap_qa_precedes_all_parallel_publishers(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(

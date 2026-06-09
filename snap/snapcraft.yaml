@@ -41,5 +41,8 @@ parts:
       - ca-certificates
     override-build: |
       release_version="${CRAFT_PROJECT_VERSION:-${SNAPCRAFT_PROJECT_VERSION:-0+git}}"
+      sed -i -E \
+        "s/^fallback_version = .*/fallback_version = \"${release_version}\"/" \
+        "$CRAFT_PART_BUILD/pyproject.toml"
       export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK="$release_version"
       craftctl default
