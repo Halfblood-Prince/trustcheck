@@ -54,6 +54,13 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertLess(fallback_override, version_override)
         self.assertLess(version_override, default_build)
 
+    def test_snapcraft_project_declares_supported_cpu_platforms(self) -> None:
+        snapcraft = (ROOT / "snap" / "snapcraft.yaml").read_text(encoding="utf-8")
+
+        for platform in ("amd64", "arm64", "armhf", "i386"):
+            with self.subTest(platform=platform):
+                self.assertRegex(snapcraft, rf"(?m)^  {platform}:$")
+
     def test_snap_store_icon_meets_snapcraft_requirements(self) -> None:
         icon = ROOT / "snap" / "gui" / "icon.png"
 

@@ -17,6 +17,7 @@ The project follows Semantic Versioning for the supported public API described i
 - Added strict `core24` Snapcraft packaging for the `trustcheck` CLI.
 - Added release-time Snap build, lint, install, metadata, and CLI version checks.
 - Added Snap Store publication using scoped `SNAPCRAFT_STORE_CREDENTIALS`.
+- Expanded Snapcraft targets to `amd64`, `arm64`, `armhf`, and `i386`.
 - Restructured release publication so PyPI, GitHub Action, and Snap Store jobs run in parallel after shared package and Snap QA.
 - Documented one-time PyPI Trusted Publisher, GitHub Marketplace, and Snap Store setup, including GitHub's manual Marketplace release association requirement.
 - Added opt-in static wheel and sdist inspection with `--inspect-artifacts`.

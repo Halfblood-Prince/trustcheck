@@ -56,6 +56,9 @@ contact:
 
 platforms:
   amd64:
+  arm64:
+  armhf:
+  i386:
 
 apps:
   trustcheck:

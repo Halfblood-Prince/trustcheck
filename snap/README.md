@@ -5,6 +5,13 @@ The root `snap/snapcraft.yaml` builds the `trustcheck` CLI as a strict,
 interfaces so it can query package registries and scan dependency files
 without classic confinement.
 
+Supported Snap platforms are:
+
+- `amd64` for 64-bit x86
+- `arm64` for 64-bit Arm
+- `armhf` for 32-bit Arm
+- `i386` for 32-bit x86
+
 The same manifest supplies the Snap Store title, summary, Markdown product
 description, project links, and `snap/gui/icon.png` storefront icon. Keep
 those fields user-facing and update them whenever the supported scan surface
@@ -21,6 +28,11 @@ snapcraft lint ./trustcheck_*.snap
 sudo snap install --dangerous ./trustcheck_*.snap
 /snap/bin/trustcheck --version
 ```
+
+By default, Snapcraft selects the platform matching the build host. On a
+compatible builder, select a declared target explicitly with
+`snapcraft --platform=<platform>`, for example
+`snapcraft --platform=arm64`.
 
 The committed development version is `0+git`. The release workflow replaces
 it with the annotated release tag before building. The same value is passed
