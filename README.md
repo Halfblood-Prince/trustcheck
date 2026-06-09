@@ -53,6 +53,27 @@ Machine-readable reports currently use JSON schema `1.5.0`. Package and report
 schema versions are independent so documentation-only package releases do not
 force contract churn.
 
+## GitHub Action
+
+Use the first-class action to scan a checked-in dependency file before merge:
+
+```yaml
+steps:
+  - uses: actions/checkout@v6
+  - uses: Halfblood-Prince/trustcheck@v1
+    with:
+      target: requirements.txt
+      policy: strict
+```
+
+The action installs and runs `trustcheck`, uploads `trustcheck-report.json` as
+a workflow artifact, and fails the job with the CLI's exit code when policy
+evaluation fails. `target` also accepts a PyPI package name, `pyproject.toml`,
+`uv.lock`, `poetry.lock`, or `pdm.lock`.
+
+See the [CI integration guide](https://halfblood-prince.github.io/trustcheck/guides/ci-integration/)
+for custom policies, OSV, dependency traversal, outputs, and report naming.
+
 ## Quick start
 
 Inspect the latest release:

@@ -1,82 +1,142 @@
 # CI integration
 
-A common pattern is to run `trustcheck` before promotion, deployment, or dependency approval.
+The repository includes a first-class composite GitHub Action. Callers do not
+need to install Python packages or invoke the CLI themselves.
 
-## Basic GitHub Actions example
+## Minimal dependency gate
 
-```yaml
-name: Verify dependency trust
-
-on:
-  workflow_dispatch:
-  pull_request:
-
-jobs:
-  trustcheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install trustcheck
-        run: python -m pip install --upgrade pip trustcheck
-
-      - name: Inspect release
-        run: |
-          trustcheck inspect sampleproject \
-            --version 4.0.0 \
-            --expected-repo https://github.com/pypa/sampleproject \
-            --strict
-```
-
-## Inspect the dependency set in CI
-
-Use `--with-deps` when you want the gate to consider direct runtime dependencies in addition to the top-level package release.
+This complete step is under ten lines and fails the job when strict policy
+evaluation fails:
 
 ```yaml
-- name: Inspect release and direct dependencies
-  run: |
-    trustcheck inspect sampleproject \
-      --version 4.0.0 \
-      --with-deps \
-      --strict
+steps:
+  - uses: actions/checkout@v6
+  - uses: Halfblood-Prince/trustcheck@v1
+    with:
+      target: requirements.txt
+      policy: strict
 ```
 
-Use `--with-transitive-deps` when you want to walk the full dependency tree recursively:
+`actions/checkout` is required for file targets. It is optional when `target`
+is only a PyPI package name.
+
+The action always asks the CLI for JSON, writes the result to
+`trustcheck-report.json`, uploads it as a workflow artifact, and then exits
+with the original CLI exit code. A policy failure therefore still uploads its
+report before failing the job.
+
+## Supported targets
+
+The `target` input accepts:
+
+- a PyPI package name, such as `sampleproject`
+- `requirements.txt` or another requirements-style `.txt` file
+- `pyproject.toml`
+- `uv.lock`
+- `poetry.lock`
+- `pdm.lock`
+
+File targets use `trustcheck scan`. Package names use `trustcheck inspect`.
+
+## Package repository verification
+
+`expected-repo` applies to package targets:
 
 ```yaml
-- name: Inspect release and full dependency tree
-  run: |
-    trustcheck inspect sampleproject \
-      --version 4.0.0 \
-      --with-transitive-deps \
-      --strict
+- uses: Halfblood-Prince/trustcheck@v1
+  with:
+    target: sampleproject
+    expected-repo: https://github.com/pypa/sampleproject
+    policy: strict
 ```
 
-This is useful when a package itself verifies cleanly, but one of its dependencies is missing provenance, has known vulnerabilities, or otherwise escalates the overall review outcome.
+A single expected repository is not meaningful for a multi-package dependency
+file, so the action rejects `expected-repo` when `target` is a file.
 
-## Capture JSON output
+## Dependencies, OSV, and artifacts
 
 ```yaml
-- name: Write JSON report
-  run: |
-    trustcheck inspect sampleproject \
-      --version 4.0.0 \
-      --with-deps \
-      --format json > trustcheck-report.json
+- uses: Halfblood-Prince/trustcheck@v1
+  with:
+    target: uv.lock
+    policy: strict
+    with-osv: "true"
+    with-transitive-deps: "true"
+    inspect-artifacts: "true"
 ```
 
-## Use a cache directory
+`with-deps` and `with-transitive-deps` are mutually exclusive, matching the
+CLI. Artifact inspection remains static and never imports inspected packages.
+
+## Custom policy file
+
+Pass a repository-relative JSON policy path:
 
 ```yaml
-- name: Inspect with cache
-  run: |
-    trustcheck inspect sampleproject \
-      --version 4.0.0 \
-      --cache-dir .trustcheck-cache
+- uses: Halfblood-Prince/trustcheck@v1
+  with:
+    target: pyproject.toml
+    policy: .github/trustcheck-policy.json
 ```
 
-## When to use strict mode
+The file uses the same schema as CLI `--policy-file`.
 
-Use `--strict` when you want a blocking control for release promotion. Use the default mode when you want advisory output first and plan to tune policy after observing real package behavior.
+## Inputs
+
+| Input | Default | Description |
+| --- | --- | --- |
+| `target` | required | Package name or supported dependency file. |
+| `policy` | `default` | `default`, `strict`, or a custom JSON policy path. |
+| `expected-repo` | empty | Expected repository for a package target. |
+| `with-osv` | `false` | Query OSV and GitHub advisory data. |
+| `with-deps` | `false` | Inspect direct runtime dependencies. |
+| `with-transitive-deps` | `false` | Inspect the complete runtime dependency tree. |
+| `inspect-artifacts` | `false` | Statically inspect wheel and sdist contents. |
+| `format` | `text` | Action log format: `text` or `json`. SARIF is reserved for a later release. |
+| `report-path` | `trustcheck-report.json` | JSON report location in the caller workspace. |
+| `artifact-name` | `trustcheck-report` | Uploaded workflow artifact name. |
+| `python-version` | `3.12` | Python version used by the action. |
+
+## Outputs
+
+| Output | Description |
+| --- | --- |
+| `recommendation` | Overall recommendation such as `verified`, `review-required`, or `high-risk`. |
+| `policy-passed` | `true` only when policy passes and the scan has no operational failures. |
+| `report-path` | Absolute path to the generated JSON report. |
+
+Use outputs in later workflow steps:
+
+```yaml
+- uses: Halfblood-Prince/trustcheck@v1
+  id: trustcheck
+  with:
+    target: requirements.txt
+
+- run: echo "Recommendation is $RECOMMENDATION"
+  env:
+    RECOMMENDATION: ${{ steps.trustcheck.outputs.recommendation }}
+```
+
+## Custom report names
+
+Use distinct artifact names when invoking the action more than once in a job:
+
+```yaml
+- uses: Halfblood-Prince/trustcheck@v1
+  with:
+    target: poetry.lock
+    report-path: reports/trustcheck-poetry.json
+    artifact-name: trustcheck-poetry
+```
+
+## CLI fallback
+
+The CLI remains available for other CI systems:
+
+```bash
+trustcheck scan requirements.txt --policy strict --format json
+```
+
+GitHub users should prefer the action because it handles installation, report
+upload, outputs, and exit-code propagation consistently.

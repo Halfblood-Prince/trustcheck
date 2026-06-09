@@ -33,6 +33,19 @@ pip install trustcheck
 trustcheck inspect sampleproject --version 4.0.0
 ```
 
+Or add the reusable GitHub Action:
+
+```yaml
+steps:
+  - uses: actions/checkout@v6
+  - uses: Halfblood-Prince/trustcheck@v1
+    with:
+      target: requirements.txt
+      policy: strict
+```
+
+The action uploads a JSON report and propagates the CLI policy exit code.
+
 ## Common use cases
 
 Check the latest release:

@@ -8,6 +8,10 @@ The project follows Semantic Versioning for the supported public API described i
 
 ### Added
 
+- Added a first-class reusable GitHub Action through `action.yml`.
+- Added action inputs for package and dependency-file targets, built-in or custom policy, expected repository checks, OSV, dependency traversal, artifact inspection, and output format.
+- Added action outputs for recommendation, policy status, and JSON report path, with automatic workflow artifact upload before CLI exit-code enforcement.
+- Added an action integration workflow covering a passing package and an intentional policy failure.
 - Added opt-in static wheel and sdist inspection with `--inspect-artifacts`.
 - Added wheel `RECORD` hash and size validation, console-script listing, native extension detection, and unexpected top-level file reporting.
 - Added sdist checks for suspicious scripts, oversized or unusual files, and wheel/sdist metadata differences.

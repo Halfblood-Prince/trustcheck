@@ -1,0 +1,57 @@
+name: Action integration
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safe-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Scan a package with the local action
+        id: trustcheck
+        uses: ./
+        with:
+          target: sampleproject
+          policy: default
+          artifact-name: trustcheck-safe-package
+
+      - name: Verify successful action outputs
+        env:
+          POLICY_PASSED: ${{ steps.trustcheck.outputs['policy-passed'] }}
+          REPORT_PATH: ${{ steps.trustcheck.outputs['report-path'] }}
+        run: |
+          test "$POLICY_PASSED" = "true"
+          test -s "$REPORT_PATH"
+
+  blocked-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Scan a package with an intentionally failing policy
+        id: trustcheck
+        continue-on-error: true
+        uses: ./
+        with:
+          target: setuptools
+          policy: .github/trustcheck-action-fail-policy.json
+          artifact-name: trustcheck-blocked-package
+
+      - name: Verify policy failure propagated
+        env:
+          ACTION_OUTCOME: ${{ steps.trustcheck.outcome }}
+          POLICY_PASSED: ${{ steps.trustcheck.outputs['policy-passed'] }}
+          REPORT_PATH: ${{ steps.trustcheck.outputs['report-path'] }}
+        run: |
+          test "$ACTION_OUTCOME" = "failure"
+          test "$POLICY_PASSED" = "false"
+          test -s "$REPORT_PATH"

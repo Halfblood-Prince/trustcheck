@@ -1,0 +1,111 @@
+name: TrustCheck Python Package Scanner
+description: Scan PyPI packages and Python dependency files with trustcheck policy enforcement.
+author: Halfblood-Prince
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  target:
+    description: Package name or path to requirements.txt, pyproject.toml, uv.lock, poetry.lock, or pdm.lock.
+    required: true
+  policy:
+    description: Built-in policy (default or strict) or path to a custom JSON policy file.
+    required: false
+    default: default
+  expected-repo:
+    description: Expected source repository URL for a package target.
+    required: false
+    default: ""
+  with-osv:
+    description: Query OSV for additional vulnerability records.
+    required: false
+    default: "false"
+  with-deps:
+    description: Inspect direct runtime dependencies.
+    required: false
+    default: "false"
+  with-transitive-deps:
+    description: Inspect direct and transitive runtime dependencies.
+    required: false
+    default: "false"
+  inspect-artifacts:
+    description: Statically inspect downloaded wheel and sdist contents.
+    required: false
+    default: "false"
+  format:
+    description: Log output format (text or json; SARIF is reserved for a later release).
+    required: false
+    default: text
+  report-path:
+    description: JSON report path, relative to the caller workspace unless absolute.
+    required: false
+    default: trustcheck-report.json
+  artifact-name:
+    description: Name of the uploaded workflow artifact.
+    required: false
+    default: trustcheck-report
+  python-version:
+    description: Python version used to run trustcheck.
+    required: false
+    default: "3.12"
+
+outputs:
+  recommendation:
+    description: Overall trustcheck recommendation.
+    value: ${{ steps.trustcheck.outputs.recommendation }}
+  policy-passed:
+    description: Whether the configured trustcheck policy passed.
+    value: ${{ steps.trustcheck.outputs['policy-passed'] }}
+  report-path:
+    description: Absolute path to the generated JSON report.
+    value: ${{ steps.trustcheck.outputs['report-path'] }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install trustcheck
+      shell: bash
+      run: python -m pip install --disable-pip-version-check "$GITHUB_ACTION_PATH"
+
+    - name: Run trustcheck
+      id: trustcheck
+      continue-on-error: true
+      shell: bash
+      env:
+        TRUSTCHECK_ACTION_TARGET: ${{ inputs.target }}
+        TRUSTCHECK_ACTION_POLICY: ${{ inputs.policy }}
+        TRUSTCHECK_ACTION_EXPECTED_REPO: ${{ inputs['expected-repo'] }}
+        TRUSTCHECK_ACTION_WITH_OSV: ${{ inputs['with-osv'] }}
+        TRUSTCHECK_ACTION_WITH_DEPS: ${{ inputs['with-deps'] }}
+        TRUSTCHECK_ACTION_WITH_TRANSITIVE_DEPS: ${{ inputs['with-transitive-deps'] }}
+        TRUSTCHECK_ACTION_INSPECT_ARTIFACTS: ${{ inputs['inspect-artifacts'] }}
+        TRUSTCHECK_ACTION_FORMAT: ${{ inputs.format }}
+        TRUSTCHECK_ACTION_REPORT_PATH: ${{ inputs['report-path'] }}
+      run: python -m trustcheck.github_action
+
+    - name: Upload trustcheck JSON report
+      if: always() && steps.trustcheck.outputs['report-path'] != ''
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs['artifact-name'] }}
+        path: ${{ steps.trustcheck.outputs['report-path'] }}
+        if-no-files-found: error
+
+    - name: Enforce trustcheck result
+      if: always()
+      shell: bash
+      env:
+        TRUSTCHECK_EXIT_CODE: ${{ steps.trustcheck.outputs['exit-code'] }}
+      run: |
+        if [[ ! "$TRUSTCHECK_EXIT_CODE" =~ ^[0-9]+$ ]]; then
+          echo "::error::trustcheck did not produce an exit code"
+          exit 3
+        fi
+        exit "$TRUSTCHECK_EXIT_CODE"

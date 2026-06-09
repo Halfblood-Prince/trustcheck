@@ -1,5 +1,19 @@
 # Quickstart
 
+## Run as a GitHub Action
+
+```yaml
+steps:
+  - uses: actions/checkout@v6
+  - uses: Halfblood-Prince/trustcheck@v1
+    with:
+      target: requirements.txt
+      policy: strict
+```
+
+This produces and uploads `trustcheck-report.json`. The action fails when the
+configured policy fails.
+
 ## Inspect the latest release
 
 ```bash
