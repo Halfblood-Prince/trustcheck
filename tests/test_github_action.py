@@ -72,7 +72,7 @@ class GitHubActionTests(unittest.TestCase):
                     workspace=workspace,
                 )
 
-                self.assertEqual(arguments[:2], ["scan", str(target)])
+                self.assertEqual(arguments[:2], ["scan", str(target.resolve())])
                 self.assertIn("--policy", arguments)
                 self.assertIn("strict", arguments)
 
