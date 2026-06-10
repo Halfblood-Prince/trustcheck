@@ -31,6 +31,10 @@ The project follows Semantic Versioning for the supported public API described i
 - Renamed the reusable GitHub Action and Marketplace display name to `TrustCheck Package Scanner`.
 - Expanded the Snap Store listing with richer feature copy, quick-start examples, project links, and a dedicated storefront icon.
 - Updated Snap release smoke tests and installation documentation to verify the public `trustcheck` command and diagnose shells where `/snap/bin` is missing from `PATH`.
+- Redirected Sigstore XDG data, cache, and configuration into writable Snap-owned storage, fixing errno 13 provenance verification failures under strict confinement.
+- Expanded Snap release QA to perform live verified-provenance inspection from the installed snap and reject unexpected verification errors.
+- Added a push-triggered binary security workflow that builds standalone Windows and Linux executables with PyInstaller.
+- Added Microsoft Defender CLI and ClamAV scanning, retained scan reports, clean binary artifacts, checksums, and independent README check-run badges.
 
 ## [1.9.0] - 2026-06-09
 

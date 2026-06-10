@@ -310,6 +310,25 @@ jobs:
           export PATH="/snap/bin:$PATH"
           test "$(command -v trustcheck)" = "/snap/bin/trustcheck"
           trustcheck --help > /dev/null
+          trustcheck inspect sampleproject \
+            --version 4.0.0 \
+            --format json \
+            > snap-verification-report.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(
+              Path("snap-verification-report.json").read_text(encoding="utf-8")
+          )
+          report = payload["report"]
+          assert report["coverage"]["verified_files"] > 0, report["coverage"]
+          failures = report["diagnostics"]["artifact_failures"]
+          assert not any(
+              item["subcode"] == "unexpected_verification_error"
+              for item in failures
+          ), failures
+          PY
 
       - name: Generate snap checksum
         env:

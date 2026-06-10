@@ -5,6 +5,11 @@ The root `snap/snapcraft.yaml` builds the `trustcheck` CLI as a strict,
 interfaces so it can query package registries and scan dependency files
 without classic confinement.
 
+Sigstore stores TUF trust metadata through the XDG data and cache paths. The
+snap redirects those paths into `$SNAP_USER_COMMON` so provenance verification
+can update trust material under strict confinement and retain it across snap
+revisions.
+
 Supported Snap platforms are:
 
 - `amd64` for 64-bit x86

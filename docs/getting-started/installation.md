@@ -65,6 +65,24 @@ snap info trustcheck
 snap connections trustcheck
 ```
 
+### Snap provenance verification reports permission denied
+
+Versions before the XDG confinement fix could let Sigstore resolve its TUF
+trust metadata to hidden directories in the real home directory. The Snap
+`home` interface does not grant general access to hidden home paths, so
+verification could report `[unexpected_verification_error] [Errno 13]
+Permission denied`.
+
+Refresh to the latest stable revision:
+
+```bash
+sudo snap refresh trustcheck
+trustcheck inspect sampleproject --version 4.0.0
+```
+
+Current revisions keep Sigstore data, cache, and configuration under the
+snap-owned `$SNAP_USER_COMMON` directory.
+
 ## Notes
 
 CI runs should stay aligned with the package's advertised Python support. When you need fully reproducible automation, pin both the Python version and the `trustcheck` version.

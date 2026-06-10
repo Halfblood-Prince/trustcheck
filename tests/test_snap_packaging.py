@@ -36,6 +36,9 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertIn("confinement: strict", snapcraft)
         self.assertIn("license: Proprietary", snapcraft)
         self.assertIn("command: bin/trustcheck", snapcraft)
+        self.assertIn("XDG_CACHE_HOME: $SNAP_USER_COMMON/cache", snapcraft)
+        self.assertIn("XDG_CONFIG_HOME: $SNAP_USER_COMMON/config", snapcraft)
+        self.assertIn("XDG_DATA_HOME: $SNAP_USER_COMMON/data", snapcraft)
         self.assertIn("plugin: python", snapcraft)
         self.assertIn("source: .", snapcraft)
         self.assertIn("- home", snapcraft)
@@ -108,6 +111,8 @@ class SnapPackagingTests(unittest.TestCase):
             "snap run trustcheck --version",
             'export PATH="/snap/bin:$PATH"',
             "trustcheck --help",
+            "trustcheck inspect sampleproject",
+            "unexpected_verification_error",
             "actions/attest-build-provenance@v4",
             "Upload verified snap",
         )
@@ -118,6 +123,8 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertIn("snapcraft status trustcheck", qa)
         self.assertIn("secrets.SNAPCRAFT_STORE_CREDENTIALS", qa)
         self.assertIn('test "$(command -v trustcheck)" = "/snap/bin/trustcheck"', qa)
+        self.assertIn("--version 4.0.0", qa)
+        self.assertIn('report["coverage"]["verified_files"] > 0', qa)
         self.assertIn("snap-${{ github.sha }}", qa)
         self.assertIn("${{ steps.snapcraft.outputs.snap }}.sha256", qa)
 

@@ -10,6 +10,8 @@
 [![pip-audit](https://img.shields.io/github/actions/workflow/status/Halfblood-Prince/trustcheck/ci.yml?branch=main&label=pip-audit)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
 [![Bandit](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/bandit.yml/badge.svg?branch=main)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/bandit.yml)
 [![Semgrep](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/semgrep.yml/badge.svg?branch=main)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/semgrep.yml)
+[![Windows Defender](https://img.shields.io/github/check-runs/Halfblood-Prince/trustcheck/main?nameFilter=Windows%20Defender&label=Windows%20Defender&logo=windows11)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/binary-security.yml)
+[![ClamAV](https://img.shields.io/github/check-runs/Halfblood-Prince/trustcheck/main?nameFilter=ClamAV&label=ClamAV&logo=linux)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/binary-security.yml)
 [![Ruff](https://img.shields.io/github/actions/workflow/status/Halfblood-Prince/trustcheck/ci.yml?branch=main&label=ruff)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
 [![mypy](https://img.shields.io/github/actions/workflow/status/Halfblood-Prince/trustcheck/ci.yml?branch=main&label=mypy)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
 [![Coverage](docs/assets/images/coverage.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
@@ -36,6 +38,12 @@ For a selected package version, `trustcheck` can:
 - scan requirements files, project TOML, and `uv.lock`, `poetry.lock`, or `pdm.lock`
 - optionally inspect wheel and sdist contents without importing or executing package code
 - emit concise text output or structured JSON for automation
+
+Every push also builds standalone Windows and Linux executables. The Windows
+artifact is scanned with Microsoft Defender's `MpCmdRun.exe`; the Linux
+artifact is scanned with ClamAV. Clean binaries, checksums, and scanner reports
+are retained as workflow artifacts by
+[Binary Security](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/binary-security.yml).
 
 ## Installation
 

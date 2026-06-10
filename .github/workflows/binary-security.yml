@@ -1,0 +1,218 @@
+name: Binary Security
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-defender:
+    name: Windows Defender
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install package and binary tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . "pyinstaller>=6.20,<7"
+
+      - name: Build Windows executable
+        run: python scripts/build_standalone.py
+
+      - name: Smoke test Windows executable
+        shell: pwsh
+        run: |
+          $binary = (Resolve-Path "dist\standalone\trustcheck.exe").Path
+          & $binary --version
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          & $binary --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Locate Microsoft Defender CLI
+        id: defender
+        shell: pwsh
+        run: |
+          $platformRoot = Join-Path $env:ProgramData "Microsoft\Windows Defender\Platform"
+          $candidates = @()
+          if (Test-Path $platformRoot) {
+            $candidates += Get-ChildItem -Path $platformRoot -Directory |
+              Sort-Object Name -Descending |
+              ForEach-Object { Join-Path $_.FullName "MpCmdRun.exe" }
+          }
+          $candidates += Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
+          $defender = $candidates |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
+          if (-not $defender) {
+            throw "MpCmdRun.exe was not found on the Windows runner."
+          }
+          "path=$defender" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Using Microsoft Defender CLI: $defender"
+
+      - name: Verify Microsoft Defender is enabled
+        shell: pwsh
+        run: |
+          Set-Service -Name wuauserv -StartupType Manual
+          Start-Service -Name wuauserv
+          $status = Get-MpComputerStatus
+          $status |
+            Select-Object AMServiceEnabled, AntivirusEnabled, AntivirusSignatureVersion |
+            Format-List |
+            Out-File defender-status.txt
+          Get-Content defender-status.txt
+          if (-not $status.AMServiceEnabled -or -not $status.AntivirusEnabled) {
+            throw "Microsoft Defender Antivirus is not enabled on the runner."
+          }
+
+      - name: Update Microsoft Defender signatures
+        shell: pwsh
+        env:
+          DEFENDER_CLI: ${{ steps.defender.outputs.path }}
+        run: |
+          "Microsoft Defender signature update" |
+            Set-Content -Path defender-signature-update.txt
+          $output = & $env:DEFENDER_CLI -SignatureUpdate 2>&1
+          $exitCode = $LASTEXITCODE
+          $output | Tee-Object -FilePath defender-signature-update.txt -Append
+          if ($exitCode -ne 0) {
+            Write-Error "Microsoft Defender signature update failed with exit code $exitCode."
+            exit $exitCode
+          }
+
+      - name: Scan executable with Microsoft Defender
+        shell: pwsh
+        env:
+          DEFENDER_CLI: ${{ steps.defender.outputs.path }}
+        run: |
+          $binary = (Resolve-Path "dist\standalone\trustcheck.exe").Path
+          "Microsoft Defender custom scan: $binary" |
+            Set-Content -Path defender-scan.txt
+          $output = & $env:DEFENDER_CLI `
+            -Scan `
+            -ScanType 3 `
+            -File $binary `
+            -DisableRemediation 2>&1
+          $exitCode = $LASTEXITCODE
+          $output | Tee-Object -FilePath defender-scan.txt -Append
+          if ($exitCode -ne 0) {
+            Write-Error "Microsoft Defender scan failed with exit code $exitCode."
+            exit $exitCode
+          }
+
+      - name: Generate Windows executable checksum
+        shell: pwsh
+        run: |
+          Get-FileHash "dist\standalone\trustcheck.exe" -Algorithm SHA256 |
+            Format-List |
+            Out-File "dist\standalone\trustcheck.exe.sha256.txt"
+
+      - name: Upload Microsoft Defender reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-defender-reports-${{ github.sha }}
+          path: defender-*.txt
+          if-no-files-found: warn
+
+      - name: Upload clean Windows executable
+        uses: actions/upload-artifact@v7
+        with:
+          name: trustcheck-windows-${{ github.sha }}
+          path: |
+            dist/standalone/trustcheck.exe
+            dist/standalone/trustcheck.exe.sha256.txt
+          if-no-files-found: error
+
+  linux-clamav:
+    name: ClamAV
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install package and binary tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . "pyinstaller>=6.20,<7"
+
+      - name: Build Linux executable
+        run: python scripts/build_standalone.py
+
+      - name: Smoke test Linux executable
+        run: |
+          test -x dist/standalone/trustcheck
+          dist/standalone/trustcheck --version
+          dist/standalone/trustcheck --help > /dev/null
+
+      - name: Install ClamAV
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clamav
+
+      - name: Update ClamAV signatures
+        run: |
+          sudo systemctl stop clamav-freshclam.service 2>/dev/null || true
+          sudo freshclam --verbose | tee clamav-signature-update.txt
+
+      - name: Scan executable with ClamAV
+        run: |
+          set +e
+          clamscan \
+            --official-db-only=yes \
+            --verbose \
+            --log=clamav-scan.txt \
+            dist/standalone/trustcheck
+          scan_status=$?
+          set -e
+          cat clamav-scan.txt
+          if [ "$scan_status" -ne 0 ]; then
+            echo "ClamAV scan failed with exit code ${scan_status}." >&2
+            exit "$scan_status"
+          fi
+
+      - name: Generate Linux executable checksum
+        run: sha256sum dist/standalone/trustcheck > dist/standalone/trustcheck.sha256
+
+      - name: Upload ClamAV reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-clamav-reports-${{ github.sha }}
+          path: clamav-*.txt
+          if-no-files-found: warn
+
+      - name: Upload clean Linux executable
+        uses: actions/upload-artifact@v7
+        with:
+          name: trustcheck-linux-${{ github.sha }}
+          path: |
+            dist/standalone/trustcheck
+            dist/standalone/trustcheck.sha256
+          if-no-files-found: error

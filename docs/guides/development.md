@@ -38,6 +38,7 @@ The repository includes:
 
 - CI for lint, type checks, cross-platform test matrices, coverage enforcement, and build smoke tests
 - dependency auditing and secret scanning in CI
+- standalone Windows and Linux binary builds on every push, scanned with Microsoft Defender and ClamAV
 - CodeQL analysis for the Python codebase
 - release publishing from immutable tagged commits
 - annotated tag enforcement for releases

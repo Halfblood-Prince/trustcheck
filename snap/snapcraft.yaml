@@ -62,6 +62,10 @@ platforms:
 apps:
   trustcheck:
     command: bin/trustcheck
+    environment:
+      XDG_CACHE_HOME: $SNAP_USER_COMMON/cache
+      XDG_CONFIG_HOME: $SNAP_USER_COMMON/config
+      XDG_DATA_HOME: $SNAP_USER_COMMON/data
     plugs:
       - home
       - network
