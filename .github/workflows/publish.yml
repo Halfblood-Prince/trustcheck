@@ -349,6 +349,84 @@ jobs:
             ${{ steps.snapcraft.outputs.snap }}.sha256
           if-no-files-found: error
 
+  build-windows-executable:
+    needs:
+      - coverage-build
+      - snap-qa
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . "pyinstaller>=6.20,<7"
+
+      - name: Build standalone Windows executable
+        run: python scripts/build_standalone.py
+
+      - name: Smoke test and name release executable
+        id: executable
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $binary = (Resolve-Path "dist\standalone\trustcheck.exe").Path
+          $releaseVersion = $env:TAG_NAME.TrimStart("v")
+          $versionOutput = & $binary --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "The standalone executable failed its version smoke test."
+          }
+          if (-not $versionOutput.StartsWith("trustcheck $releaseVersion ")) {
+            throw "Executable version '$versionOutput' does not match $releaseVersion."
+          }
+          & $binary --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "The standalone executable failed its help smoke test."
+          }
+
+          New-Item -ItemType Directory -Force "release\windows" | Out-Null
+          $releaseName = "trustcheck-$releaseVersion-windows-x86_64.exe"
+          $releasePath = Join-Path "release\windows" $releaseName
+          Move-Item -LiteralPath $binary -Destination $releasePath
+          "path=$releasePath" >> $env:GITHUB_OUTPUT
+          "name=$releaseName" >> $env:GITHUB_OUTPUT
+
+      - name: Generate executable checksum
+        shell: pwsh
+        env:
+          EXECUTABLE_NAME: ${{ steps.executable.outputs.name }}
+          EXECUTABLE_PATH: ${{ steps.executable.outputs.path }}
+        run: |
+          $hash = (Get-FileHash $env:EXECUTABLE_PATH -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $env:EXECUTABLE_NAME" |
+            Set-Content -Encoding ascii "$env:EXECUTABLE_PATH.sha256"
+
+      - name: Attest executable build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ steps.executable.outputs.path }}
+
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-executable-${{ github.sha }}
+          path: |
+            ${{ steps.executable.outputs.path }}
+            ${{ steps.executable.outputs.path }}.sha256
+          if-no-files-found: error
+
   publish-pypi:
     needs:
       - coverage-build
@@ -420,6 +498,7 @@ jobs:
             - `dist/SHA256SUMS.txt`
             - `dist/trustcheck-sbom.json`
             - verified `trustcheck_*.snap` with checksum
+            - standalone `trustcheck-*-windows-x86_64.exe` with checksum
 
             GitHub Action:
             - Immutable: `uses: Halfblood-Prince/trustcheck@${{ github.ref_name }}`
@@ -481,6 +560,29 @@ jobs:
             echo "GitHub requires Marketplace association in the release web UI."
             echo "[Edit ${RELEASE_TAG} and select **Publish this Action to the GitHub Marketplace**](https://github.com/${GITHUB_REPOSITORY}/releases/edit/${RELEASE_TAG})."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  attach-windows-executable:
+    needs:
+      - build-windows-executable
+      - publish-github-action
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Windows executable
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-executable-${{ github.sha }}
+          path: windows-executable
+
+      - name: Attach executable to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            windows-executable/* \
+            --clobber \
+            --repo "$GITHUB_REPOSITORY"
 
   publish-snap:
     needs:

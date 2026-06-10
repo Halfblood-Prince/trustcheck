@@ -34,6 +34,7 @@ The project follows Semantic Versioning for the supported public API described i
 - Redirected Sigstore XDG data, cache, and configuration into writable Snap-owned storage, fixing errno 13 provenance verification failures under strict confinement.
 - Expanded Snap release QA to perform live verified-provenance inspection from the installed snap and reject unexpected verification errors.
 - Added a push-triggered binary security workflow that builds standalone Windows and Linux executables with PyInstaller.
+- Added a parallel release job that builds, smoke-tests, checksums, and attests a versioned Windows executable, then attaches it to the GitHub release.
 - Added Microsoft Defender CLI and ClamAV scanning, retained scan reports, clean binary artifacts, checksums, and independent README check-run badges.
 
 ## [1.9.0] - 2026-06-09

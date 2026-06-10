@@ -3,12 +3,13 @@
 An annotated `vMAJOR.MINOR.PATCH` tag starts `.github/workflows/publish.yml`.
 The workflow verifies the tag, runs the package test matrix, builds the Python
 distribution, and builds, lints, installs, and smoke-tests the snap. Only
-after those checks pass do three independent publication jobs start in
-parallel:
+after those checks pass do three independent publication jobs and the Windows
+executable build start in parallel:
 
 - PyPI Trusted Publishing
 - GitHub Release and GitHub Action version tags
 - Snap Store publication to `stable`
+- PyInstaller build of the standalone Windows executable
 
 ## PyPI setup
 
@@ -25,7 +26,9 @@ only the wheel and sdist produced by the verified build job.
 
 The workflow creates the immutable release tag, updates the compatible major
 tag such as `v1`, and creates a GitHub Release containing the Python
-distributions, SBOM, checksums, and snap.
+distributions, SBOM, checksums, snap, and versioned Windows executable. The
+executable is smoke-tested, checksummed, and attested before a follow-up job
+attaches it to the generated GitHub Release.
 
 GitHub does not expose Marketplace publication as a workflow or Releases API
 field. For the first Marketplace publication, and for any release GitHub
@@ -91,4 +94,4 @@ git push origin v1.10.0
 ```
 
 Lightweight tags and prerelease-shaped tags are rejected. If any QA job
-fails, none of the three publication jobs starts.
+fails, neither the publication jobs nor the Windows executable build starts.
