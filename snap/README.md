@@ -10,7 +10,9 @@ Supported Snap platforms are:
 - `amd64` for 64-bit x86
 - `arm64` for 64-bit Arm
 - `armhf` for 32-bit Arm
-- `i386` for 32-bit x86
+
+`i386` is not declared because the `core24` base does not support that build
+architecture.
 
 The same manifest supplies the Snap Store title, summary, Markdown product
 description, project links, and `snap/gui/icon.png` storefront icon. Keep
