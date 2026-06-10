@@ -29,12 +29,41 @@ trustcheck --version
 pip install --upgrade trustcheck
 ```
 
-## Snap Store status
+## Install from the Snap Store
 
-The repository includes a strict `core24` Snap package and release QA. Snap
-installation will be documented here after the `trustcheck` store name is
-registered and the first stable revision is published. Until then, PyPI is
-the supported public installation channel.
+```bash
+sudo snap install trustcheck
+trustcheck --version
+```
+
+Do not include punctuation after the package name in the install command.
+
+### Snap command not found
+
+Snap exposes the application as `/snap/bin/trustcheck`. Some distributions or
+shell sessions do not add `/snap/bin` to `PATH` until the user logs out and
+back in.
+
+Confirm the installed application works independently of `PATH`:
+
+```bash
+snap run trustcheck --version
+snap run trustcheck inspect requests
+```
+
+If those commands work, start a new login session or update the current one:
+
+```bash
+export PATH="/snap/bin:$PATH"
+trustcheck --version
+```
+
+If `snap run trustcheck --version` fails too, inspect the installed revision:
+
+```bash
+snap info trustcheck
+snap connections trustcheck
+```
 
 ## Notes
 

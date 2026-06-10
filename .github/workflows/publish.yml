@@ -302,10 +302,14 @@ jobs:
         run: |
           release_version="${RELEASE_VERSION#v}"
           sudo snap install --dangerous "$SNAP_PATH"
-          version_output="$(/snap/bin/trustcheck --version)"
-          echo "$version_output"
-          [[ "$version_output" == "trustcheck ${release_version} (report schema "* ]]
-          /snap/bin/trustcheck --help > /dev/null
+          snap_run_output="$(snap run trustcheck --version)"
+          wrapper_output="$(/snap/bin/trustcheck --version)"
+          echo "$snap_run_output"
+          [[ "$snap_run_output" == "trustcheck ${release_version} (report schema "* ]]
+          [[ "$wrapper_output" == "$snap_run_output" ]]
+          export PATH="/snap/bin:$PATH"
+          test "$(command -v trustcheck)" = "/snap/bin/trustcheck"
+          trustcheck --help > /dev/null
 
       - name: Generate snap checksum
         env:

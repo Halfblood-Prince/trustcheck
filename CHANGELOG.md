@@ -30,6 +30,7 @@ The project follows Semantic Versioning for the supported public API described i
 
 - Renamed the reusable GitHub Action and Marketplace display name to `TrustCheck Package Scanner`.
 - Expanded the Snap Store listing with richer feature copy, quick-start examples, project links, and a dedicated storefront icon.
+- Updated Snap release smoke tests and installation documentation to verify the public `trustcheck` command and diagnose shells where `/snap/bin` is missing from `PATH`.
 
 ## [1.9.0] - 2026-06-09
 

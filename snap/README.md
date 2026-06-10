@@ -26,8 +26,14 @@ sudo snap install snapcraft --classic
 snapcraft
 snapcraft lint ./trustcheck_*.snap
 sudo snap install --dangerous ./trustcheck_*.snap
-/snap/bin/trustcheck --version
+snap run trustcheck --version
+export PATH="/snap/bin:$PATH"
+trustcheck --version
 ```
+
+If `snap run trustcheck` works but `trustcheck` does not, the snap is healthy
+and `/snap/bin` is missing from the current shell's `PATH`. Start a new login
+session or add that directory as shown above.
 
 By default, Snapcraft selects the platform matching the build host. On a
 compatible builder, select a declared target explicitly with

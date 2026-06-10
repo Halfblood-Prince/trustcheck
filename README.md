@@ -39,18 +39,37 @@ For a selected package version, `trustcheck` can:
 
 ## Installation
 
+Install from PyPI:
+
 ```bash
 pip install trustcheck
 ```
 
-Requirements:
+Or install the Snap Store package:
+
+```bash
+sudo snap install trustcheck
+```
+
+The Snap command is `trustcheck`. If the shell reports `command not found`
+immediately after installation, start a new login session or add Snap's
+command directory to the current shell:
+
+```bash
+export PATH="/snap/bin:$PATH"
+trustcheck --version
+```
+
+You can always bypass shell PATH lookup with:
+
+```bash
+snap run trustcheck inspect requests
+```
+
+PyPI installation requirements:
 
 - Python `>=3.10`
 - Network access to PyPI
-
-The release pipeline also builds and validates a strict Snap package. Snap
-Store installation becomes available after the `trustcheck` name is
-registered and the first stable store release is published.
 
 Machine-readable reports currently use JSON schema `1.5.0`. Package and report
 schema versions are independent so documentation-only package releases do not

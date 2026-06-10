@@ -104,8 +104,9 @@ class SnapPackagingTests(unittest.TestCase):
             'snapcraft lint "$SNAP_PATH"',
             "Verify built snap metadata",
             'sudo snap install --dangerous "$SNAP_PATH"',
-            "/snap/bin/trustcheck --version",
-            "/snap/bin/trustcheck --help",
+            "snap run trustcheck --version",
+            'export PATH="/snap/bin:$PATH"',
+            "trustcheck --help",
             "actions/attest-build-provenance@v4",
             "Upload verified snap",
         )
@@ -115,6 +116,7 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertIn("snapcraft whoami", qa)
         self.assertIn("snapcraft status trustcheck", qa)
         self.assertIn("secrets.SNAPCRAFT_STORE_CREDENTIALS", qa)
+        self.assertIn('test "$(command -v trustcheck)" = "/snap/bin/trustcheck"', qa)
         self.assertIn("snap-${{ github.sha }}", qa)
         self.assertIn("${{ steps.snapcraft.outputs.snap }}.sha256", qa)
 
@@ -147,6 +149,17 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertIn("Marketplace Developer Agreement", guide)
         self.assertIn("Halfblood-Prince/trustcheck-action", guide)
         self.assertIn("TrustCheck Package Scanner", guide)
+
+    def test_snap_installation_and_path_troubleshooting_is_documented(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        installation = (
+            ROOT / "docs" / "getting-started" / "installation.md"
+        ).read_text(encoding="utf-8")
+
+        for documentation in (readme, installation):
+            self.assertIn("sudo snap install trustcheck", documentation)
+            self.assertIn("snap run trustcheck", documentation)
+            self.assertIn('export PATH="/snap/bin:$PATH"', documentation)
 
 
 if __name__ == "__main__":
