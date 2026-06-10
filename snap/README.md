@@ -50,6 +50,3 @@ compatible builder, select a declared target explicitly with
 The committed development version is `0+git`. The release workflow replaces
 it with the annotated release tag before building. The same value is passed
 to `setuptools-scm`, so the Snap metadata and `trustcheck --version` agree.
-
-Store registration, scoped credentials, and release behavior are documented
-in [the release publishing guide](../docs/guides/release-publishing.md).

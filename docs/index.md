@@ -140,4 +140,3 @@ and report schema are versioned independently.
 - Use [Compatibility](reference/compatibility.md) for API and JSON stability guarantees
 - Use [Trust model and repository matching](reference/trust-model.md) for verification semantics and diagnostics
 - Use [CI integration](guides/ci-integration.md) to wire `trustcheck` into GitHub Actions
-- Use [Development and release process](guides/development.md) for local workflows and release controls

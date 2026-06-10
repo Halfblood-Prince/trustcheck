@@ -223,7 +223,7 @@ Full documentation: https://halfblood-prince.github.io/trustcheck/
 - Integrations: [JSON contract](https://halfblood-prince.github.io/trustcheck/reference/json-contract/), [Python API](https://halfblood-prince.github.io/trustcheck/reference/python-api/), and [Compatibility](https://halfblood-prince.github.io/trustcheck/reference/compatibility/)
 - Trust model: [Verification model and repository matching](https://halfblood-prince.github.io/trustcheck/reference/trust-model/)
 - Automation: [CI integration](https://halfblood-prince.github.io/trustcheck/guides/ci-integration/)
-- Project details: [Development and release process](https://halfblood-prince.github.io/trustcheck/guides/development/), [release publishing](https://halfblood-prince.github.io/trustcheck/guides/release-publishing/), and [Changelog](https://halfblood-prince.github.io/trustcheck/changelog/)
+- Project details: [Changelog](https://halfblood-prince.github.io/trustcheck/changelog/)
 
 Project support:
 

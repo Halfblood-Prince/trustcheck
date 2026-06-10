@@ -23,8 +23,6 @@ nav:
       - Recommendation model: reference/recommendations.md
   - Guides:
       - TrustCheck Package Scanner: guides/ci-integration.md
-      - Development and release process: guides/development.md
-      - Release publishing: guides/release-publishing.md
   - Changelog: changelog.md
 
 theme:

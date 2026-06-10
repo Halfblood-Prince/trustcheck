@@ -146,18 +146,6 @@ class SnapPackagingTests(unittest.TestCase):
             publisher.index('snapcraft upload-metadata "$SNAP_PATH" --force'),
         )
 
-    def test_store_and_marketplace_one_time_setup_is_documented(self) -> None:
-        guide = (ROOT / "docs" / "guides" / "release-publishing.md").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("snapcraft register trustcheck", guide)
-        self.assertIn("SNAPCRAFT_STORE_CREDENTIALS", guide)
-        self.assertIn("Publish this Action to the GitHub Marketplace", guide)
-        self.assertIn("Marketplace Developer Agreement", guide)
-        self.assertIn("Halfblood-Prince/trustcheck-action", guide)
-        self.assertIn("TrustCheck Package Scanner", guide)
-
     def test_snap_installation_and_path_troubleshooting_is_documented(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         installation = (

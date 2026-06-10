@@ -60,15 +60,5 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
         self.assertIn("windows-executable/*", attach)
         self.assertIn("--clobber", attach)
 
-    def test_release_guide_documents_executable_publication(self) -> None:
-        guide = (
-            ROOT / "docs" / "guides" / "release-publishing.md"
-        ).read_text(encoding="utf-8")
-
-        self.assertIn("Windows\nexecutable build start in parallel", guide)
-        self.assertIn("PyInstaller build", guide)
-        self.assertIn("versioned Windows executable", guide)
-
-
 if __name__ == "__main__":
     unittest.main()
