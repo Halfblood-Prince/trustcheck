@@ -86,8 +86,8 @@ jobs:
       - name: Run type checks
         run: mypy src
 
-  test-matrix:
-    needs: verify-tag
+  matrix-build:
+    needs: qa
     strategy:
       fail-fast: false
       matrix:
@@ -159,9 +159,7 @@ jobs:
           python -m build --sdist --wheel --outdir "$archive_root/dist" "$archive_root"
 
   coverage-build:
-    needs:
-      - qa
-      - test-matrix
+    needs: matrix-build
     runs-on: ubuntu-latest
 
     steps:
@@ -235,10 +233,54 @@ jobs:
           name: dist-${{ github.sha }}
           path: dist/*
 
+  clam-av:
+    needs: coverage-build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: dist-${{ github.sha }}
+          path: dist
+
+      - name: Install ClamAV
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clamav
+
+      - name: Update ClamAV signatures
+        run: |
+          sudo systemctl stop clamav-freshclam.service 2>/dev/null || true
+          sudo freshclam --verbose | tee clamav-signature-update.txt
+
+      - name: Scan release build with ClamAV
+        run: |
+          set +e
+          clamscan \
+            --recursive \
+            --official-db-only=yes \
+            --verbose \
+            --log=clamav-scan.txt \
+            dist
+          scan_status=$?
+          set -e
+          cat clamav-scan.txt
+          if [ "$scan_status" -ne 0 ]; then
+            echo "ClamAV scan failed with exit code ${scan_status}." >&2
+            exit "$scan_status"
+          fi
+
+      - name: Upload ClamAV reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-clamav-reports-${{ github.sha }}
+          path: clamav-*.txt
+          if-no-files-found: warn
+
   snap-qa:
-    needs:
-      - qa
-      - test-matrix
+    needs: clam-av
     runs-on: ubuntu-latest
 
     steps:
@@ -350,9 +392,7 @@ jobs:
           if-no-files-found: error
 
   build-windows-executable:
-    needs:
-      - coverage-build
-      - snap-qa
+    needs: coverage-build
     runs-on: windows-latest
 
     steps:
@@ -418,19 +458,137 @@ jobs:
         with:
           subject-path: ${{ steps.executable.outputs.path }}
 
-      - name: Upload Windows executable
+      - name: Upload executable for Microsoft Defender scan
         uses: actions/upload-artifact@v7
         with:
-          name: windows-executable-${{ github.sha }}
+          name: windows-executable-unscanned-${{ github.sha }}
           path: |
             ${{ steps.executable.outputs.path }}
             ${{ steps.executable.outputs.path }}.sha256
           if-no-files-found: error
 
+  windows-defender-scan:
+    needs: build-windows-executable
+    runs-on: windows-latest
+
+    steps:
+      - name: Download built Windows executable
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-executable-unscanned-${{ github.sha }}
+          path: windows-executable
+
+      - name: Locate built Windows executable
+        id: executable
+        shell: pwsh
+        run: |
+          $binary = Get-ChildItem -Path "windows-executable" -Filter "*.exe" -File |
+            Select-Object -First 1
+          if (-not $binary) {
+            throw "The Windows executable from the build job was not found."
+          }
+          "path=$($binary.FullName)" >> $env:GITHUB_OUTPUT
+          Write-Host "Scanning executable produced by the build job: $($binary.FullName)"
+
+      - name: Locate Microsoft Defender CLI
+        id: defender
+        shell: pwsh
+        run: |
+          $platformRoot = Join-Path $env:ProgramData "Microsoft\Windows Defender\Platform"
+          $candidates = @()
+          if (Test-Path $platformRoot) {
+            $candidates += Get-ChildItem -Path $platformRoot -Directory |
+              Sort-Object Name -Descending |
+              ForEach-Object { Join-Path $_.FullName "MpCmdRun.exe" }
+          }
+          $candidates += Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
+          $defender = $candidates |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
+          if (-not $defender) {
+            throw "MpCmdRun.exe was not found on the Windows runner."
+          }
+          "path=$defender" >> $env:GITHUB_OUTPUT
+          Write-Host "Using Microsoft Defender CLI: $defender"
+
+      - name: Verify Microsoft Defender is enabled
+        shell: pwsh
+        run: |
+          Set-Service -Name wuauserv -StartupType Manual
+          Start-Service -Name wuauserv
+          $status = Get-MpComputerStatus
+          $status |
+            Select-Object AMServiceEnabled, AntivirusEnabled, AntivirusSignatureVersion |
+            Format-List |
+            Out-File defender-status.txt
+          Get-Content defender-status.txt
+          if (-not $status.AMServiceEnabled -or -not $status.AntivirusEnabled) {
+            throw "Microsoft Defender Antivirus is not enabled on the runner."
+          }
+
+      - name: Update Microsoft Defender signatures
+        shell: pwsh
+        env:
+          DEFENDER_CLI: ${{ steps.defender.outputs.path }}
+        run: |
+          "Microsoft Defender signature update" |
+            Set-Content -Path defender-signature-update.txt
+          $output = & $env:DEFENDER_CLI -SignatureUpdate 2>&1
+          $exitCode = $LASTEXITCODE
+          $output | Tee-Object -FilePath defender-signature-update.txt -Append
+          if ($exitCode -ne 0) {
+            Write-Error "Microsoft Defender signature update failed with exit code $exitCode."
+            exit $exitCode
+          }
+
+      - name: Scan built executable with Microsoft Defender
+        shell: pwsh
+        env:
+          DEFENDER_CLI: ${{ steps.defender.outputs.path }}
+          EXECUTABLE_PATH: ${{ steps.executable.outputs.path }}
+        run: |
+          "Microsoft Defender custom scan: $env:EXECUTABLE_PATH" |
+            Set-Content -Path defender-scan.txt
+          $output = & $env:DEFENDER_CLI `
+            -Scan `
+            -ScanType 3 `
+            -File $env:EXECUTABLE_PATH `
+            -DisableRemediation 2>&1
+          $exitCode = $LASTEXITCODE
+          $output | Tee-Object -FilePath defender-scan.txt -Append
+          if ($exitCode -ne 0) {
+            Write-Error "Microsoft Defender scan failed with exit code $exitCode."
+            exit $exitCode
+          }
+
+      - name: Regenerate executable checksum after scan
+        shell: pwsh
+        env:
+          EXECUTABLE_PATH: ${{ steps.executable.outputs.path }}
+        run: |
+          $name = Split-Path -Leaf $env:EXECUTABLE_PATH
+          $hash = (Get-FileHash $env:EXECUTABLE_PATH -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name" | Set-Content -Encoding ascii "$env:EXECUTABLE_PATH.sha256"
+
+      - name: Upload Microsoft Defender reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-defender-reports-${{ github.sha }}
+          path: defender-*.txt
+          if-no-files-found: warn
+
+      - name: Upload scanned Windows executable
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-executable-${{ github.sha }}
+          path: |
+            windows-executable/*.exe
+            windows-executable/*.exe.sha256
+          if-no-files-found: error
+
   publish-pypi:
-    needs:
-      - coverage-build
-      - snap-qa
+    needs: coverage-build
     runs-on: ubuntu-latest
 
     steps:
@@ -455,7 +613,6 @@ jobs:
   publish-github-action:
     needs:
       - coverage-build
-      - snap-qa
       - verify-tag
     runs-on: ubuntu-latest
 
@@ -475,12 +632,6 @@ jobs:
           name: dist-${{ github.sha }}
           path: dist
 
-      - name: Download verified snap
-        uses: actions/download-artifact@v8
-        with:
-          name: snap-${{ github.sha }}
-          path: snap-artifact
-
       - name: Create GitHub Release with generated notes
         uses: softprops/action-gh-release@v3
         with:
@@ -491,13 +642,12 @@ jobs:
           body: |
             Published from immutable commit `${{ github.sha }}`.
             The release workflow publishes PyPI, GitHub Action, and Snap Store
-            distributions in parallel after shared package and Snap QA.
+            distributions after shared tag verification, QA, matrix, and coverage builds.
 
             Release artifacts:
             - `dist/*`
             - `dist/SHA256SUMS.txt`
             - `dist/trustcheck-sbom.json`
-            - verified `trustcheck_*.snap` with checksum
             - standalone `trustcheck-*-windows-x86_64.exe` with checksum
 
             GitHub Action:
@@ -505,7 +655,6 @@ jobs:
             - Compatible major: `uses: Halfblood-Prince/trustcheck@${{ needs['verify-tag'].outputs.action_major_tag }}`
           files: |
             dist/*
-            snap-artifact/*
 
       - name: Publish moving major action tag
         env:
@@ -561,9 +710,9 @@ jobs:
             echo "[Edit ${RELEASE_TAG} and select **Publish this Action to the GitHub Marketplace**](https://github.com/${GITHUB_REPOSITORY}/releases/edit/${RELEASE_TAG})."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  attach-windows-executable:
+  upload-windows-executable:
     needs:
-      - build-windows-executable
+      - windows-defender-scan
       - publish-github-action
     runs-on: ubuntu-latest
 
@@ -585,9 +734,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY"
 
   publish-snap:
-    needs:
-      - coverage-build
-      - snap-qa
+    needs: snap-qa
     runs-on: ubuntu-latest
 
     steps:

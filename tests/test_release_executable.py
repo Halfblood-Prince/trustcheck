@@ -18,17 +18,26 @@ def _job_block(workflow: str, job_name: str) -> str:
 
 
 class ReleaseExecutableWorkflowTests(unittest.TestCase):
-    def test_windows_executable_build_runs_beside_publish_jobs(self) -> None:
+    def test_release_starts_with_the_required_serial_stages(self) -> None:
+        workflow = (
+            ROOT / ".github" / "workflows" / "publish.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("needs: verify-tag", _job_block(workflow, "qa"))
+        self.assertIn("needs: qa", _job_block(workflow, "matrix-build"))
+        self.assertIn("needs: matrix-build", _job_block(workflow, "coverage-build"))
+
+    def test_windows_executable_build_fans_out_after_coverage(self) -> None:
         workflow = (
             ROOT / ".github" / "workflows" / "publish.yml"
         ).read_text(encoding="utf-8")
         build = _job_block(workflow, "build-windows-executable")
 
-        self.assertIn("- coverage-build", build)
-        self.assertIn("- snap-qa", build)
-        self.assertNotIn("- publish-pypi", build)
-        self.assertNotIn("- publish-github-action", build)
-        self.assertNotIn("- publish-snap", build)
+        self.assertIn("needs: coverage-build", build)
+        self.assertNotIn("needs: snap-qa", build)
+        self.assertNotIn("needs: publish-pypi", build)
+        self.assertNotIn("needs: publish-github-action", build)
+        self.assertNotIn("needs: publish-snap", build)
         self.assertIn("runs-on: windows-latest", build)
 
     def test_release_build_creates_and_verifies_versioned_executable(self) -> None:
@@ -45,20 +54,32 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
         self.assertIn("trustcheck-$releaseVersion-windows-x86_64.exe", build)
         self.assertIn("Get-FileHash", build)
         self.assertIn("actions/attest-build-provenance@v4", build)
-        self.assertIn("windows-executable-${{ github.sha }}", build)
+        self.assertIn("windows-executable-unscanned-${{ github.sha }}", build)
 
-    def test_verified_executable_is_attached_after_release_creation(self) -> None:
+    def test_defender_scans_the_executable_from_the_build_job(self) -> None:
         workflow = (
             ROOT / ".github" / "workflows" / "publish.yml"
         ).read_text(encoding="utf-8")
-        attach = _job_block(workflow, "attach-windows-executable")
+        defender = _job_block(workflow, "windows-defender-scan")
 
-        self.assertIn("- build-windows-executable", attach)
-        self.assertIn("- publish-github-action", attach)
-        self.assertIn("actions/download-artifact@v8", attach)
-        self.assertIn('gh release upload "$RELEASE_TAG"', attach)
-        self.assertIn("windows-executable/*", attach)
-        self.assertIn("--clobber", attach)
+        self.assertIn("needs: build-windows-executable", defender)
+        self.assertIn("windows-executable-unscanned-${{ github.sha }}", defender)
+        self.assertIn("Scan built executable with Microsoft Defender", defender)
+        self.assertIn("-File $env:EXECUTABLE_PATH", defender)
+        self.assertIn("windows-executable-${{ github.sha }}", defender)
+
+    def test_scanned_executable_is_attached_after_release_creation(self) -> None:
+        workflow = (
+            ROOT / ".github" / "workflows" / "publish.yml"
+        ).read_text(encoding="utf-8")
+        upload = _job_block(workflow, "upload-windows-executable")
+
+        self.assertIn("- windows-defender-scan", upload)
+        self.assertIn("- publish-github-action", upload)
+        self.assertIn("actions/download-artifact@v8", upload)
+        self.assertIn('gh release upload "$RELEASE_TAG"', upload)
+        self.assertIn("windows-executable/*", upload)
+        self.assertIn("--clobber", upload)
 
 if __name__ == "__main__":
     unittest.main()

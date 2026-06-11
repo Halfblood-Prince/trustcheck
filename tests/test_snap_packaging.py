@@ -75,24 +75,33 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertEqual(int.from_bytes(contents[16:20], "big"), 256)
         self.assertEqual(int.from_bytes(contents[20:24], "big"), 256)
 
-    def test_snap_qa_precedes_all_parallel_publishers(self) -> None:
+    def test_release_jobs_fan_out_after_coverage(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
             encoding="utf-8"
         )
-        publishers = (
-            "publish-pypi",
-            "publish-github-action",
-            "publish-snap",
+        self.assertIn("needs: coverage-build", _job_block(workflow, "clam-av"))
+        self.assertIn("needs: coverage-build", _job_block(workflow, "publish-pypi"))
+        self.assertIn(
+            "- coverage-build",
+            _job_block(workflow, "publish-github-action"),
+        )
+        self.assertIn(
+            "needs: coverage-build",
+            _job_block(workflow, "build-windows-executable"),
         )
 
-        for job_name in publishers:
-            with self.subTest(job=job_name):
-                block = _job_block(workflow, job_name)
-                self.assertIn("- coverage-build", block)
-                self.assertIn("- snap-qa", block)
-                for other_publisher in publishers:
-                    if other_publisher != job_name:
-                        self.assertNotIn(f"- {other_publisher}", block)
+    def test_clam_av_precedes_snap_qa_and_snap_publish(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
+            encoding="utf-8"
+        )
+        clam_av = _job_block(workflow, "clam-av")
+        qa = _job_block(workflow, "snap-qa")
+        publisher = _job_block(workflow, "publish-snap")
+
+        self.assertIn("name: dist-${{ github.sha }}", clam_av)
+        self.assertIn("clamscan", clam_av)
+        self.assertIn("needs: clam-av", qa)
+        self.assertIn("needs: snap-qa", publisher)
 
     def test_snap_qa_builds_lints_installs_and_attests_exact_artifact(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
