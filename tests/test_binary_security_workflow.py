@@ -8,9 +8,9 @@ ROOT = Path(__file__).parents[1]
 
 class BinarySecurityWorkflowTests(unittest.TestCase):
     def test_workflow_builds_and_scans_both_platform_binaries_on_push(self) -> None:
-        workflow = (
-            ROOT / ".github" / "workflows" / "binary-security.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "binary-security.yml").read_text(
+            encoding="utf-8"
+        )
 
         self.assertRegex(workflow, r"(?m)^  push:$")
         self.assertIn("name: Windows Defender", workflow)
@@ -22,9 +22,9 @@ class BinarySecurityWorkflowTests(unittest.TestCase):
         self.assertIn("dist/standalone/trustcheck", workflow)
 
     def test_windows_job_uses_defender_cli_for_exact_executable(self) -> None:
-        workflow = (
-            ROOT / ".github" / "workflows" / "binary-security.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "binary-security.yml").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("MpCmdRun.exe", workflow)
         self.assertIn("Start-Service -Name wuauserv", workflow)
@@ -38,9 +38,9 @@ class BinarySecurityWorkflowTests(unittest.TestCase):
         self.assertIn("Upload clean Windows executable", workflow)
 
     def test_linux_job_updates_signatures_and_scans_exact_executable(self) -> None:
-        workflow = (
-            ROOT / ".github" / "workflows" / "binary-security.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "binary-security.yml").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("sudo apt-get install --yes clamav", workflow)
         self.assertIn("sudo freshclam --verbose", workflow)
@@ -51,25 +51,34 @@ class BinarySecurityWorkflowTests(unittest.TestCase):
         self.assertIn("Upload clean Linux executable", workflow)
 
     def test_standalone_builder_includes_verification_resources(self) -> None:
-        builder = (ROOT / "scripts" / "build_standalone.py").read_text(
-            encoding="utf-8"
-        )
-        entrypoint = (ROOT / "scripts" / "trustcheck_binary.py").read_text(
-            encoding="utf-8"
-        )
+        builder = (ROOT / "scripts" / "build_standalone.py").read_text(encoding="utf-8")
+        entrypoint = (ROOT / "scripts" / "trustcheck_binary.py").read_text(encoding="utf-8")
 
         self.assertIn('"--onefile"', builder)
         self.assertIn('"--noupx"', builder)
         self.assertIn('"--recursive-copy-metadata=trustcheck"', builder)
         for package in (
-            "pypi_attestations",
             "rekor_types",
             "sigstore",
             "sigstore_models",
             "tuf",
         ):
             self.assertIn(f'"{package}"', builder)
+        self.assertNotIn("pypi_attestations", builder)
         self.assertIn("from trustcheck.cli import main", entrypoint)
+
+    def test_runtime_depends_on_sigstore_without_pypi_attestations(self) -> None:
+        project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+        self.assertIn('"sigstore>=4.3,<5"', project)
+        self.assertIn('"tuf>=7,<8"', project)
+        self.assertIn('"urllib3>=2.7,<3"', project)
+        self.assertIn('"idna>=3.15,<4"', project)
+        self.assertIn('"PyJWT>=2.13,<3"', project)
+        self.assertNotIn("pypi-attestations", project)
+        self.assertFalse((ROOT / "src" / "trustcheck" / "parse_toml.py").exists())
+        self.assertFalse((ROOT / "src" / "trustcheck" / "parse_toml").exists())
+        self.assertFalse((ROOT / "src" / "parse_toml").exists())
 
     def test_readme_has_independent_check_run_badges(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

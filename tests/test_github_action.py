@@ -10,9 +10,13 @@ from unittest.mock import patch
 
 from trustcheck.cli import EXIT_DATA_ERROR, EXIT_OK, EXIT_POLICY_FAILURE, EXIT_USAGE
 from trustcheck.github_action import (
+    ActionInputError,
+    ActionResult,
     ActionSettings,
+    _resolve_workspace_path,
     build_cli_arguments,
     main,
+    render_result,
     run_action,
     summarize_payload,
 )
@@ -95,6 +99,48 @@ class GitHubActionTests(unittest.TestCase):
         self.assertFalse(result.policy_passed)
         self.assertIn("mutually exclusive", payload["action_error"]["message"])
 
+    def test_build_cli_arguments_rejects_invalid_target_combinations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            dependency_file = workspace / "requirements.txt"
+            dependency_file.write_text("", encoding="utf-8")
+
+            cases = [
+                (
+                    ActionSettings(target="sampleproject", output_format="sarif"),
+                    "format",
+                ),
+                (
+                    ActionSettings(target="missing.lock"),
+                    "does not exist",
+                ),
+                (
+                    ActionSettings(
+                        target="requirements.txt",
+                        expected_repo="https://github.com/example/project",
+                    ),
+                    "dependency files",
+                ),
+                (
+                    ActionSettings(target="sampleproject", policy="missing.json"),
+                    "policy",
+                ),
+            ]
+            for settings, message in cases:
+                with self.subTest(message=message):
+                    with self.assertRaisesRegex(ActionInputError, message):
+                        build_cli_arguments(settings, workspace=workspace)
+
+            arguments = build_cli_arguments(
+                ActionSettings(target="sampleproject", with_deps=True),
+                workspace=workspace,
+            )
+            self.assertIn("--with-deps", arguments)
+            self.assertEqual(
+                _resolve_workspace_path(str(dependency_file.resolve()), workspace),
+                dependency_file.resolve(),
+            )
+
     def test_cli_policy_exit_code_is_preserved_and_report_is_written(self) -> None:
         def failing_runner(arguments):
             self.assertEqual(arguments[:2], ["inspect", "blocked-package"])
@@ -135,6 +181,22 @@ class GitHubActionTests(unittest.TestCase):
         self.assertEqual(result.recommendation, "error")
         self.assertFalse(result.policy_passed)
 
+    def test_non_object_cli_json_becomes_operational_error(self) -> None:
+        def invalid_runner(arguments):
+            del arguments
+            print("[]")
+            return EXIT_OK
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = run_action(
+                ActionSettings(target="sampleproject"),
+                workspace=Path(tmpdir),
+                runner=invalid_runner,
+            )
+
+        self.assertEqual(result.exit_code, EXIT_DATA_ERROR)
+        self.assertIn("must be an object", result.stderr)
+
     def test_scan_summary_uses_worst_recommendation_and_failures(self) -> None:
         payload = {
             "reports": [
@@ -160,6 +222,10 @@ class GitHubActionTests(unittest.TestCase):
         )
         self.assertEqual(
             summarize_payload({"reports": [], "failures": []}, exit_code=EXIT_OK),
+            ("error", False),
+        )
+        self.assertEqual(
+            summarize_payload({"unexpected": True}, exit_code=EXIT_OK),
             ("error", False),
         )
 
@@ -194,6 +260,38 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("exit-code=0", outputs)
         self.assertIn("Policy: **passed**", summary)
         self.assertIn("recommendation: verified", stdout.getvalue())
+
+    def test_main_uses_process_environment_and_json_rendering(self) -> None:
+        def passing_runner(arguments):
+            print(json.dumps(report_payload()))
+            return EXIT_OK
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            environment = {
+                "GITHUB_WORKSPACE": tmpdir,
+                "TRUSTCHECK_ACTION_FORMAT": "json",
+                "TRUSTCHECK_ACTION_TARGET": "sampleproject",
+            }
+            with (
+                patch.dict("os.environ", environment, clear=True),
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()),
+            ):
+                exit_code = main(runner=passing_runner)
+
+            result = ActionResult(
+                exit_code=EXIT_OK,
+                recommendation="verified",
+                policy_passed=True,
+                report_path=Path(tmpdir) / "trustcheck-report.json",
+                payload=report_payload(),
+            )
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertEqual(
+            json.loads(render_result(result, output_format="json", target="sampleproject")),
+            report_payload(),
+        )
 
     def test_action_metadata_uploads_before_enforcing_cli_exit_code(self) -> None:
         action = Path("action.yml").read_text(encoding="utf-8")
@@ -244,6 +342,16 @@ class GitHubActionTests(unittest.TestCase):
                     "TRUSTCHECK_ACTION_WITH_OSV": "yes",
                 }
             )
+
+    def test_environment_accepts_true_boolean(self) -> None:
+        settings = ActionSettings.from_environment(
+            {
+                "TRUSTCHECK_ACTION_TARGET": "sampleproject",
+                "TRUSTCHECK_ACTION_WITH_OSV": "TRUE",
+            }
+        )
+
+        self.assertTrue(settings.with_osv)
 
     def test_missing_target_is_reported_by_main(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

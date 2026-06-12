@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import tomllib
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,11 +15,6 @@ from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - Python 3.10 fallback
-    import tomli as tomllib
 
 from . import __version__
 from .advisories import OsvClient
@@ -50,18 +46,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trustcheck",
         description=(
-            "Inspect PyPI package trust, provenance, vulnerabilities, "
-            "and dependency files."
+            "Inspect PyPI package trust, provenance, vulnerabilities, and dependency files."
         ),
         epilog=f"Machine-readable report schema: {JSON_SCHEMA_VERSION}.",
     )
     parser.add_argument(
         "--version",
         action="version",
-        version=(
-            f"%(prog)s {__version__} "
-            f"(report schema {JSON_SCHEMA_VERSION})"
-        ),
+        version=(f"%(prog)s {__version__} (report schema {JSON_SCHEMA_VERSION})"),
     )
     parser.add_argument(
         "--debug",
@@ -117,10 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
     dependency_group.add_argument(
         "--with-deps",
         action="store_true",
-        help=(
-            "Inspect direct runtime dependencies and summarize the "
-            "worst-risk dependency."
-        ),
+        help=("Inspect direct runtime dependencies and summarize the worst-risk dependency."),
     )
     dependency_group.add_argument(
         "--with-transitive-deps",
@@ -254,10 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_dependency_group.add_argument(
         "--with-transitive-deps",
         action="store_true",
-        help=(
-            "Inspect direct and transitive runtime dependencies for every "
-            "package in the file."
-        ),
+        help=("Inspect direct and transitive runtime dependencies for every package in the file."),
     )
     scan_parser.add_argument(
         "--strict",
@@ -758,17 +744,16 @@ def _load_scan_targets(path: str, client: PypiClient) -> list[ScanTarget]:
 
 def _load_scan_targets_from_toml(file_path: Path, client: PypiClient) -> list[ScanTarget]:
     try:
-        payload = tomllib.loads(file_path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError as exc:
+        with file_path.open("rb") as toml_file:
+            payload = tomllib.load(toml_file)
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         raise ValueError(f"invalid TOML in {file_path}: {exc}") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"TOML file must contain a top-level table: {file_path}")
 
     requirement_lines = _extract_scan_requirements_from_toml(payload)
     if not requirement_lines:
-        raise ValueError(
-            f"no supported package requirements found in {file_path}"
-        )
+        raise ValueError(f"no supported package requirements found in {file_path}")
 
     return _build_scan_targets(
         requirement_lines,
@@ -891,18 +876,14 @@ def _extract_scan_requirements_from_toml(payload: dict[str, object]) -> list[str
     if isinstance(tool, dict):
         poetry = tool.get("poetry")
         if isinstance(poetry, dict):
-            requirements.extend(
-                _extract_poetry_dependency_requirements(poetry.get("dependencies"))
-            )
+            requirements.extend(_extract_poetry_dependency_requirements(poetry.get("dependencies")))
             groups = poetry.get("group")
             if isinstance(groups, dict):
                 for group_payload in groups.values():
                     if not isinstance(group_payload, dict):
                         continue
                     requirements.extend(
-                        _extract_poetry_dependency_requirements(
-                            group_payload.get("dependencies")
-                        )
+                        _extract_poetry_dependency_requirements(group_payload.get("dependencies"))
                     )
     deduped: list[str] = []
     seen: set[str] = set()
@@ -1061,9 +1042,7 @@ def _resolve_scan_target_version(requirement: Requirement, client: PypiClient) -
             prereleases=None,
         ):
             return fallback
-    raise ValueError(
-        f"unable to resolve a compatible version for requirement {requirement!s}"
-    )
+    raise ValueError(f"unable to resolve a compatible version for requirement {requirement!s}")
 
 
 def _exact_scan_target_version(requirement: Requirement) -> str | None:
@@ -1101,9 +1080,7 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
         f"(score={report.publisher_trust.depth_score})"
     )
     lines.append(
-        "  policy: "
-        f"{report.policy.profile} "
-        f"({'pass' if report.policy.passed else 'fail'})"
+        f"  policy: {report.policy.profile} ({'pass' if report.policy.passed else 'fail'})"
     )
     lines.append(
         "  diagnostics: "
@@ -1152,8 +1129,7 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
             )
         if report.dependency_summary.verified_projects:
             lines.append(
-                "  verified dependencies: "
-                + ", ".join(report.dependency_summary.verified_projects)
+                "  verified dependencies: " + ", ".join(report.dependency_summary.verified_projects)
             )
         if verbose and report.dependencies:
             for dependency in report.dependencies:
@@ -1181,20 +1157,12 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
         lines.append(f"expected repository: {report.expected_repository}")
     if report.provenance_consistency.sdist_wheel_consistent is not None:
         consistency_label = (
-            "consistent"
-            if report.provenance_consistency.sdist_wheel_consistent
-            else "mismatch"
+            "consistent" if report.provenance_consistency.sdist_wheel_consistent else "mismatch"
         )
         lines.append("")
-        lines.append(
-            "sdist/wheel provenance consistency: "
-            f"{consistency_label}"
-        )
+        lines.append(f"sdist/wheel provenance consistency: {consistency_label}")
     if report.release_drift.compared_to_version:
-        lines.append(
-            "release drift baseline: "
-            f"{report.release_drift.compared_to_version}"
-        )
+        lines.append(f"release drift baseline: {report.release_drift.compared_to_version}")
 
     ownership = report.ownership or {}
     roles = ownership.get("roles") or []
@@ -1255,13 +1223,14 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
                     + (
                         "unknown"
                         if file.artifact.archive_valid is None
-                        else "yes" if file.artifact.archive_valid else "no"
+                        else "yes"
+                        if file.artifact.archive_valid
+                        else "no"
                     )
                 )
                 lines.append(f"      files: {file.artifact.file_count}")
                 lines.append(
-                    "      uncompressed size: "
-                    f"{file.artifact.total_uncompressed_size} bytes"
+                    f"      uncompressed size: {file.artifact.total_uncompressed_size} bytes"
                 )
                 if file.artifact.record_valid is not None:
                     lines.append(
@@ -1354,9 +1323,7 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
     if report.diagnostics.artifact_failures:
         lines.append("  artifact failures:")
         lines.extend(
-            "    - "
-            f"{item.filename} stage={item.stage} "
-            f"[{item.subcode}] {item.message}"
+            f"    - {item.filename} stage={item.stage} [{item.subcode}] {item.message}"
             for item in report.diagnostics.artifact_failures
         )
     else:
@@ -1510,8 +1477,7 @@ def _evidence_summary(report: TrustReport) -> str:
     if any(file.verified for file in report.files):
         return "mixed evidence; some release artifacts verified cryptographically, others did not"
     return (
-        "heuristic metadata and provenance signals only; "
-        "no cryptographically verified artifact set"
+        "heuristic metadata and provenance signals only; no cryptographically verified artifact set"
     )
 
 
@@ -1528,9 +1494,8 @@ def _recommendation_reasons(report: TrustReport) -> list[str]:
         )
     elif report.files:
         reasons.append("Every discovered release artifact verified successfully.")
-    if (
-        report.expected_repository
-        and not any(flag.code.startswith("expected_repository") for flag in report.risk_flags)
+    if report.expected_repository and not any(
+        flag.code.startswith("expected_repository") for flag in report.risk_flags
     ):
         reasons.append("The expected repository matched available package and publisher evidence.")
     return reasons[:4]

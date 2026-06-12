@@ -13,11 +13,11 @@ from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
-from pypi_attestations import Distribution as AttestedDistribution
-from pypi_attestations import Provenance, VerificationError
 
 from .advisories import OsvClient, merge_vulnerabilities, parse_osv_vulnerabilities
 from .artifacts import compare_artifact_metadata, inspect_artifact
+from .attestations import Distribution as AttestedDistribution
+from .attestations import Provenance, VerificationError
 from .models import (
     ArtifactDiagnostic,
     CoverageSummary,

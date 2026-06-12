@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -8,12 +8,6 @@ from typing import Any
 from packaging.markers import InvalidMarker, Marker, default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - Python 3.10 fallback
-    import tomli as tomllib
-
 
 SUPPORTED_LOCKFILES = {"pdm.lock", "poetry.lock", "uv.lock"}
 
@@ -30,8 +24,9 @@ def is_supported_lockfile(path: Path) -> bool:
 
 def load_lockfile(path: Path) -> LockfileResolution:
     try:
-        payload = tomllib.loads(path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError as exc:
+        with path.open("rb") as toml_file:
+            payload = tomllib.load(toml_file)
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         raise ValueError(f"invalid TOML lockfile in {path}: {exc}") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"lockfile must contain a top-level table: {path}")
@@ -65,9 +60,7 @@ def load_lockfile(path: Path) -> LockfileResolution:
         try:
             requirement = Requirement(requirement_text)
         except InvalidRequirement as exc:
-            raise ValueError(
-                f"invalid locked package in {path} at package {index}: {exc}"
-            ) from exc
+            raise ValueError(f"invalid locked package in {path} at package {index}: {exc}") from exc
 
         key = canonicalize_name(requirement.name)
         existing_version = versions.get(key)
@@ -108,18 +101,14 @@ def _lock_package_applies(
     elif isinstance(marker_value, list):
         marker_expressions.extend(item for item in marker_value if isinstance(item, str))
     elif isinstance(marker_value, dict):
-        marker_expressions.extend(
-            item for item in marker_value.values() if isinstance(item, str)
-        )
+        marker_expressions.extend(item for item in marker_value.values() if isinstance(item, str))
     if not marker_expressions:
         return True
 
     try:
         return any(Marker(expression).evaluate(environment) for expression in marker_expressions)
     except InvalidMarker as exc:
-        raise ValueError(
-            f"invalid environment marker in {path} at package {index}: {exc}"
-        ) from exc
+        raise ValueError(f"invalid environment marker in {path} at package {index}: {exc}") from exc
 
 
 def _is_registry_package(package: dict[str, Any], lockfile_kind: str) -> bool:
@@ -136,7 +125,4 @@ def _is_registry_package(package: dict[str, Any], lockfile_kind: str) -> bool:
         source_type = str(source.get("type") or "").lower()
         return source_type not in {"directory", "file", "git", "url"}
 
-    return not any(
-        package.get(field) is not None
-        for field in ("editable", "git", "path", "url")
-    )
+    return not any(package.get(field) is not None for field in ("editable", "git", "path", "url"))

@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import re
 import shlex
-import sys
+import tomllib
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -11,12 +11,6 @@ from pathlib import Path
 import trustcheck
 from trustcheck.cli import build_parser, main
 from trustcheck.contract import JSON_SCHEMA_ID, JSON_SCHEMA_VERSION
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - Python 3.10 fallback
-    import tomli as tomllib
-
 
 ROOT = Path(__file__).parents[1]
 RELEASE_VERSION = "1.9.0"
@@ -67,15 +61,14 @@ class ReleaseReadinessTests(unittest.TestCase):
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         docs_index = (ROOT / "docs" / "index.md").read_text(encoding="utf-8")
-        json_contract = (
-            ROOT / "docs" / "reference" / "json-contract.md"
-        ).read_text(encoding="utf-8")
+        json_contract = (ROOT / "docs" / "reference" / "json-contract.md").read_text(
+            encoding="utf-8"
+        )
         docs_changelog = (ROOT / "docs" / "changelog.md").read_text(encoding="utf-8")
 
         self.assertIn(f"## [{RELEASE_VERSION}] - 2026-06-09", changelog)
         self.assertIn(
-            f"Package release `{RELEASE_VERSION}` emits "
-            "machine-readable report schema `1.4.0`.",
+            f"Package release `{RELEASE_VERSION}` emits machine-readable report schema `1.4.0`.",
             changelog,
         )
         self.assertIn(f"advanced the schema to `{JSON_SCHEMA_VERSION}`", changelog)
@@ -93,8 +86,8 @@ class ReleaseReadinessTests(unittest.TestCase):
         )
 
     def test_public_support_links_use_stable_github_pages(self) -> None:
-        with (ROOT / "pyproject.toml").open("rb") as handle:
-            project_urls = tomllib.load(handle)["project"]["urls"]
+        with (ROOT / "pyproject.toml").open("rb") as pyproject_file:
+            project_urls = tomllib.load(pyproject_file)["project"]["urls"]
 
         self.assertEqual(
             project_urls["Issues"],
@@ -114,6 +107,15 @@ class ReleaseReadinessTests(unittest.TestCase):
         for path in public_files:
             with self.subTest(path=path.relative_to(ROOT)):
                 self.assertNotIn("discord.com/channels/", path.read_text(encoding="utf-8"))
+
+    def test_project_license_metadata_matches_license_file(self) -> None:
+        with (ROOT / "pyproject.toml").open("rb") as pyproject_file:
+            project = tomllib.load(pyproject_file)["project"]
+
+        license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
+        self.assertEqual(project["license"], "LicenseRef-Trustcheck-Personal-Use")
+        self.assertEqual(project["license-files"], ["LICENSE"])
+        self.assertTrue(license_text.startswith("Trustcheck Personal Use License\n"))
 
     def test_lockfile_documentation_does_not_repeat_the_old_limitation(self) -> None:
         documentation = "\n".join(

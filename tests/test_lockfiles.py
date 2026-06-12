@@ -24,7 +24,10 @@ class LockfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "uv.lock"
             path.write_text("version = 1", encoding="utf-8")
-            with patch("trustcheck.lockfiles.tomllib.loads", return_value=[]):
+            with patch(
+                "trustcheck.lockfiles.tomllib.load",
+                return_value=[],
+            ):
                 with self.assertRaisesRegex(ValueError, "top-level table"):
                     load_lockfile(path)
 
@@ -54,7 +57,10 @@ class LockfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "uv.lock"
             path.write_text("version = 1", encoding="utf-8")
-            with patch("trustcheck.lockfiles.tomllib.loads", return_value=payload):
+            with patch(
+                "trustcheck.lockfiles.tomllib.load",
+                return_value=payload,
+            ):
                 resolution = load_lockfile(path)
 
         self.assertEqual(resolution.requirements, ["Demo_Package==1.2.3"])
@@ -72,7 +78,10 @@ class LockfileTests(unittest.TestCase):
             with self.subTest(message=message), tempfile.TemporaryDirectory() as tmpdir:
                 path = Path(tmpdir) / "uv.lock"
                 path.write_text("version = 1", encoding="utf-8")
-                with patch("trustcheck.lockfiles.tomllib.loads", return_value=payload):
+                with patch(
+                    "trustcheck.lockfiles.tomllib.load",
+                    return_value=payload,
+                ):
                     with self.assertRaisesRegex(ValueError, message):
                         load_lockfile(path)
 
@@ -81,10 +90,10 @@ class LockfileTests(unittest.TestCase):
         path = Path("uv.lock")
         cases = [
             ({}, True),
-            ({"marker": "python_version >= '3.10'"}, True),
+            ({"marker": "python_version >= '3.11'"}, True),
             ({"markers": [3, "python_version < '3.0'"]}, False),
-            ({"markers": {"main": "python_version >= '3.10'", "ignored": 3}}, True),
-            ({"resolution-markers": ["python_version >= '3.10'"]}, True),
+            ({"markers": {"main": "python_version >= '3.11'", "ignored": 3}}, True),
+            ({"resolution-markers": ["python_version >= '3.11'"]}, True),
             ({"marker": 3}, True),
         ]
         for package, expected in cases:
@@ -101,7 +110,7 @@ class LockfileTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "invalid environment marker"):
             _lock_package_applies(
-                {"marker": "python_version >>> '3.10'"},
+                {"marker": "python_version >>> '3.11'"},
                 environment,
                 path=path,
                 index=2,
@@ -125,4 +134,3 @@ class LockfileTests(unittest.TestCase):
                     _is_registry_package(package, lockfile_kind),
                     expected,
                 )
-

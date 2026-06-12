@@ -2,6 +2,10 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.coverage
+coverage.json
+coverage.xml
+coverage-badge/
 .mypy_cache/
 .ruff_cache/
 .tmp-build/
@@ -15,3 +19,5 @@ stage/
 site/
 pytest-cache-files-*/
 src/trustcheck/_version.py
+docs/assets/images/coverage.svg
+images/

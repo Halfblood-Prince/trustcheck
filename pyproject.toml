@@ -1,7 +1,7 @@
 [build-system]
 requires = [
   "setuptools>=80",
-  "setuptools-scm[toml]>=10",
+  "setuptools-scm>=10",
   "wheel>=0.46",
 ]
 build-backend = "setuptools.build_meta"
@@ -11,9 +11,10 @@ name = "trustcheck"
 dynamic = ["version"]
 description = "Package trust and provenance verification for PyPI consumers."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = ["pypi", "security", "supply-chain", "provenance", "attestations"]
-license = { file = "LICENSE" }
+license = "Trustcheck Personal Use License"
+license-files = ["LICENSE"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
@@ -24,17 +25,19 @@ classifiers = [
   "Topic :: Security",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
+  "idna>=3.15,<4",
   "packaging>=24,<27",
+  "PyJWT>=2.13,<3",
   "pydantic>=2.10,<3",
-  "pypi-attestations>=0.0.29,<1",
-  "tomli>=2,<3; python_version < '3.11'",
+  "sigstore>=4.3,<5",
+  "tuf>=7,<8",
+  "urllib3>=2.7,<3",
 ]
 
 [project.scripts]
@@ -53,6 +56,9 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+trustcheck = ["py.typed"]
+
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"
 local_scheme = "no-local-version"
@@ -60,14 +66,14 @@ version_file = "src/trustcheck/_version.py"
 fallback_version = "0+unknown"
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 files = ["src"]
 strict = true
 warn_unused_configs = true
@@ -85,6 +91,6 @@ branch = true
 source = ["trustcheck"]
 
 [tool.coverage.report]
-fail_under = 90
+fail_under = 97
 show_missing = true
 skip_covered = true

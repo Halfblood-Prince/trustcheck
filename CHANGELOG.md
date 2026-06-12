@@ -28,6 +28,10 @@ The project follows Semantic Versioning for the supported public API described i
 
 ### Changed
 
+- Replaced the `pypi-attestations` runtime dependency with an internal PEP 740 adapter that delegates certificate, transparency-log, signature, and identity verification directly to Sigstore.
+- Raised vulnerable Sigstore transitive dependency floors and added a Windows-only fallback to Sigstore's embedded trusted-root snapshot when TUF refresh cannot create symlinks without elevated privileges.
+- Raised the minimum supported Python version to 3.11 and switched TOML decoding to the standard-library `tomllib` module.
+- Moved coverage badge generation and publication into GitHub Actions, with the generated SVG maintained on a dedicated `coverage-badge` branch instead of in the source tree.
 - Renamed the reusable GitHub Action and Marketplace display name to `TrustCheck Package Scanner`.
 - Expanded the Snap Store listing with richer feature copy, quick-start examples, project links, and a dedicated storefront icon.
 - Updated Snap release smoke tests and installation documentation to verify the public `trustcheck` command and diagnose shells where `/snap/bin` is missing from `PATH`.

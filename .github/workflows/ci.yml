@@ -71,7 +71,7 @@ jobs:
       - name: Install tooling
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . mypy ruff tomli
+          python -m pip install -e . mypy ruff
 
       - name: Run lint
         run: ruff check src tests scripts
@@ -85,7 +85,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         exclude:
           - os: macos-latest
             python-version: "3.14"
@@ -173,10 +173,11 @@ jobs:
             --cov-report=json:coverage.json \
             tests
 
-      - name: Verify coverage badge
+      - name: Generate coverage badge
         run: |
-          python scripts/update_coverage_badge.py coverage.json docs/assets/images/coverage.svg
-          git diff --exit-code -- docs/assets/images/coverage.svg
+          python scripts/update_coverage_badge.py \
+            coverage.json \
+            coverage-badge/coverage.svg
 
       - name: Build package
         run: python -m build
@@ -212,3 +213,37 @@ jobs:
           path: |
             coverage.xml
             coverage.json
+            coverage-badge/coverage.svg
+
+  publish-coverage-badge:
+    needs: coverage
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: coverage-badge
+      cancel-in-progress: true
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage-reports
+          path: coverage-artifacts
+
+      - name: Publish coverage badge branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          publish_root="$(mktemp -d)"
+          cp coverage-artifacts/coverage-badge/coverage.svg "$publish_root/coverage.svg"
+          git -C "$publish_root" init
+          git -C "$publish_root" config user.name "github-actions[bot]"
+          git -C "$publish_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$publish_root" add coverage.svg
+          git -C "$publish_root" commit -m "Update coverage badge for ${GITHUB_SHA}"
+          git -C "$publish_root" branch -M coverage-badge
+          git -C "$publish_root" remote add origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$publish_root" push --force origin coverage-badge

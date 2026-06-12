@@ -24,7 +24,6 @@ def main() -> int:
         "--recursive-copy-metadata=trustcheck",
     ]
     for package in (
-        "pypi_attestations",
         "rekor_types",
         "sigstore",
         "sigstore_models",

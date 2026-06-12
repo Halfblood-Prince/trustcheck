@@ -17,19 +17,28 @@ from trustcheck.cli import (
     EXIT_UPSTREAM_FAILURE,
     ScanTarget,
     _build_debug_request_hook,
+    _build_scan_targets,
     _clean_requirement_line,
     _collect_requirement_strings,
+    _evidence_summary,
     _expand_poetry_caret_specifier,
     _expand_poetry_tilde_specifier,
+    _extract_poetry_dependency_requirements,
     _extract_scan_requirements_from_toml,
     _load_scan_targets,
     _load_scan_targets_from_toml,
+    _locked_versions_from_requirements,
     _merge_exit_codes,
     _parse_version_release_parts,
     _poetry_dependency_to_requirement,
+    _read_requirements_file,
+    _render_cve_report,
     _render_scan_json,
     _render_scan_text,
+    _render_text_report,
+    _resolve_bool,
     _resolve_scan_target_version,
+    _resolve_scan_target_version_for_scan,
     _translate_poetry_version_specifier,
     main,
 )
@@ -41,10 +50,12 @@ from trustcheck.models import (
     DependencyInspection,
     DependencySummary,
     FileProvenance,
+    PolicyViolation,
     ProvenanceConsistency,
     PublisherTrustSummary,
     ReleaseDriftSummary,
     ReportDiagnostics,
+    RequestFailureDiagnostic,
     RiskFlag,
     TrustReport,
     VulnerabilityRecord,
@@ -165,7 +176,7 @@ class CliBehaviorTests(unittest.TestCase):
             },
             "tool": {
                 "poetry": {
-                    "dependencies": {"python": "^3.10", "urllib3": "*"},
+                    "dependencies": {"python": "^3.11", "urllib3": "*"},
                     "group": {"lint": {"dependencies": {"ruff": "^0.8"}}},
                 }
             },
@@ -193,6 +204,200 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(_expand_poetry_caret_specifier("0.2.3"), ">=0.2.3,<0.3")
         self.assertEqual(_expand_poetry_tilde_specifier("1"), ">=1,<2")
         self.assertEqual(_parse_version_release_parts("bad"), (0,))
+
+    def test_additional_toml_and_requirement_edge_cases(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertTrue(
+                _resolve_bool(
+                    False,
+                    env_name="TRUSTCHECK_UNUSED",
+                    config_value="yes",
+                    default=False,
+                )
+            )
+        self.assertEqual(_merge_exit_codes(EXIT_OK, EXIT_OK), EXIT_OK)
+        self.assertEqual(
+            _extract_scan_requirements_from_toml(
+                {
+                    "project": {
+                        "dependencies": ["demo>=1"],
+                        "optional-dependencies": {"dev": ["demo>=1"]},
+                    },
+                    "tool": {
+                        "poetry": {
+                            "dependencies": {"python": "^3.11", "plain": ">=1"},
+                            "group": {
+                                "ignored": "not-a-table",
+                                "empty": {"dependencies": None},
+                            },
+                        }
+                    },
+                }
+            ),
+            ["demo>=1", "plain>=1"],
+        )
+        self.assertEqual(_extract_poetry_dependency_requirements("bad"), [])
+        self.assertEqual(_poetry_dependency_to_requirement("plain", ">=1"), "plain>=1")
+        self.assertEqual(_poetry_dependency_to_requirement("plain", {}), "plain")
+        self.assertEqual(
+            _poetry_dependency_to_requirement("plain", {"version": ">=2"}),
+            "plain>=2",
+        )
+        self.assertEqual(_expand_poetry_caret_specifier("0.0.3"), ">=0.0.3,<0.0.4")
+        self.assertEqual(_expand_poetry_caret_specifier("0"), ">=0,<1")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "requirements.txt"
+            path.write_text("demo==1.0 \\", encoding="utf-8")
+            self.assertEqual(_read_requirements_file(path), ["demo==1.0"])
+
+            with self.assertRaisesRegex(ValueError, "no supported package requirements"):
+                _build_scan_targets(
+                    ["skipme; python_version < '3.0'"],
+                    object(),  # type: ignore[arg-type]
+                    source_path=path,
+                )
+            self.assertEqual(
+                _locked_versions_from_requirements(
+                    ["bad ???", "skipme==1; python_version < '3.0'"],
+                    source_path=path,
+                ),
+                {},
+            )
+            with self.assertRaisesRegex(ValueError, "multiple active locked versions"):
+                _locked_versions_from_requirements(
+                    ["demo==1", "demo==2"],
+                    source_path=path,
+                )
+
+            toml_path = Path(tmpdir) / "pyproject.toml"
+            toml_path.write_text("[project]\n", encoding="utf-8")
+            with patch("trustcheck.cli.tomllib.load", return_value=[]):
+                with self.assertRaisesRegex(ValueError, "top-level table"):
+                    _load_scan_targets_from_toml(
+                        toml_path,
+                        object(),  # type: ignore[arg-type]
+                    )
+
+        class InvalidVersionClient:
+            def get_project(self, project: str) -> dict[str, object]:
+                del project
+                return {
+                    "info": {"version": "not-a-version"},
+                    "releases": {"invalid": [], "1.0": []},
+                }
+
+        version, message, exit_code = _resolve_scan_target_version_for_scan(
+            Requirement("demo>=2"),
+            InvalidVersionClient(),  # type: ignore[arg-type]
+        )
+        self.assertIsNone(version)
+        self.assertIn("unable to resolve scan requirement", message or "")
+        self.assertEqual(exit_code, EXIT_DATA_ERROR)
+
+    def test_verbose_report_renders_all_optional_findings(self) -> None:
+        report = make_report()
+        report.summary = None
+        report.dependency_summary.high_risk_projects = ["blocked"]
+        report.dependency_summary.metadata_only_projects = ["metadata"]
+        report.dependency_summary.verified_projects = ["clean"]
+        report.dependencies[0].error = "dependency lookup failed"
+        report.files[0].artifact = ArtifactInspection(
+            inspected=True,
+            kind="wheel",
+            archive_valid=False,
+            file_count=12,
+            total_uncompressed_size=4096,
+            record_valid=False,
+            record_errors=["hash mismatch"],
+            console_scripts=["demo=demo:main"],
+            suspicious_entry_points=["setup=demo:setup"],
+            native_files=["demo.pyd"],
+            unexpected_top_level_files=["install.sh"],
+            suspicious_files=["setup.py"],
+            oversized_files=["large.bin"],
+            unusual_files=["payload.exe"],
+            metadata_name="gridoptim",
+            metadata_version="2.2.0",
+            wheel_version="1.0",
+            wheel_root_is_purelib=False,
+            wheel_tags=["py3-none-any"],
+            metadata_mismatches=["Requires-Dist differs"],
+            error="archive warning",
+        )
+        report.diagnostics.request_failures = [
+            RequestFailureDiagnostic(
+                url="https://pypi.org/example",
+                attempt=1,
+                code="upstream",
+                subcode="network",
+                message="failed",
+                transient=False,
+                status_code=None,
+            )
+        ]
+        report.policy.violations = [
+            PolicyViolation(
+                code="manual_review",
+                severity="medium",
+                message="Review required.",
+            )
+        ]
+        rendered = _render_text_report(report, verbose=True)
+
+        for expected in (
+            "high-risk dependencies: blocked",
+            "metadata-only dependencies: metadata",
+            "verified dependencies: clean",
+            "note: dependency lookup failed",
+            "sha256: abc123",
+            "observed sha256: abc123",
+            "wheel RECORD: invalid",
+            "wheel metadata:",
+            "console scripts:",
+            "native files:",
+            "unexpected top-level files:",
+            "suspicious entry points:",
+            "suspicious files:",
+            "oversized files:",
+            "unusual files:",
+            "RECORD errors:",
+            "metadata mismatches:",
+            "error: archive warning",
+            "status=-",
+            "manual_review",
+        ):
+            self.assertIn(expected, rendered)
+
+        unverified = FileProvenance(
+            filename="gridoptim-2.2.0.tar.gz",
+            url="https://files.pythonhosted.org/gridoptim.tar.gz",
+            sha256=None,
+            has_provenance=False,
+        )
+        report.files.append(unverified)
+        self.assertIn("mixed evidence", _evidence_summary(report))
+        self.assertIn(
+            "No known vulnerability records",
+            _render_cve_report(
+                TrustReport(
+                    project="demo",
+                    version="1.0",
+                    summary=None,
+                    package_url="https://pypi.org/project/demo/1.0/",
+                )
+            ),
+        )
+        self.assertNotIn(
+            "scan failures:",
+            _render_scan_text(
+                "requirements.txt",
+                [],
+                failures=[],
+                verbose=False,
+                cve_only=False,
+            ),
+        )
 
     def test_resolve_scan_target_version_variants(self) -> None:
         class FakeClient:
@@ -321,7 +526,7 @@ class CliBehaviorTests(unittest.TestCase):
                         'name = "transitive-dep"',
                         'version = "2.5.0"',
                         'source = { registry = "https://pypi.org/simple" }',
-                        "resolution-markers = [\"python_version >= '3.10'\"]",
+                        "resolution-markers = [\"python_version >= '3.11'\"]",
                         "",
                         "[[package]]",
                         'name = "inactive-dep"',
@@ -356,7 +561,7 @@ class CliBehaviorTests(unittest.TestCase):
                         "[[package]]",
                         'name = "direct-dep"',
                         'version = "1.4.0"',
-                        'markers = { main = "python_version >= \'3.10\'" }',
+                        "markers = { main = \"python_version >= '3.11'\" }",
                         "",
                         "[[package]]",
                         'name = "transitive-dep"',
@@ -456,9 +661,7 @@ class CliBehaviorTests(unittest.TestCase):
 
     def test_render_scan_helpers_and_debug_hook(self) -> None:
         report = make_report()
-        report.vulnerabilities = [
-            VulnerabilityRecord(id="PYSEC-1", summary="Example advisory")
-        ]
+        report.vulnerabilities = [VulnerabilityRecord(id="PYSEC-1", summary="Example advisory")]
         text = _render_scan_text(
             "requirements.txt",
             [report],
@@ -832,9 +1035,7 @@ class CliBehaviorTests(unittest.TestCase):
         with patch("trustcheck.cli._load_scan_targets", return_value=targets):
             with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
                 with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                    exit_code = main(
-                        ["scan", "poetry.lock", "--with-transitive-deps"]
-                    )
+                    exit_code = main(["scan", "poetry.lock", "--with-transitive-deps"])
 
         self.assertEqual(exit_code, EXIT_OK)
 
@@ -987,7 +1188,7 @@ class CliBehaviorTests(unittest.TestCase):
             "\n".join(
                 [
                     "[tool.poetry.dependencies]",
-                    'python = "^3.10"',
+                    'python = "^3.11"',
                     'requests = "^2.31"',
                     'urllib3 = "*"',
                     "",
@@ -1149,9 +1350,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch("trustcheck.cli.inspect_package", return_value=report):
             with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                exit_code = main(
-                    ["inspect", "gridoptim", "--policy-file", str(policy_path)]
-                )
+                exit_code = main(["inspect", "gridoptim", "--policy-file", str(policy_path)])
 
         self.assertEqual(exit_code, EXIT_POLICY_FAILURE)
         self.assertIn("policy: team-policy (fail)", stdout.getvalue())
@@ -1195,9 +1394,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                exit_code = main(
-                    ["inspect", "gridoptim", "--config-file", str(config_path)]
-                )
+                exit_code = main(["inspect", "gridoptim", "--config-file", str(config_path)])
 
         self.assertEqual(exit_code, EXIT_OK)
 
@@ -1250,9 +1447,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch(
             "trustcheck.cli.inspect_package",
-            side_effect=PypiClientError(
-                "resource not found: https://pypi.org/pypi/gridoptim/json"
-            ),
+            side_effect=PypiClientError("resource not found: https://pypi.org/pypi/gridoptim/json"),
         ):
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main(["inspect", "gridoptim", "--version", "9.9.9"])

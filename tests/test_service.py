@@ -7,14 +7,28 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
-from pypi_attestations import VerificationError
+from packaging.requirements import Requirement
 from test_artifacts import build_wheel
 
-from trustcheck.models import PolicyViolation, RiskFlag, TrustReport
+from trustcheck.attestations import VerificationError
+from trustcheck.models import (
+    DependencyInspection,
+    FileProvenance,
+    PolicyViolation,
+    RiskFlag,
+    TrustReport,
+)
 from trustcheck.policy import advisory_evaluation_for
 from trustcheck.pypi import PypiClientError
 from trustcheck.service import (
+    DiagnosticsCollector,
+    _build_dependency_summary,
+    _build_publisher_trust_summary,
+    _instrument_client,
     _normalize_repo_url,
+    _previous_release_version,
+    _publisher_repository_url,
+    _select_dependency_version,
     inspect_package,
 )
 
@@ -237,6 +251,174 @@ class FakeOsvClient:
     def query(self, project: str, version: str) -> list[dict[str, object]]:
         self.calls.append((project, version))
         return self.responses.get((project, version), [])
+
+
+class ServiceBranchTests(unittest.TestCase):
+    def test_diagnostics_collect_request_and_artifact_failures(self) -> None:
+        diagnostics = DiagnosticsCollector()
+        diagnostics.on_request_event("request", {})
+        diagnostics.on_request_event("retry", {})
+        diagnostics.on_request_event("cache_hit", {})
+        diagnostics.on_request_event(
+            "failure",
+            {
+                "url": "https://pypi.org/example",
+                "attempt": 2,
+                "code": "upstream",
+                "subcode": "http_error",
+                "message": "unavailable",
+                "transient": True,
+                "status_code": 503,
+            },
+        )
+        diagnostics.add_artifact_failure(
+            filename="example.whl",
+            stage="verification",
+            code="verification",
+            subcode="failed",
+            message="bad signature",
+        )
+        report = diagnostics.to_report_diagnostics(
+            cast(
+                Any,
+                SimpleNamespace(
+                    timeout=3,
+                    max_retries=4,
+                    backoff_factor=0.5,
+                    offline=True,
+                    cache_dir="cache",
+                ),
+            )
+        )
+
+        self.assertEqual(
+            (report.request_count, report.retry_count, report.cache_hit_count),
+            (1, 1, 1),
+        )
+        self.assertEqual(report.request_failures[0].status_code, 503)
+        self.assertEqual(report.artifact_failures[0].filename, "example.whl")
+
+    def test_instrument_client_preserves_existing_hook(self) -> None:
+        events: list[tuple[str, str]] = []
+
+        def previous(event: str, payload: dict[str, object]) -> None:
+            del payload
+            events.append(("previous", event))
+
+        client = SimpleNamespace(request_hook=previous)
+
+        with _instrument_client(
+            client,
+            lambda event, payload: events.append(("collector", event)),
+        ):
+            client.request_hook("request", {})
+
+        self.assertIs(client.request_hook, previous)
+        self.assertEqual(
+            events,
+            [("collector", "request"), ("previous", "request")],
+        )
+
+    def test_dependency_version_selection_skips_invalid_versions_and_uses_fallback(self) -> None:
+        self.assertEqual(
+            _select_dependency_version(
+                {
+                    "info": {"version": "1.5.0"},
+                    "releases": {
+                        "not-a-version": [],
+                        "0.5.0": [],
+                        "1.2.0": [],
+                    },
+                },
+                Requirement("example>=1"),
+            ),
+            "1.2.0",
+        )
+        self.assertEqual(
+            _select_dependency_version(
+                {"info": {"version": "2.0.0"}, "releases": []},
+                Requirement("example>=1"),
+            ),
+            "2.0.0",
+        )
+        with self.assertRaisesRegex(PypiClientError, "compatible version"):
+            _select_dependency_version(
+                {"info": {"version": "invalid"}, "releases": {}},
+                Requirement("example>=1"),
+            )
+
+    def test_dependency_summary_groups_equal_and_unknown_recommendations(self) -> None:
+        summary = _build_dependency_summary(
+            ["one", "two", "three"],
+            [
+                DependencyInspection("one", "one", "1", 1, recommendation="verified"),
+                DependencyInspection(
+                    "two",
+                    "two",
+                    "1",
+                    2,
+                    recommendation="review-required",
+                ),
+                DependencyInspection(
+                    "three",
+                    "three",
+                    "1",
+                    2,
+                    recommendation="review-required",
+                ),
+            ],
+            requested=True,
+        )
+
+        self.assertEqual(summary.total_inspected, 3)
+        self.assertEqual(summary.max_depth, 2)
+        self.assertEqual(summary.highest_risk_recommendation, "review-required")
+        self.assertEqual(summary.highest_risk_projects, ["three", "two"])
+        self.assertEqual(summary.verified_projects, ["one"])
+
+    def test_invalid_dependency_requirement_is_reported(self) -> None:
+        report = inspect_package(
+            "gridoptim",
+            client=cast(
+                Any,
+                FakeClient(
+                    project_payload=make_project_payload(
+                        requires_dist=["not a valid requirement ???"],
+                        urls=[],
+                    )
+                ),
+            ),
+            include_dependencies=True,
+        )
+
+        self.assertEqual(report.dependencies[0].recommendation, "high-risk")
+        self.assertIn("invalid dependency requirement", report.dependencies[0].error or "")
+
+    def test_artifact_download_failure_records_both_stages(self) -> None:
+        class DownloadFailingClient(FakeClient):
+            def download_distribution(self, url: str) -> bytes:
+                raise PypiClientError(
+                    "download failed",
+                    code="upstream",
+                    subcode="download_error",
+                )
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = make_provenance()
+            report = inspect_package(
+                "gridoptim",
+                client=cast(Any, DownloadFailingClient()),
+                inspect_artifacts=True,
+            )
+
+        artifact = report.files[0].artifact
+        self.assertTrue(artifact.inspected)
+        self.assertEqual(artifact.kind, "wheel")
+        self.assertEqual(report.files[0].error, "download failed")
+        self.assertEqual(
+            [failure.stage for failure in report.diagnostics.artifact_failures],
+            ["artifact-download", "provenance-fetch"],
+        )
 
 
 class InspectPackageTests(unittest.TestCase):
@@ -839,6 +1021,8 @@ class InspectPackageTests(unittest.TestCase):
         self.assertIn("GHSA-462w-v97r-4m45", vulnerability.aliases)
 
     def test_repo_normalization_handles_common_edge_cases(self) -> None:
+        self.assertEqual(_normalize_repo_url(None), "")
+        self.assertEqual(_normalize_repo_url("owner"), "")
         self.assertEqual(
             _normalize_repo_url("git+https://github.com/Halfblood-Prince/Gridoptim.git?ref=main"),
             "https://github.com/halfblood-prince/gridoptim",
@@ -884,6 +1068,67 @@ class InspectPackageTests(unittest.TestCase):
         self.assertEqual(
             _normalize_repo_url("https://gitlab.com/group/subgroup/repo/issues/1"),
             "",
+        )
+        self.assertEqual(_normalize_repo_url("https://github.com"), "")
+        self.assertEqual(_normalize_repo_url("https://gitlab.com/group"), "")
+        self.assertIsNone(_publisher_repository_url("GitHub", None))
+        self.assertEqual(
+            _publisher_repository_url("Other", "organization/project"),
+            "organization/project",
+        )
+        self.assertEqual(
+            _publisher_repository_url("GitLab", "group/project"),
+            "https://gitlab.com/group/project",
+        )
+        self.assertEqual(
+            _publisher_repository_url("Other", "https://example.com/project"),
+            "https://example.com/project",
+        )
+
+    def test_publisher_summary_and_previous_release_error_branches(self) -> None:
+        summary = _build_publisher_trust_summary(
+            [
+                FileProvenance(
+                    filename="demo.whl",
+                    url="https://example.com/demo.whl",
+                    sha256=None,
+                    has_provenance=True,
+                    verified=True,
+                )
+            ]
+        )
+        self.assertEqual(summary.depth_label, "moderate")
+
+        class FailingClient:
+            def get_project(self, project: str) -> dict[str, object]:
+                del project
+                raise PypiClientError("unavailable")
+
+        self.assertIsNone(
+            _previous_release_version(
+                "demo",
+                "2.0",
+                cast(Any, FailingClient()),
+            )
+        )
+        self.assertIsNone(
+            _previous_release_version(
+                "demo",
+                "2.0",
+                cast(Any, SimpleNamespace(get_project=lambda project: {"releases": []})),
+            )
+        )
+        self.assertIsNone(
+            _previous_release_version(
+                "demo",
+                "invalid",
+                cast(
+                    Any,
+                    SimpleNamespace(
+                        get_project=lambda project: {"releases": {"1.0": []}}
+                    ),
+                ),
+            )
         )
 
     def test_expected_repository_matches_slug_style_publisher_identity(self) -> None:
@@ -982,7 +1227,7 @@ class InspectPackageTests(unittest.TestCase):
         root_payload = make_project_payload(
             requires_dist=[
                 "depalpha>=1.0",
-                "depbeta>=2.0; python_version >= '3.10'",
+                "depbeta>=2.0; python_version >= '3.11'",
                 "skipme>=1.0; python_version < '3.0'",
             ],
             releases={"2.2.0": []},
@@ -1016,7 +1261,7 @@ class InspectPackageTests(unittest.TestCase):
             report.declared_dependencies,
             [
                 "depalpha>=1.0",
-                "depbeta>=2.0; python_version >= '3.10'",
+                "depbeta>=2.0; python_version >= '3.11'",
                 "skipme>=1.0; python_version < '3.0'",
             ],
         )
