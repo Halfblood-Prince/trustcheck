@@ -154,10 +154,12 @@ trustcheck inspect sampleproject \
 ```
 
 Artifact inspection is opt-in. It reads wheel and sdist archives without
-extracting them, importing modules, or executing package code. Wheel inspection
-validates `RECORD`, lists console scripts, and detects native extensions and
-unexpected top-level files. Sdist inspection reports suspicious scripts,
-oversized or unusual files, and metadata differences.
+extracting them, importing modules, or executing package code. It validates
+`RECORD`, parses bounded Python source with `ast`, and inspects PE, ELF, and
+Mach-O structure, imports, signature-record presence, entropy, and embedded
+payload signatures. Add repeatable `--trusted-project NAME` values for local
+typosquatting references. Every malicious-package result is a heuristic review
+indicator, not proof of malware.
 
 When dependency inspection is enabled, the text report adds a dependency summary with the number of declared and inspected dependencies, the maximum traversal depth, and the highest-risk dependency recommendation observed in the set. `--with-deps` inspects only direct dependencies. `--with-transitive-deps` continues recursively through nested dependencies too.
 

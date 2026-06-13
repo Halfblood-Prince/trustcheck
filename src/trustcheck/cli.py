@@ -50,9 +50,20 @@ from .lockfiles import (
     load_lockfile,
     load_pip_tools_lock,
 )
-from .models import TrustReport
+from .models import RemediationSummary, TrustReport
 from .policy import BUILTIN_POLICIES, PolicySettings, evaluate_policy, resolve_policy
 from .pypi import IndexBackedPackageClient, PypiClient, PypiClientError
+from .remediation import (
+    PreparedRemediation,
+    RemediationError,
+    RemediationPlan,
+    apply_prepared_remediation,
+    create_pull_request,
+    plan_remediation,
+    prepare_remediation,
+    render_remediation_text,
+    validate_candidate,
+)
 from .resolver import (
     ArtifactReference,
     PipResolver,
@@ -69,6 +80,7 @@ EXIT_UPSTREAM_FAILURE = 1
 EXIT_USAGE = 2
 EXIT_DATA_ERROR = 3
 EXIT_POLICY_FAILURE = 4
+EXIT_REMEDIATION_FAILURE = 5
 
 
 @dataclass(slots=True)
@@ -91,6 +103,7 @@ class ScanTarget:
     dependency_confusion: tuple[str, ...] = ()
     source_file: str | None = None
     source_line: int | None = None
+    source_type: str = "index"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -250,6 +263,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_target_environment_arguments(inspect_parser)
     _add_index_arguments(inspect_parser)
+    _add_malicious_arguments(inspect_parser)
 
     scan_parser = subparsers.add_parser(
         "scan",
@@ -261,6 +275,63 @@ def build_parser() -> argparse.ArgumentParser:
             "Path to requirements.txt, pyproject.toml, pylock.toml, "
             "Pipfile.lock, uv.lock, poetry.lock, or pdm.lock."
         ),
+    )
+    remediation_mode = scan_parser.add_mutually_exclusive_group()
+    remediation_mode.add_argument(
+        "--plan-fixes",
+        action="store_true",
+        help=(
+            "Compute and validate the smallest secure upgrade set without "
+            "running lockfile writers."
+        ),
+    )
+    remediation_mode.add_argument(
+        "--fix",
+        action="store_true",
+        help="Prepare, validate, and transactionally apply secure dependency fixes.",
+    )
+    scan_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "With --fix, run writers and validation in an isolated copy and "
+            "emit the exact patch without modifying the project."
+        ),
+    )
+    scan_parser.add_argument(
+        "--allow-constraint-changes",
+        action="store_true",
+        help=(
+            "Permit minimal declared-range changes when every known secure "
+            "release is otherwise excluded."
+        ),
+    )
+    scan_parser.add_argument(
+        "--source-manifest",
+        help="Explicit source requirements or pyproject.toml for a generated lockfile.",
+    )
+    scan_parser.add_argument(
+        "--remediation-output",
+        help="Write the versioned machine-readable remediation bundle to this path.",
+    )
+    scan_parser.add_argument(
+        "--max-fix-attempts",
+        type=int,
+        default=256,
+        help="Maximum candidate resolutions used to prove a minimal secure fix.",
+    )
+    scan_parser.add_argument(
+        "--create-pr",
+        action="store_true",
+        help="Publish the validated fix from an isolated Git worktree using gh.",
+    )
+    scan_parser.add_argument("--pr-base", help="Pull request base branch.")
+    scan_parser.add_argument("--pr-branch", help="Pull request head branch.")
+    scan_parser.add_argument("--pr-title", help="Pull request title.")
+    scan_parser.add_argument(
+        "--pr-ready",
+        action="store_true",
+        help="Create a ready-for-review pull request instead of a draft.",
     )
     scan_parser.add_argument(
         "--config-file",
@@ -401,6 +472,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_target_environment_arguments(scan_parser)
     _add_index_arguments(scan_parser)
+    _add_malicious_arguments(scan_parser)
 
     environment_parser = subparsers.add_parser(
         "environment",
@@ -523,6 +595,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use cached responses only and do not make network requests.",
     )
     _add_index_arguments(environment_parser)
+    _add_malicious_arguments(environment_parser)
     return parser
 
 
@@ -604,9 +677,31 @@ def _add_advisory_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_malicious_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--trusted-project",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "Add a project name to the typosquatting comparison set; repeatable. "
+            "Trustcheck also uses a built-in reference set."
+        ),
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "scan":
+        if args.dry_run and not args.fix:
+            parser.error("--dry-run requires --fix")
+        if args.create_pr and not args.fix:
+            parser.error("--create-pr requires --fix")
+        if args.create_pr and args.dry_run:
+            parser.error("--create-pr cannot be combined with --dry-run")
+        if args.max_fix_attempts < 1:
+            parser.error("--max-fix-attempts must be at least 1")
 
     try:
         if args.command == "inspect":
@@ -632,6 +727,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             resolver = _resolver_from_args(args)
             inspection_client: PypiClient | IndexBackedPackageClient = client
             expected_artifacts: tuple[ArtifactReference, ...] = ()
+            dependency_confusion_indexes: tuple[str, ...] = ()
             selected_version = args.version
             if _uses_nondefault_indexes(args):
                 root_requirement = (
@@ -659,6 +755,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 selected_version = root.version
                 expected_artifacts = root.artifacts
+                dependency_confusion_indexes = next(
+                    (
+                        finding.indexes
+                        for finding in resolution.dependency_confusion
+                        if canonicalize_name(finding.project)
+                        == canonicalize_name(args.project)
+                    ),
+                    (),
+                )
                 inspection_client = _client_for_target(
                     client,
                     ScanTarget(
@@ -686,6 +791,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 resolver=resolver,
                 target_environment=_target_environment_from_args(args),
                 expected_artifacts=expected_artifacts,
+                dependency_confusion_indexes=dependency_confusion_indexes,
+                trusted_projects=args.trusted_project,
             )
             policy_name = "strict" if args.strict else args.policy
             policy = resolve_policy(
@@ -779,10 +886,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "fail_on_severity": args.fail_on_risk_severity,
                 },
             )
+            resolver = _resolver_from_args(args)
             targets = _load_scan_targets(
                 args.filename,
                 client,
-                resolver=_resolver_from_args(args),
+                resolver=resolver,
                 constraints=args.constraint,
                 extras=args.extra,
                 groups=args.group,
@@ -798,6 +906,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 policy=policy,
                 progress_callback=progress_callback,
                 dependency_progress_callback=dependency_progress_callback,
+                resolver=resolver,
             )
         if args.command == "environment":
             config_payload = _load_config_file(args.config_file)
@@ -848,6 +957,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 policy=policy,
                 progress_callback=progress_callback,
                 dependency_progress_callback=dependency_progress_callback,
+                resolver=None,
             )
 
         parser.error("unknown command")
@@ -864,6 +974,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ValueError,
         json.JSONDecodeError,
         ResolutionError,
+        RemediationError,
     ) as exc:
         return _handle_error(
             f"error: received an invalid response while inspecting the package: {exc}",
@@ -888,6 +999,7 @@ def _run_scan_targets(
     policy: PolicySettings,
     progress_callback: ProgressCallback | None,
     dependency_progress_callback: DependencyProgressCallback | None,
+    resolver: PipResolver | None,
 ) -> int:
     reports: list[TrustReport] = []
     report_targets: list[ScanTarget] = []
@@ -926,6 +1038,8 @@ def _run_scan_targets(
                 locked_versions=target.locked_versions,
                 complete_locked_versions=target.complete_locked_versions,
                 expected_artifacts=target.artifacts,
+                dependency_confusion_indexes=target.dependency_confusion,
+                trusted_projects=args.trusted_project,
             )
             evaluation = evaluate_policy(report, policy)
             reports.append(report)
@@ -957,15 +1071,58 @@ def _run_scan_targets(
                 overall_exit_code,
                 EXIT_DATA_ERROR,
             )
-    if args.format == "json":
-        rendered = json.dumps(
-            _render_scan_json(
+    remediation: RemediationPlan | None = None
+    if (
+        args.command == "scan"
+        and (args.plan_fixes or args.fix)
+        and resolver is not None
+        and not failures
+    ):
+        try:
+            remediation = _run_remediation(
                 source_label,
-                reports,
-                failures=failures,
-                cve_only=args.cve,
-                targets=targets,
-            ),
+                targets=report_targets,
+                reports=reports,
+                args=args,
+                client=client,
+                vulnerability_client=vulnerability_client,
+                policy=policy,
+                resolver=resolver,
+                progress_callback=progress_callback,
+                dependency_progress_callback=dependency_progress_callback,
+            )
+        except RemediationError as exc:
+            remediation = RemediationPlan(
+                source=str(Path(source_label).resolve()),
+                status="failed",
+                max_attempts=args.max_fix_attempts,
+                message=str(exc),
+            )
+        _attach_remediation_summary(reports, remediation)
+        if args.remediation_output:
+            remediation.write_json(args.remediation_output)
+        if remediation.status in {"blocked", "failed"}:
+            overall_exit_code = _merge_exit_codes(
+                overall_exit_code,
+                EXIT_REMEDIATION_FAILURE,
+            )
+        elif args.fix and not remediation.validation.policy_passed:
+            overall_exit_code = _merge_exit_codes(
+                overall_exit_code,
+                EXIT_POLICY_FAILURE,
+            )
+    if args.format == "json":
+        payload = _render_scan_json(
+            source_label,
+            reports,
+            failures=failures,
+            cve_only=args.cve,
+            targets=targets,
+        )
+        if remediation is not None:
+            payload["remediation"] = remediation.to_dict()
+        rendered = json.dumps(
+            payload,
             indent=2,
             sort_keys=True,
         )
@@ -977,6 +1134,8 @@ def _run_scan_targets(
             verbose=args.verbose,
             cve_only=args.cve,
         )
+        if remediation is not None:
+            rendered += "\n\n" + render_remediation_text(remediation)
     else:
         rendered = render_export(
             args.format,
@@ -1000,6 +1159,480 @@ def _run_scan_targets(
         )
     _emit_output(rendered, args.output_file)
     return overall_exit_code
+
+
+def _run_remediation(
+    source_label: str,
+    *,
+    targets: Sequence[ScanTarget],
+    reports: Sequence[TrustReport],
+    args: argparse.Namespace,
+    client: PypiClient,
+    vulnerability_client: VulnerabilityIntelligenceClient | None,
+    policy: PolicySettings,
+    resolver: PipResolver,
+    progress_callback: ProgressCallback | None,
+    dependency_progress_callback: DependencyProgressCallback | None,
+) -> RemediationPlan:
+    source_path = Path(source_label).resolve()
+    baseline = _resolution_from_scan_targets(targets)
+    report_map = {
+        str(canonicalize_name(report.project)): report for report in reports
+    }
+    root_requirements = _remediation_root_requirements(
+        source_path,
+        source_manifest=args.source_manifest,
+        extras=args.extra,
+        groups=args.group,
+        target_environment=_target_environment_from_args(args),
+    )
+    for constraint in args.constraint:
+        root_requirements.extend(
+            _read_remediation_requirements(Path(constraint).resolve())
+        )
+    source_types = {
+        str(canonicalize_name(target.project)): target.source_type
+        for target in targets
+    }
+    available_versions = _remediation_available_versions(
+        targets,
+        reports,
+        client=client,
+        keyring_provider=args.keyring_provider,
+    )
+    target_environment = _target_environment_from_args(args)
+
+    def resolve_candidate(requirements: Sequence[str]) -> Resolution:
+        return resolver.resolve_requirements(
+            requirements,
+            target=target_environment,
+            cwd=source_path.parent,
+            offline=client.offline,
+        )
+
+    def scan_candidate(resolution: Resolution) -> dict[str, TrustReport]:
+        return _scan_resolution_for_remediation(
+            resolution,
+            args=args,
+            client=client,
+            vulnerability_client=vulnerability_client,
+            policy=policy,
+            progress_callback=progress_callback,
+            dependency_progress_callback=dependency_progress_callback,
+        )
+
+    plan = plan_remediation(
+        source=source_path,
+        baseline=baseline,
+        reports=report_map,
+        root_requirements=root_requirements,
+        resolve=resolve_candidate,
+        scan=scan_candidate,
+        source_types=source_types,
+        available_versions=available_versions,
+        allow_constraint_changes=args.allow_constraint_changes,
+        max_attempts=args.max_fix_attempts,
+    )
+    if not args.fix or plan.status != "validated":
+        return plan
+
+    prepared = prepare_remediation(
+        source_path,
+        plan,
+        source_manifest=args.source_manifest,
+        constraint_files=args.constraint,
+        allow_constraint_changes=args.allow_constraint_changes,
+    )
+    try:
+        generated = _resolution_from_prepared(
+            prepared,
+            source_path=source_path,
+            args=args,
+            resolver=resolver,
+            offline=client.offline,
+        )
+        expected_versions = (
+            plan.candidate_resolution.versions
+            if plan.candidate_resolution is not None
+            else {}
+        )
+        if generated.versions != expected_versions:
+            raise RemediationError(
+                "the generated dependency files do not reproduce the proven "
+                "minimal resolution"
+            )
+        generated_reports = scan_candidate(generated)
+        targeted = {
+            str(canonicalize_name(upgrade.project)): upgrade.advisory_ids
+            for upgrade in plan.upgrades
+        }
+        plan.validation = validate_candidate(
+            baseline=baseline,
+            baseline_reports=report_map,
+            candidate=generated,
+            candidate_reports=generated_reports,
+            targeted=targeted,
+        )
+        if not plan.validation.accepted:
+            raise RemediationError(
+                "the generated patch failed post-write resolution or security validation"
+            )
+        if args.dry_run:
+            plan.message = (
+                "the exact patch was regenerated and validated in an isolated "
+                "workspace; no project files were modified"
+            )
+            return plan
+        if args.create_pr:
+            result = create_pull_request(
+                prepared,
+                base=args.pr_base,
+                branch=args.pr_branch,
+                title=args.pr_title,
+                ready=args.pr_ready,
+            )
+            if not result.created:
+                plan.status = "failed"
+            return plan
+        apply_prepared_remediation(prepared)
+        return plan
+    finally:
+        prepared.close()
+
+
+def _remediation_available_versions(
+    targets: Sequence[ScanTarget],
+    reports: Sequence[TrustReport],
+    *,
+    client: PypiClient,
+    keyring_provider: str,
+) -> dict[str, tuple[str, ...]]:
+    reports_by_name = {
+        str(canonicalize_name(report.project)): report
+        for report in reports
+    }
+    versions: dict[str, tuple[str, ...]] = {}
+    for target in targets:
+        name = str(canonicalize_name(target.project))
+        report = reports_by_name.get(name)
+        if report is None or not any(
+            vulnerability.fixed_in
+            and not vulnerability.withdrawn
+            and not (
+                vulnerability.suppression is not None
+                and vulnerability.suppression.status == "active"
+            )
+            for vulnerability in report.vulnerabilities
+        ):
+            continue
+        target_client = _client_for_target(
+            client,
+            target,
+            keyring_provider=keyring_provider,
+        )
+        try:
+            payload = target_client.get_project(target.project)
+        except PypiClientError:
+            continue
+        releases = payload.get("releases")
+        if isinstance(releases, dict):
+            versions[name] = tuple(
+                raw_version
+                for raw_version in releases
+                if isinstance(raw_version, str)
+            )
+    return versions
+
+
+def _resolution_from_scan_targets(
+    targets: Sequence[ScanTarget],
+) -> Resolution:
+    distributions = [
+        ResolvedDistribution(
+            name=target.project,
+            version=target.version,
+            requested=target.requested,
+            source_url=target.source_url,
+            is_direct=target.source_type == "direct",
+            editable=target.editable,
+            vcs=target.vcs,
+            vcs_commit=target.vcs_commit,
+            requires_dist=target.requires_dist,
+            artifacts=target.artifacts,
+            index_url=target.index_url,
+        )
+        for target in targets
+        if target.version is not None and target.failure_message is None
+    ]
+    return Resolution(distributions=distributions)
+
+
+def _remediation_root_requirements(
+    source_path: Path,
+    *,
+    source_manifest: str | None,
+    extras: Sequence[str],
+    groups: Sequence[str],
+    target_environment: TargetEnvironment,
+) -> list[str]:
+    manifest = (
+        Path(source_manifest).resolve()
+        if source_manifest is not None
+        else _discover_remediation_manifest(source_path)
+    )
+    input_path = manifest or source_path
+    if is_supported_lockfile(source_path) and manifest is None:
+        raise RemediationError(
+            f"{source_path.name} does not identify its root requirements; "
+            "provide --source-manifest"
+        )
+    if input_path.suffix.lower() == ".toml":
+        try:
+            with input_path.open("rb") as stream:
+                payload = tomllib.load(stream)
+        except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+            raise RemediationError(
+                f"invalid remediation source manifest {input_path}: {exc}"
+            ) from exc
+        return _extract_scan_requirements_from_toml(
+            payload,
+            extras=extras,
+            groups=groups,
+            base_path=input_path.parent,
+        )
+    requirements = _read_remediation_requirements(input_path)
+    if not requirements:
+        raise RemediationError(
+            f"no root requirements were found in remediation source {input_path}"
+        )
+    del target_environment
+    return requirements
+
+
+def _read_remediation_requirements(
+    path: Path,
+    *,
+    seen: set[Path] | None = None,
+) -> list[str]:
+    resolved = path.resolve()
+    visited = seen if seen is not None else set()
+    if resolved in visited:
+        raise RemediationError(
+            f"cyclic requirements include involving {resolved}"
+        )
+    if not resolved.is_file():
+        raise RemediationError(f"requirements source does not exist: {resolved}")
+    visited.add(resolved)
+    requirements: list[str] = []
+    pending = ""
+    for raw_line in resolved.read_text(encoding="utf-8").splitlines():
+        stripped = raw_line.rstrip()
+        continued = stripped.endswith("\\")
+        fragment = stripped[:-1].rstrip() if continued else stripped
+        pending = f"{pending} {fragment.strip()}".strip()
+        if continued:
+            continue
+        cleaned = _clean_requirement_line(pending)
+        pending = ""
+        include_match = re.match(
+            r"^(?:-r|--requirement|-c|--constraint)\s*(?:=|\s)\s*(\S+)",
+            cleaned,
+        )
+        if include_match is not None:
+            requirements.extend(
+                _read_remediation_requirements(
+                    resolved.parent / include_match.group(1),
+                    seen=visited,
+                )
+            )
+            continue
+        requirement = _strip_requirement_hashes(cleaned)
+        if requirement and not requirement.startswith(("-", "--")):
+            requirements.append(requirement)
+    visited.remove(resolved)
+    return requirements
+
+
+def _discover_remediation_manifest(source_path: Path) -> Path | None:
+    if source_path.name == "pyproject.toml":
+        return source_path
+    pyproject = source_path.parent / "pyproject.toml"
+    if pyproject.is_file():
+        return pyproject
+    if source_path.name.lower() == "requirements.txt":
+        requirements_in = source_path.with_suffix(".in")
+        if requirements_in.is_file():
+            return requirements_in
+        return source_path
+    if source_path.suffix.lower() in {".txt", ".in"}:
+        return source_path
+    return None
+
+
+def _scan_resolution_for_remediation(
+    resolution: Resolution,
+    *,
+    args: argparse.Namespace,
+    client: PypiClient,
+    vulnerability_client: VulnerabilityIntelligenceClient | None,
+    policy: PolicySettings,
+    progress_callback: ProgressCallback | None,
+    dependency_progress_callback: DependencyProgressCallback | None,
+) -> dict[str, TrustReport]:
+    reports: dict[str, TrustReport] = {}
+    versions = resolution.versions
+    for distribution in resolution.distributions:
+        target = _scan_target_from_resolved_distribution(
+            distribution,
+            versions,
+        )
+        target_client = _client_for_target(
+            client,
+            target,
+            keyring_provider=args.keyring_provider,
+        )
+        report = inspect_package(
+            target.project,
+            version=target.version,
+            client=target_client,
+            progress_callback=progress_callback,
+            dependency_progress_callback=dependency_progress_callback,
+            include_dependencies=args.with_deps,
+            include_transitive_dependencies=args.with_transitive_deps,
+            include_osv=vulnerability_client is not None,
+            inspect_artifacts=args.inspect_artifacts,
+            vulnerability_client=vulnerability_client,
+            locked_versions=versions,
+            complete_locked_versions=True,
+            expected_artifacts=target.artifacts,
+            dependency_confusion_indexes=target.dependency_confusion,
+            trusted_projects=args.trusted_project,
+        )
+        evaluate_policy(report, policy)
+        reports[str(canonicalize_name(report.project))] = report
+    return reports
+
+
+def _resolution_from_prepared(
+    prepared: PreparedRemediation,
+    *,
+    source_path: Path,
+    args: argparse.Namespace,
+    resolver: PipResolver,
+    offline: bool,
+) -> Resolution:
+    relative_target = source_path.relative_to(prepared.source_root)
+    staged_target = prepared.root / relative_target
+    target_environment = _target_environment_from_args(args)
+    if is_supported_lockfile(staged_target):
+        locked = load_lockfile(
+            staged_target,
+            extras=args.extra,
+            groups=args.group,
+            environment=_target_marker_environment(target_environment),
+        )
+        return Resolution(
+            distributions=[
+                ResolvedDistribution(
+                    name=package.name,
+                    version=package.version,
+                    source_url=next(
+                        (
+                            artifact.url
+                            for artifact in package.artifacts
+                            if artifact.url is not None
+                        ),
+                        None,
+                    ),
+                    requires_dist=package.requires_dist,
+                    artifacts=package.artifacts,
+                    index_url=package.index_url,
+                )
+                for package in locked.packages
+            ]
+        )
+    if staged_target.suffix.lower() == ".toml":
+        try:
+            with staged_target.open("rb") as stream:
+                payload = tomllib.load(stream)
+        except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+            raise RemediationError(
+                f"generated TOML is invalid: {exc}"
+            ) from exc
+        requirements = _extract_scan_requirements_from_toml(
+            payload,
+            extras=args.extra,
+            groups=args.group,
+            base_path=staged_target.parent,
+        )
+        return resolver.resolve_requirements(
+            requirements,
+            target=target_environment,
+            cwd=staged_target.parent,
+            offline=offline,
+        )
+    staged_constraints = [
+        prepared.root / Path(path).resolve().relative_to(prepared.source_root)
+        for path in args.constraint
+    ]
+    resolution = resolver.resolve_requirements_file(
+        staged_target,
+        constraints=staged_constraints,
+        target=target_environment,
+        offline=offline,
+    )
+    pip_tools = load_pip_tools_lock(staged_target)
+    if pip_tools is None:
+        return resolution
+    locked_packages = {
+        str(canonicalize_name(package.name)): package
+        for package in pip_tools.packages
+    }
+    resolution.distributions = [
+        ResolvedDistribution(
+            name=item.name,
+            version=item.version,
+            requested=item.requested,
+            requested_extras=item.requested_extras,
+            source_url=item.source_url,
+            is_direct=item.is_direct,
+            is_yanked=item.is_yanked,
+            editable=item.editable,
+            vcs=item.vcs,
+            vcs_commit=item.vcs_commit,
+            requires_dist=item.requires_dist,
+            artifacts=(
+                locked_packages[str(canonicalize_name(item.name))].artifacts
+                if str(canonicalize_name(item.name)) in locked_packages
+                else item.artifacts
+            ),
+            index_url=item.index_url,
+        )
+        for item in resolution.distributions
+    ]
+    return resolution
+
+
+def _attach_remediation_summary(
+    reports: Sequence[TrustReport],
+    plan: RemediationPlan,
+) -> None:
+    pull_request_url = (
+        plan.pull_request.url
+        if plan.pull_request is not None
+        else None
+    )
+    summary = RemediationSummary(
+        status=plan.status,
+        minimal=plan.minimal,
+        attempts=plan.attempts,
+        upgrades_planned=len(plan.upgrades),
+        blocked_fixes=len(plan.blocked),
+        patch_files=[patch.path for patch in plan.patches],
+        pull_request_url=pull_request_url,
+    )
+    for report in reports:
+        report.remediation = summary
 
 
 def _emit_output(rendered: str, output_file: str | None) -> None:
@@ -1468,6 +2101,8 @@ def _format_upstream_error(exc: PypiClientError) -> str:
 
 
 def _merge_exit_codes(current: int, new: int) -> int:
+    if current == EXIT_REMEDIATION_FAILURE or new == EXIT_REMEDIATION_FAILURE:
+        return EXIT_REMEDIATION_FAILURE
     if current == EXIT_DATA_ERROR or new == EXIT_DATA_ERROR:
         return EXIT_DATA_ERROR
     if current == EXIT_UPSTREAM_FAILURE or new == EXIT_UPSTREAM_FAILURE:
@@ -1743,6 +2378,19 @@ def _scan_target_from_resolved_distribution(
             else item.requires_dist
         ),
         dependency_confusion=dependency_confusion,
+        source_type=(
+            "vcs"
+            if item.vcs is not None
+            else "directory"
+            if item.editable
+            else "direct"
+            if item.is_direct
+            else (
+                locked_package.source_type
+                if locked_package is not None
+                else "index"
+            )
+        ),
     )
 
 
@@ -1787,6 +2435,7 @@ def _scan_targets_from_lockfile(
                 canonicalize_name(package.name),
                 (),
             ),
+            source_type=package.source_type,
         )
         for package in resolution.packages
     ]
@@ -1928,6 +2577,21 @@ def _extract_scan_requirements_from_toml(
                         group_payload.get("dependencies"),
                         "poetry",
                     )
+        pdm = tool.get("pdm")
+        if isinstance(pdm, dict):
+            pdm_groups = pdm.get("dev-dependencies")
+            if isinstance(pdm_groups, dict):
+                for name, group_payload in pdm_groups.items():
+                    key = canonicalize_name(str(name))
+                    if key in available_groups:
+                        raise ValueError(
+                            f"dependency group {name!r} is defined more than once"
+                        )
+                    available_groups[key] = (
+                        str(name),
+                        group_payload,
+                        "pdm",
+                    )
 
     selected_groups = (
         [canonicalize_name(name) for name in groups]
@@ -1944,6 +2608,10 @@ def _extract_scan_requirements_from_toml(
                     group_entry[1],
                     base_path=base_path,
                 )
+            )
+        elif group_entry[2] == "pdm":
+            requirements.extend(
+                _collect_requirement_strings(group_entry[1])
             )
         else:
             requirements.extend(
@@ -2256,6 +2924,12 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
         f"failures={len(report.diagnostics.request_failures)} "
         f"cache_hits={report.diagnostics.cache_hit_count}"
     )
+    lines.append(
+        "  malicious-package heuristics: "
+        f"{report.malicious_package.level} "
+        f"(score={report.malicious_package.score}, "
+        f"findings={len(report.malicious_package.findings)})"
+    )
     lines.append(f"  why this result: {_evidence_summary(report)}")
 
     reasons = _recommendation_reasons(report)
@@ -2330,6 +3004,28 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
         lines.append(f"sdist/wheel provenance consistency: {consistency_label}")
     if report.release_drift.compared_to_version:
         lines.append(f"release drift baseline: {report.release_drift.compared_to_version}")
+
+    if report.malicious_package.findings:
+        lines.append("")
+        lines.append("malicious-package heuristic indicators:")
+        lines.append(f"  disclaimer: {report.malicious_package.disclaimer}")
+        for finding in report.malicious_package.findings:
+            location = (
+                f" location={finding.location}" if finding.location else ""
+            )
+            artifact = (
+                f" artifact={finding.artifact}" if finding.artifact else ""
+            )
+            lines.append(
+                "  - "
+                f"[{finding.severity}/{finding.confidence}] {finding.code}: "
+                f"{finding.message} score={finding.score}{artifact}{location}"
+            )
+            if verbose:
+                lines.extend(
+                    f"    evidence: {evidence}"
+                    for evidence in finding.evidence
+                )
 
     ownership = report.ownership or {}
     roles = ownership.get("roles") or []
@@ -2488,6 +3184,36 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
                     "metadata mismatches",
                     file.artifact.metadata_mismatches,
                 )
+                lines.append(
+                    "      Python source files analyzed: "
+                    f"{file.artifact.source_files_analyzed}"
+                )
+                _append_artifact_findings(
+                    lines,
+                    "source analysis errors",
+                    file.artifact.source_parse_errors,
+                )
+                if file.artifact.native_binaries:
+                    lines.append("      native binary analysis:")
+                    for native in file.artifact.native_binaries:
+                        lines.append(
+                            "        - "
+                            f"{native.path}: format={native.format} "
+                            f"architecture={native.architecture or '-'} "
+                            f"signature={native.signature_status} "
+                            f"entropy={native.entropy if native.entropy is not None else '-'}"
+                        )
+                        if native.imports:
+                            lines.append(
+                                "          imports: " + ", ".join(native.imports)
+                            )
+                        if native.embedded_payloads:
+                            lines.append(
+                                "          embedded payloads: "
+                                + ", ".join(native.embedded_payloads)
+                            )
+                        if native.parse_error:
+                            lines.append(f"          parse note: {native.parse_error}")
                 if file.artifact.error:
                     lines.append(f"      error: {file.artifact.error}")
 

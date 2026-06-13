@@ -73,6 +73,9 @@ file, so the action rejects `expected-repo` when `target` is a file.
     with-epss: "true"
     with-transitive-deps: "true"
     inspect-artifacts: "true"
+    trusted-projects: |
+      internal-sdk
+      internal-auth
 ```
 
 `with-deps` and `with-transitive-deps` are mutually exclusive, matching the
@@ -90,6 +93,44 @@ Pass a repository-relative JSON policy path:
 ```
 
 The file uses the same schema as CLI `--policy-file`.
+
+## Remediation pull requests
+
+Plan a repair and upload the machine-readable patch bundle:
+
+```yaml
+- uses: Halfblood-Prince/trustcheck@v1
+  with:
+    target: requirements.txt
+    with-osv: "true"
+    remediation: plan
+    remediation-path: reports/remediation.json
+```
+
+Create a validated draft pull request:
+
+```yaml
+permissions:
+  contents: write
+  pull-requests: write
+
+steps:
+  - uses: actions/checkout@v6
+    with:
+      fetch-depth: 0
+  - uses: Halfblood-Prince/trustcheck@v1
+    with:
+      target: uv.lock
+      with-osv: "true"
+      remediation: fix
+      create-pr: "true"
+      pr-base: main
+```
+
+The action never changes workflow permissions. PR mode requires the caller to
+grant `contents: write` and `pull-requests: write`, and requires an
+authenticated `gh` CLI. Draft is the default; set `pr-ready: "true"` to request
+review immediately.
 
 ## Inputs
 
@@ -110,6 +151,18 @@ The file uses the same schema as CLI `--policy-file`.
 | `extra-index-urls` | empty | Whitespace- or newline-separated additional indexes. |
 | `keyring-provider` | `auto` | `auto`, `disabled`, `import`, or `subprocess`. |
 | `allow-dependency-confusion` | `false` | Continue after reporting a cross-index project-name collision. |
+| `trusted-projects` | empty | Whitespace- or newline-separated names added to the typosquatting reference set. |
+| `remediation` | `none` | `none`, `plan`, or `fix` for dependency-file targets. |
+| `dry-run` | `false` | Regenerate and validate the exact patch without applying it. |
+| `allow-constraint-changes` | `false` | Permit minimum required declared-range changes. |
+| `source-manifest` | empty | Source requirements or `pyproject.toml` for a generated lock. |
+| `remediation-path` | `trustcheck-remediation.json` | Machine-readable patch bundle path. |
+| `max-fix-attempts` | `256` | Bound for minimal secure resolution attempts. |
+| `create-pr` | `false` | Publish a validated fix through `git` and `gh`. |
+| `pr-base` | empty | Pull request base branch. |
+| `pr-branch` | generated | Pull request head branch. |
+| `pr-title` | generated | Pull request title. |
+| `pr-ready` | `false` | Create a ready PR instead of a draft. |
 | `format` | `text` | `text`, `json`, `sarif`, `cyclonedx-json`, `cyclonedx-xml`, `spdx-json`, `openvex`, or `markdown`. |
 | `report-path` | derived | Report location; the default extension follows `format`. |
 | `artifact-name` | `trustcheck-report` | Uploaded workflow artifact name. |
@@ -127,6 +180,11 @@ closed unless `allow-dependency-confusion` is explicitly enabled.
 | `recommendation` | Overall recommendation such as `verified`, `review-required`, or `high-risk`. |
 | `policy-passed` | `true` only when policy passes and the scan has no operational failures. |
 | `report-path` | Absolute path to the generated report. |
+| `remediation-status` | `not-requested`, `planned`, `validated`, `applied`, `pull-request-created`, `blocked`, or `failed`. |
+| `applied-fixes` | Number of dependency upgrades in the remediation. |
+| `patch-path` | Absolute path to the remediation bundle. |
+| `pr-branch` | Created remediation branch. |
+| `pr-url` | Created pull request URL. |
 
 Use outputs in later workflow steps:
 

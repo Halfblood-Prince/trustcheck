@@ -28,6 +28,13 @@
 - `trustcheck.EpssClient`
 - `trustcheck.VulnerabilityIntelligenceClient`
 - `trustcheck.VulnerabilitySuppression`
+- `trustcheck.HeuristicFinding`
+- `trustcheck.MaliciousPackageAssessment`
+- `trustcheck.NativeBinaryInspection`
+- `trustcheck.DEFAULT_TRUSTED_PROJECTS`
+- `trustcheck.analyze_python_source`
+- `trustcheck.inspect_native_binary`
+- `trustcheck.heuristic_score`
 
 Everything else under `trustcheck.*` should be treated as internal implementation detail and may change between minor releases.
 
@@ -91,6 +98,31 @@ sarif = render_export(
 `render_export` accepts `sarif`, `cyclonedx-json`, `cyclonedx-xml`,
 `spdx-json`, `openvex`, or `markdown`. `ExportPackage.artifacts` can carry
 lockfile `ArtifactReference` records so multi-algorithm hashes are retained.
+
+## Malicious-package heuristics
+
+```python
+from trustcheck import inspect_package
+
+report = inspect_package(
+    "internal-sdkk",
+    inspect_artifacts=True,
+    trusted_projects=("internal-sdk",),
+    dependency_confusion_indexes=(
+        "https://pypi.org/simple",
+        "https://packages.example/simple",
+    ),
+)
+
+print(report.malicious_package.score)
+for finding in report.malicious_package.findings:
+    print(finding.code, finding.confidence, finding.location)
+```
+
+Metadata, name, index, ownership, repository, and cadence checks run without
+artifact inspection. `inspect_artifacts=True` additionally parses bounded
+Python source with `ast` and inspects PE, ELF, and Mach-O structure. Findings
+are heuristic review indicators, not proof that a package is malicious.
 
 ## Dependency resolution
 
@@ -243,6 +275,10 @@ In most applications, you only need to provide:
 - optionally `vulnerability_client=VulnerabilityIntelligenceClient(...)` to
   merge multiple advisory and enrichment providers
 - optionally `inspect_artifacts=True` to statically inspect downloaded wheels and sdists
+- optionally `trusted_projects=("internal-sdk",)` to extend the typosquatting
+  reference set
+- optionally `dependency_confusion_indexes=(...)` to attach a resolver-observed
+  cross-index collision to the package assessment
 - optionally `locked_versions={"dependency-name": "1.2.3"}` to retain resolved direct and transitive versions
 - optionally `target_environment=TargetEnvironment(...)` for resolver target controls
 - optionally `expected_artifacts=(ArtifactReference(...),)` to require locked
@@ -264,7 +300,8 @@ dependency-confusion detection. Cross-index collisions raise
 index client.
 
 Artifact inspection reads archive contents only. It does not import or execute
-the inspected package.
+the inspected package. Native signature fields report embedded signature
+presence, not cryptographic validity.
 
 ### Progress callback example
 
@@ -301,6 +338,7 @@ report = inspect_package(
 - dependency inspection results and aggregate dependency summary
 - policy evaluation
 - diagnostics
+- remediation summary
 
 Use `report.to_dict()` when you need the stable JSON envelope.
 
@@ -320,3 +358,24 @@ for file in report.files:
 for dependency in report.dependencies:
     print(dependency.project, dependency.depth, dependency.recommendation, dependency.error)
 ```
+
+## Remediation API
+
+The public remediation surface includes:
+
+- `plan_remediation(...)`
+- `prepare_remediation(...)`
+- `apply_prepared_remediation(...)`
+- `create_pull_request(...)`
+- `RemediationPlan`, `RemediationUpgrade`, `BlockedFix`, `FilePatch`,
+  `SemanticEdit`, `RemediationValidation`, and `PullRequestResult`
+- `REMEDIATION_SCHEMA_VERSION` and `REMEDIATION_SCHEMA_ID`
+
+`plan_remediation` accepts a baseline `Resolution`, exact-version reports,
+root requirements, and resolver/scanner callbacks. This keeps network and
+policy configuration under application control. Only plans with status
+`validated` can be passed to `prepare_remediation`; prepared changes expose
+exact file bytes and patches and support context-manager cleanup.
+
+Most callers should use the CLI because it supplies the same index, target
+matrix, advisory providers, and policy to every resolution and rescan.

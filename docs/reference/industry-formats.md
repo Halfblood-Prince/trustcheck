@@ -34,6 +34,8 @@ SARIF includes results for:
 - artifact verification diagnostics
 - artifacts without fully verified provenance
 - package scan failures
+- malicious-package heuristic findings with confidence, score, evidence, and
+  artifact-internal source locations
 
 Every result has a SHA-256 `trustcheck/v1` partial fingerprint derived from
 the finding category, package purl, stable finding identity, manifest name,
@@ -57,6 +59,8 @@ dependency references. Components include trustcheck properties for:
 - normalized CVSS ratings and CWE identifiers
 - withdrawn status, CISA KEV, FIRST EPSS, and suppression evidence
 - every retained lockfile or observed artifact hash
+- malicious-package score, level, disclaimer, and individual heuristic
+  findings
 
 The vulnerability section links each advisory to affected component refs.
 Document serial numbers are deterministic for the exported evidence; metadata
@@ -72,7 +76,7 @@ SPDX 2.3 does not define CycloneDX-style arbitrary properties, so trustcheck
 evidence is represented through package comments and document annotations.
 Those records include vulnerabilities, provenance coverage, artifact
 checksums, recommendations, policy violations, CVSS, CWE, withdrawal, KEV,
-EPSS, and suppression state.
+EPSS, suppression state, and malicious-package heuristic evidence.
 
 ## OpenVEX
 
@@ -86,6 +90,17 @@ Trustcheck does not infer `not_affected` from the absence of an advisory.
 OpenVEX 0.2.0 requires at least one statement, so requesting `openvex` when
 no configured source reported a vulnerability returns a data error instead
 of emitting a non-conforming or misleading document.
+
+OpenVEX remains vulnerability-focused and does not translate heuristic
+malicious-package indicators into vulnerability status statements. Native JSON,
+SARIF, CycloneDX, SPDX, and Markdown preserve that evidence.
+
+## Heuristic labeling
+
+Every exported malicious-package indicator is labeled as heuristic and carries
+the disclaimer that it is not proof of malware. SARIF emits dedicated
+`TC-HEURISTIC-*` rules and stable fingerprints. Artifact source findings use
+locations such as `package.whl!/module.py` with a best-effort line number.
 
 ## Stability
 

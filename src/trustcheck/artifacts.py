@@ -16,10 +16,18 @@ from typing import IO, Callable, Iterable, Sequence, TypeVar
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
+from .malicious import (
+    analyze_python_source,
+    inspect_native_binary,
+    native_binary_findings,
+)
 from .models import ArtifactInspection
 
 MAX_METADATA_BYTES = 2 * 1024 * 1024
 MAX_SCRIPT_SAMPLE_BYTES = 256 * 1024
+MAX_SOURCE_AST_BYTES = 512 * 1024
+MAX_NATIVE_ANALYSIS_BYTES = 32 * 1024 * 1024
+MAX_DEEP_INSPECTION_BYTES = 64 * 1024 * 1024
 OVERSIZED_FILE_BYTES = 20 * 1024 * 1024
 NATIVE_SUFFIXES = (".so", ".pyd", ".dll", ".dylib")
 SCRIPT_SUFFIXES = (".sh", ".bash", ".bat", ".cmd", ".ps1")
@@ -154,6 +162,7 @@ def _inspect_wheel(payload: bytes) -> ArtifactInspection:
             _inspect_wheel_file_metadata(archive, members, result)
             _inspect_entry_points(archive, members, result)
             _inspect_wheel_contents(members, result)
+            _inspect_zip_payloads(archive, members, result)
     except (
         NotImplementedError,
         OSError,
@@ -437,6 +446,7 @@ def _inspect_sdist_zip(
         if _is_script_candidate(name):
             sample = _read_zip_member(archive, member, limit=MAX_SCRIPT_SAMPLE_BYTES)
             _inspect_script_sample(name, sample, result)
+    _inspect_zip_payloads(archive, files, result)
 
 
 def _inspect_sdist_tar(
@@ -461,6 +471,126 @@ def _inspect_sdist_tar(
         if _is_script_candidate(name) or member.mode & 0o111:
             sample = _read_tar_member(archive, member, limit=MAX_SCRIPT_SAMPLE_BYTES)
             _inspect_script_sample(name, sample, result)
+    _inspect_tar_payloads(archive, files, result)
+
+
+def _inspect_zip_payloads(
+    archive: zipfile.ZipFile,
+    members: Sequence[zipfile.ZipInfo],
+    result: ArtifactInspection,
+) -> None:
+    remaining = MAX_DEEP_INSPECTION_BYTES
+    for member in members:
+        if member.is_dir() or member.flag_bits & 0x1:
+            continue
+        name = member.filename
+        lowered = name.lower()
+        if lowered.endswith(".py"):
+            if member.file_size > MAX_SOURCE_AST_BYTES:
+                result.source_parse_errors.append(
+                    f"{name}: source exceeds the {MAX_SOURCE_AST_BYTES}-byte AST limit"
+                )
+                continue
+            if member.file_size > remaining:
+                result.source_parse_errors.append(
+                    f"{name}: deep-inspection byte budget exhausted"
+                )
+                continue
+            payload = _read_zip_member(archive, member, limit=MAX_SOURCE_AST_BYTES)
+            remaining -= len(payload)
+            _record_python_findings(name, payload, result)
+        elif lowered.endswith(NATIVE_SUFFIXES):
+            if member.file_size > MAX_NATIVE_ANALYSIS_BYTES:
+                result.source_parse_errors.append(
+                    f"{name}: native binary exceeds the "
+                    f"{MAX_NATIVE_ANALYSIS_BYTES}-byte analysis limit"
+                )
+                continue
+            if member.file_size > remaining:
+                result.source_parse_errors.append(
+                    f"{name}: deep-inspection byte budget exhausted"
+                )
+                continue
+            payload = _read_zip_member(
+                archive,
+                member,
+                limit=MAX_NATIVE_ANALYSIS_BYTES,
+            )
+            remaining -= len(payload)
+            _record_native_findings(name, payload, result)
+
+
+def _inspect_tar_payloads(
+    archive: tarfile.TarFile,
+    members: Sequence[tarfile.TarInfo],
+    result: ArtifactInspection,
+) -> None:
+    remaining = MAX_DEEP_INSPECTION_BYTES
+    for member in members:
+        if not member.isfile():
+            continue
+        name = member.name
+        lowered = name.lower()
+        if lowered.endswith(".py"):
+            if member.size > MAX_SOURCE_AST_BYTES:
+                result.source_parse_errors.append(
+                    f"{name}: source exceeds the {MAX_SOURCE_AST_BYTES}-byte AST limit"
+                )
+                continue
+            if member.size > remaining:
+                result.source_parse_errors.append(
+                    f"{name}: deep-inspection byte budget exhausted"
+                )
+                continue
+            payload = _read_tar_member(archive, member, limit=MAX_SOURCE_AST_BYTES)
+            remaining -= len(payload)
+            _record_python_findings(name, payload, result)
+        elif lowered.endswith(NATIVE_SUFFIXES):
+            if member.size > MAX_NATIVE_ANALYSIS_BYTES:
+                result.source_parse_errors.append(
+                    f"{name}: native binary exceeds the "
+                    f"{MAX_NATIVE_ANALYSIS_BYTES}-byte analysis limit"
+                )
+                continue
+            if member.size > remaining:
+                result.source_parse_errors.append(
+                    f"{name}: deep-inspection byte budget exhausted"
+                )
+                continue
+            payload = _read_tar_member(
+                archive,
+                member,
+                limit=MAX_NATIVE_ANALYSIS_BYTES,
+            )
+            remaining -= len(payload)
+            _record_native_findings(name, payload, result)
+
+
+def _record_python_findings(
+    name: str,
+    payload: bytes,
+    result: ArtifactInspection,
+) -> None:
+    findings, error = analyze_python_source(
+        name,
+        payload,
+        install_context=_is_install_context(name),
+    )
+    if error is not None:
+        result.source_parse_errors.append(error)
+        return
+    result.source_files_analyzed += 1
+    result.heuristic_findings.extend(findings)
+
+
+def _record_native_findings(
+    name: str,
+    payload: bytes,
+    result: ArtifactInspection,
+) -> None:
+    inspection = inspect_native_binary(name, payload)
+    result.native_binaries.append(inspection)
+    result.heuristic_findings.extend(native_binary_findings(inspection))
 
 
 def _inspect_zip_structure(
@@ -666,6 +796,16 @@ def _is_script_candidate(name: str) -> bool:
         basename in {"setup.py", "install.py"}
         or "/scripts/" in f"/{lowered}"
         or lowered.endswith(SCRIPT_SUFFIXES)
+    )
+
+
+def _is_install_context(name: str) -> bool:
+    lowered = name.lower().replace("\\", "/")
+    basename = lowered.rsplit("/", maxsplit=1)[-1]
+    return (
+        basename in {"setup.py", "install.py"}
+        or "/scripts/" in f"/{lowered}"
+        or "/build_backend/" in f"/{lowered}"
     )
 
 

@@ -44,7 +44,11 @@ For a selected package version, `trustcheck` can:
 - resolve against PEP 503/691 private indexes with optional keyring credentials
 - block dependency-confusion collisions across public and private indexes
 - preserve and verify lockfile artifact hashes before trusting downloaded bytes
+- plan, dry-run, apply, or publish the smallest validated secure dependency
+  upgrade set without silently widening declared constraints
 - optionally inspect wheel and sdist contents without importing or executing package code
+- score typosquatting, dependency-confusion, package-history, source-code, and
+  native-binary heuristic indicators without claiming a malware verdict
 - emit text, JSON, SARIF 2.1.0, CycloneDX 1.6 JSON/XML, SPDX 2.3 JSON,
   OpenVEX 0.2.0, or Markdown
 
@@ -95,7 +99,7 @@ PyPI installation requirements:
 - Python `>=3.11`
 - Network access to PyPI
 
-Machine-readable reports currently use JSON schema `1.6.0`. Package and report
+Machine-readable reports currently use JSON schema `1.8.0`. Package and report
 schema versions are independent so documentation-only package releases do not
 force contract churn.
 
@@ -228,6 +232,31 @@ Inspect dependencies declared in a TOML project file:
 trustcheck scan pyproject.toml
 ```
 
+Plan the smallest constraint-compatible secure upgrade set:
+
+```bash
+trustcheck scan requirements.txt \
+  --with-osv \
+  --plan-fixes \
+  --remediation-output reports/trustcheck-remediation.json
+```
+
+Generate and validate the exact patch without changing the working tree:
+
+```bash
+trustcheck scan pyproject.toml --with-osv --fix --dry-run
+```
+
+Apply the same transaction only after re-resolution and a complete rescan:
+
+```bash
+trustcheck scan uv.lock --with-osv --fix
+```
+
+Secure versions excluded by a declared range remain blocked unless
+`--allow-constraint-changes` is passed. Editable, local-path, direct-archive,
+and VCS dependencies are reported as requiring human remediation.
+
 Select project extras and dependency groups:
 
 ```bash
@@ -285,8 +314,24 @@ trustcheck inspect sampleproject --version 4.0.0 --inspect-artifacts --verbose
 ```
 
 Artifact inspection validates wheel `RECORD` hashes, lists console scripts,
-detects native extensions and unusual files, and compares wheel and sdist
-metadata. It reads archive bytes only and never imports the inspected package.
+parses Python source with `ast`, detects suspicious capability combinations,
+and compares wheel and sdist metadata. PE, ELF, and Mach-O files are inspected
+for imported libraries, embedded signature presence, entropy, and embedded
+payload signatures. It reads archive bytes only and never imports the
+inspected package.
+
+Name, index, ownership, repository, and release-cadence heuristics run during
+normal inspection. Add organization-specific reference names with repeatable
+`--trusted-project`:
+
+```bash
+trustcheck scan requirements.txt \
+  --trusted-project internal-sdk \
+  --trusted-project internal-auth
+```
+
+Every malicious-package finding is explicitly labeled as a heuristic indicator
+for review, not proof that a package is malicious.
 
 Require a release to match an expected repository:
 

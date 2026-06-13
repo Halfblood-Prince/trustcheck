@@ -36,6 +36,7 @@ dependencies = [
   "PyJWT>=2.13,<3",
   "pydantic>=2.10,<3",
   "sigstore>=4.3,<5",
+  "tomlkit>=0.13,<1",
   "tuf>=7,<8",
   "urllib3>=2.7,<3",
 ]

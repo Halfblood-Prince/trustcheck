@@ -25,6 +25,8 @@ from trustcheck.models import (
     DependencyInspection,
     DependencySummary,
     FileProvenance,
+    HeuristicFinding,
+    MaliciousPackageAssessment,
     PolicyEvaluation,
     PolicyViolation,
     ReportDiagnostics,
@@ -327,6 +329,96 @@ class ExportTests(unittest.TestCase):
                 for component in payload["components"]
             },
         )
+
+    def test_malicious_package_heuristics_are_preserved_in_industry_outputs(self) -> None:
+        report = make_report()
+        report.malicious_package = MaliciousPackageAssessment(
+            score=68,
+            level="high",
+            artifact_analysis=True,
+            findings=[
+                HeuristicFinding(
+                    code="ast_credential_network_chain",
+                    category="credential-access",
+                    severity="critical",
+                    confidence="medium",
+                    score=58,
+                    message="Credential access and network capability are combined.",
+                    evidence=["credential-access", "network"],
+                    location="demo/setup.py:12",
+                    artifact="demo-1.2.3.tar.gz",
+                )
+            ],
+        )
+        package = replace(make_package(), report=report)
+
+        sarif = json.loads(
+            render_export(
+                "sarif",
+                [package],
+                source_name="requirements.txt",
+                generated_at=GENERATED_AT,
+            )
+        )
+        heuristic = next(
+            item
+            for item in sarif["runs"][0]["results"]
+            if item["ruleId"].startswith("TC-HEURISTIC-")
+        )
+        self.assertTrue(heuristic["properties"]["heuristic"])
+        self.assertEqual(
+            heuristic["locations"][0]["physicalLocation"]["region"]["startLine"],
+            12,
+        )
+        self.assertIn(
+            "demo-1.2.3.tar.gz!/demo/setup.py",
+            heuristic["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+        )
+
+        cyclonedx = json.loads(
+            render_export(
+                "cyclonedx-json",
+                [package],
+                source_name="requirements.txt",
+                generated_at=GENERATED_AT,
+            )
+        )
+        root = next(
+            item for item in cyclonedx["components"]
+            if item["name"] == "Demo_Package"
+        )
+        properties = {item["name"]: item["value"] for item in root["properties"]}
+        self.assertEqual(properties["trustcheck:malicious-package:score"], "68")
+        self.assertIn(
+            '"heuristic":true',
+            properties[
+                "trustcheck:malicious-package:heuristic:"
+                "ast_credential_network_chain"
+            ],
+        )
+
+        spdx = json.loads(
+            render_export(
+                "spdx-json",
+                [package],
+                source_name="requirements.txt",
+                generated_at=GENERATED_AT,
+            )
+        )
+        root_package = next(
+            item for item in spdx["packages"]
+            if item["name"] == "Demo_Package"
+        )
+        self.assertIn("heuristic=true;not-proof-of-malware", root_package["comment"])
+
+        markdown = render_export(
+            "markdown",
+            [package],
+            source_name="requirements.txt",
+            generated_at=GENERATED_AT,
+        )
+        self.assertIn("### Malicious-Package Heuristics", markdown)
+        self.assertIn("not proof", markdown)
 
     def test_cyclonedx_xml_matches_json_semantics(self) -> None:
         rendered = render_export(

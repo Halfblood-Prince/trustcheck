@@ -32,6 +32,7 @@ from trustcheck.service import (
     _build_dependency_summary,
     _build_publisher_trust_summary,
     _instrument_client,
+    _load_package_history,
     _normalize_repo_url,
     _previous_release_version,
     _publisher_repository_url,
@@ -759,6 +760,31 @@ class InspectPackageTests(unittest.TestCase):
         self.assertIn("wheel_record_invalid", {flag.code for flag in report.risk_flags})
         self.assertEqual(report.recommendation, "high-risk")
 
+    def test_malicious_package_heuristics_affect_risk_recommendation(self) -> None:
+        client = FakeClient()
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = make_provenance()
+            report = inspect_package(
+                "gridoptim",
+                client=cast(Any, client),
+                dependency_confusion_indexes=(
+                    "https://pypi.org/simple",
+                    "https://packages.example/simple",
+                ),
+                trusted_projects=("gridoptimm",),
+            )
+
+        codes = {finding.code for finding in report.malicious_package.findings}
+        self.assertIn("dependency_confusion_index_collision", codes)
+        self.assertIn("typosquatting_name_similarity", codes)
+        self.assertGreaterEqual(report.malicious_package.score, 75)
+        self.assertIn(
+            "malicious_package_heuristics",
+            {flag.code for flag in report.risk_flags},
+        )
+        self.assertEqual(report.recommendation, "high-risk")
+
     def test_native_artifact_is_review_required_not_high_risk(self) -> None:
         wheel = build_wheel(
             project="gridoptim",
@@ -1402,6 +1428,30 @@ class InspectPackageTests(unittest.TestCase):
                 ),
             )
         )
+        self.assertIsNone(
+            _load_package_history(
+                "demo",
+                "2.0",
+                cast(Any, FailingClient()),
+            ).project_payload
+        )
+
+        class PreviousReleaseFailingClient:
+            def get_project(self, project: str) -> dict[str, object]:
+                del project
+                return {"releases": {"1.0": [], "2.0": []}}
+
+            def get_release(self, project: str, version: str) -> dict[str, object]:
+                del project, version
+                raise PypiClientError("previous release unavailable")
+
+        history = _load_package_history(
+            "demo",
+            "2.0",
+            cast(Any, PreviousReleaseFailingClient()),
+        )
+        self.assertEqual(history.previous_version, "1.0")
+        self.assertIsNone(history.previous_payload)
 
     def test_expected_repository_matches_slug_style_publisher_identity(self) -> None:
         provenance = make_provenance(

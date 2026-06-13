@@ -66,6 +66,54 @@ inputs:
     description: Continue after reporting a project-name collision across configured indexes.
     required: false
     default: "false"
+  trusted-projects:
+    description: Whitespace- or newline-separated project names added to the typosquatting reference set.
+    required: false
+    default: ""
+  remediation:
+    description: Remediation mode for dependency files (none, plan, or fix).
+    required: false
+    default: none
+  dry-run:
+    description: Regenerate and validate the exact fix patch without modifying files.
+    required: false
+    default: "false"
+  allow-constraint-changes:
+    description: Permit minimal declared-range changes when secure versions are excluded.
+    required: false
+    default: "false"
+  source-manifest:
+    description: Source requirements or pyproject.toml used to regenerate a lockfile.
+    required: false
+    default: ""
+  remediation-path:
+    description: Path for the machine-readable remediation patch bundle.
+    required: false
+    default: trustcheck-remediation.json
+  max-fix-attempts:
+    description: Maximum candidate resolutions used to prove a minimal secure fix.
+    required: false
+    default: "256"
+  create-pr:
+    description: Create a pull request for a validated fix using git and gh.
+    required: false
+    default: "false"
+  pr-base:
+    description: Optional pull request base branch.
+    required: false
+    default: ""
+  pr-branch:
+    description: Optional pull request head branch.
+    required: false
+    default: ""
+  pr-title:
+    description: Optional pull request title.
+    required: false
+    default: ""
+  pr-ready:
+    description: Create a ready-for-review pull request instead of a draft.
+    required: false
+    default: "false"
   format:
     description: Report format (text, json, sarif, cyclonedx-json, cyclonedx-xml, spdx-json, openvex, or markdown).
     required: false
@@ -93,6 +141,21 @@ outputs:
   report-path:
     description: Absolute path to the generated report.
     value: ${{ steps.trustcheck.outputs['report-path'] }}
+  remediation-status:
+    description: Remediation result status.
+    value: ${{ steps.trustcheck.outputs['remediation-status'] }}
+  applied-fixes:
+    description: Number of dependency upgrades in the validated remediation.
+    value: ${{ steps.trustcheck.outputs['applied-fixes'] }}
+  patch-path:
+    description: Absolute path to the remediation patch bundle.
+    value: ${{ steps.trustcheck.outputs['patch-path'] }}
+  pr-branch:
+    description: Pull request branch created by remediation.
+    value: ${{ steps.trustcheck.outputs['pr-branch'] }}
+  pr-url:
+    description: Pull request URL created by remediation.
+    value: ${{ steps.trustcheck.outputs['pr-url'] }}
 
 runs:
   using: composite
@@ -126,6 +189,18 @@ runs:
         TRUSTCHECK_ACTION_EXTRA_INDEX_URLS: ${{ inputs['extra-index-urls'] }}
         TRUSTCHECK_ACTION_KEYRING_PROVIDER: ${{ inputs['keyring-provider'] }}
         TRUSTCHECK_ACTION_ALLOW_DEPENDENCY_CONFUSION: ${{ inputs['allow-dependency-confusion'] }}
+        TRUSTCHECK_ACTION_TRUSTED_PROJECTS: ${{ inputs['trusted-projects'] }}
+        TRUSTCHECK_ACTION_REMEDIATION: ${{ inputs.remediation }}
+        TRUSTCHECK_ACTION_DRY_RUN: ${{ inputs['dry-run'] }}
+        TRUSTCHECK_ACTION_ALLOW_CONSTRAINT_CHANGES: ${{ inputs['allow-constraint-changes'] }}
+        TRUSTCHECK_ACTION_SOURCE_MANIFEST: ${{ inputs['source-manifest'] }}
+        TRUSTCHECK_ACTION_REMEDIATION_PATH: ${{ inputs['remediation-path'] }}
+        TRUSTCHECK_ACTION_MAX_FIX_ATTEMPTS: ${{ inputs['max-fix-attempts'] }}
+        TRUSTCHECK_ACTION_CREATE_PR: ${{ inputs['create-pr'] }}
+        TRUSTCHECK_ACTION_PR_BASE: ${{ inputs['pr-base'] }}
+        TRUSTCHECK_ACTION_PR_BRANCH: ${{ inputs['pr-branch'] }}
+        TRUSTCHECK_ACTION_PR_TITLE: ${{ inputs['pr-title'] }}
+        TRUSTCHECK_ACTION_PR_READY: ${{ inputs['pr-ready'] }}
         TRUSTCHECK_ACTION_FORMAT: ${{ inputs.format }}
         TRUSTCHECK_ACTION_REPORT_PATH: ${{ inputs['report-path'] }}
       run: python -m trustcheck.github_action
@@ -135,7 +210,9 @@ runs:
       uses: actions/upload-artifact@v7
       with:
         name: ${{ inputs['artifact-name'] }}
-        path: ${{ steps.trustcheck.outputs['report-path'] }}
+        path: |
+          ${{ steps.trustcheck.outputs['report-path'] }}
+          ${{ steps.trustcheck.outputs['patch-path'] }}
         if-no-files-found: error
 
     - name: Enforce trustcheck result

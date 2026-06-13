@@ -101,18 +101,33 @@ Wheel checks include:
 - detection of files missing from `RECORD` or listed but absent from the wheel
 - console-script listing and suspicious target detection
 - native extension detection
+- AST analysis of every bounded Python source file
+- suspicious credential, network, subprocess, persistence, install-hook, and
+  obfuscation capability detection
+- PE, ELF, and Mach-O import, architecture, embedded-signature-presence,
+  entropy, and embedded-payload inspection
 - unexpected top-level file reporting
 - `METADATA` Name, Version, and Requires-Dist comparison
 
 Sdist checks include:
 
 - suspicious install or executable script indicators
+- AST analysis with elevated weighting for install and build-hook contexts
 - oversized, unusual, nested-archive, and special-member reporting
 - `PKG-INFO` metadata comparison with the selected release and wheel metadata
 
 An invalid wheel `RECORD` or metadata mismatch is high-risk. Native code and
 suspicious executable entry points are medium-severity findings that require
 review rather than being treated as automatically high-risk.
+
+Normal package inspection also scores project-name similarity against a
+built-in trusted-name set, configured `--trusted-project` names, cross-index
+dependency-confusion collisions, maintainer and ownership changes, repository
+changes, release bursts, cadence acceleration, and releases after dormancy.
+
+All of these findings are heuristics. A score raises review priority and can
+feed normal risk policy, but it is not a malware classification and must not be
+presented as proof that a publisher or package is malicious.
 
 ## Limitations
 
@@ -127,6 +142,8 @@ review rather than being treated as automatically high-risk.
   provenance or vulnerability metadata, so those evidence fields may remain
   unavailable even when source and hash checks succeed
 - artifact inspection is static and cannot prove that arbitrary source code is safe
-- native binaries are detected but are not disassembled or dynamically analyzed
+- native binaries are structurally parsed but are not disassembled, emulated,
+  dynamically executed, or guaranteed to have valid signatures merely because
+  an embedded signature record is present
 - provenance verification may depend on local environment support required by underlying tooling
 - text output is intentionally concise and may omit low-level detail unless `--verbose` is used

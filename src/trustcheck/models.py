@@ -58,6 +58,33 @@ class PublisherIdentity:
 
 
 @dataclass(slots=True)
+class HeuristicFinding:
+    code: str
+    category: str
+    severity: str
+    confidence: str
+    score: int
+    message: str
+    evidence: list[str] = field(default_factory=list)
+    location: str | None = None
+    artifact: str | None = None
+    heuristic: bool = True
+
+
+@dataclass(slots=True)
+class NativeBinaryInspection:
+    path: str
+    format: str = "unknown"
+    architecture: str | None = None
+    imports: list[str] = field(default_factory=list)
+    signature_present: bool | None = None
+    signature_status: str = "not-applicable"
+    entropy: float | None = None
+    embedded_payloads: list[str] = field(default_factory=list)
+    parse_error: str | None = None
+
+
+@dataclass(slots=True)
 class ArtifactInspection:
     inspected: bool = False
     kind: str = "unknown"
@@ -80,6 +107,10 @@ class ArtifactInspection:
     wheel_root_is_purelib: bool | None = None
     wheel_tags: list[str] = field(default_factory=list)
     metadata_mismatches: list[str] = field(default_factory=list)
+    source_files_analyzed: int = 0
+    source_parse_errors: list[str] = field(default_factory=list)
+    native_binaries: list[NativeBinaryInspection] = field(default_factory=list)
+    heuristic_findings: list[HeuristicFinding] = field(default_factory=list)
     error: str | None = None
 
 
@@ -131,6 +162,19 @@ class ReleaseDriftSummary:
     publisher_workflow_drift: bool | None = None
     previous_repositories: list[str] = field(default_factory=list)
     previous_workflows: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class MaliciousPackageAssessment:
+    score: int = 0
+    level: str = "none"
+    artifact_analysis: bool = False
+    trusted_name_count: int = 0
+    findings: list[HeuristicFinding] = field(default_factory=list)
+    disclaimer: str = (
+        "These findings are heuristic indicators for review, not proof that "
+        "the package is malicious."
+    )
 
 
 @dataclass(slots=True)
@@ -220,6 +264,17 @@ class ReportDiagnostics:
 
 
 @dataclass(slots=True)
+class RemediationSummary:
+    status: str = "not-requested"
+    minimal: bool = False
+    attempts: int = 0
+    upgrades_planned: int = 0
+    blocked_fixes: int = 0
+    patch_files: list[str] = field(default_factory=list)
+    pull_request_url: str | None = None
+
+
+@dataclass(slots=True)
 class TrustReport:
     project: str
     version: str
@@ -236,12 +291,16 @@ class TrustReport:
     publisher_trust: PublisherTrustSummary = field(default_factory=PublisherTrustSummary)
     provenance_consistency: ProvenanceConsistency = field(default_factory=ProvenanceConsistency)
     release_drift: ReleaseDriftSummary = field(default_factory=ReleaseDriftSummary)
+    malicious_package: MaliciousPackageAssessment = field(
+        default_factory=MaliciousPackageAssessment
+    )
     dependencies: list[DependencyInspection] = field(default_factory=list)
     dependency_summary: DependencySummary = field(default_factory=DependencySummary)
     risk_flags: list[RiskFlag] = field(default_factory=list)
     recommendation: str = "metadata-only"
     policy: PolicyEvaluation = field(default_factory=PolicyEvaluation)
     diagnostics: ReportDiagnostics = field(default_factory=ReportDiagnostics)
+    remediation: RemediationSummary = field(default_factory=RemediationSummary)
 
     def to_dict(self) -> dict[str, Any]:
         from .contract import serialize_report

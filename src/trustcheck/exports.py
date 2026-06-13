@@ -17,7 +17,7 @@ from xml.etree import ElementTree  # nosec B405
 from packaging.utils import canonicalize_name
 
 from .contract import deserialize_report
-from .models import TrustReport, VulnerabilityRecord
+from .models import HeuristicFinding, TrustReport, VulnerabilityRecord
 from .resolver import ArtifactReference
 
 OUTPUT_FORMATS: Final = (
@@ -297,6 +297,43 @@ def _sarif_document(
                     },
                 )
             )
+        for finding in report.malicious_package.findings:
+            rule_id = f"TC-HEURISTIC-{_rule_token(finding.code)}"
+            _add_sarif_rule(
+                rules,
+                rule_id,
+                finding.code,
+                finding.message,
+                ("security", "supply-chain", "heuristic", finding.category),
+            )
+            location = _heuristic_source_location(package, finding)
+            results.append(
+                _sarif_result_for_location(
+                    location,
+                    purl=package.purl,
+                    project=report.project,
+                    version=report.version,
+                    rule_id=rule_id,
+                    category="malicious-package-heuristic",
+                    identity=(
+                        f"{finding.code}:{finding.artifact or ''}:"
+                        f"{finding.location or ''}"
+                    ),
+                    level=_sarif_level(finding.severity),
+                    message=f"{finding.message} This is a heuristic, not proof of malware.",
+                    properties={
+                        "heuristic": True,
+                        "confidence": finding.confidence,
+                        "score": finding.score,
+                        "category": finding.category,
+                        "evidence": finding.evidence,
+                        "artifact": finding.artifact,
+                        "assessmentScore": report.malicious_package.score,
+                        "assessmentLevel": report.malicious_package.level,
+                        "disclaimer": report.malicious_package.disclaimer,
+                    },
+                )
+            )
         for risk_flag in report.risk_flags:
             rule_id = f"TC-RISK-{_rule_token(risk_flag.code)}"
             _add_sarif_rule(
@@ -537,6 +574,29 @@ def _sarif_result(
     )
 
 
+def _heuristic_source_location(
+    package: ExportPackage,
+    finding: HeuristicFinding,
+) -> SourceLocation:
+    internal_path = finding.location
+    line: int | None = None
+    if internal_path:
+        path_part, separator, line_part = internal_path.rpartition(":")
+        if separator and line_part.isdigit():
+            internal_path = path_part
+            line = int(line_part)
+    if finding.artifact and internal_path:
+        return SourceLocation(
+            f"{finding.artifact}!/{internal_path.lstrip('/')}",
+            line,
+        )
+    if finding.artifact:
+        return SourceLocation(finding.artifact, line)
+    if internal_path:
+        return SourceLocation(internal_path, line)
+    return package.source or SourceLocation(package.report.package_url)
+
+
 def _sarif_result_for_location(
     location: SourceLocation,
     *,
@@ -756,6 +816,18 @@ def _cyclonedx_properties(
             "name": "trustcheck:provenance:total-artifacts",
             "value": str(report.coverage.total_files),
         },
+        {
+            "name": "trustcheck:malicious-package:score",
+            "value": str(report.malicious_package.score),
+        },
+        {
+            "name": "trustcheck:malicious-package:level",
+            "value": report.malicious_package.level,
+        },
+        {
+            "name": "trustcheck:malicious-package:disclaimer",
+            "value": report.malicious_package.disclaimer,
+        },
     ]
     for artifact in _all_artifacts(package):
         filename = artifact.filename or artifact.url or artifact.path or "artifact"
@@ -769,6 +841,30 @@ def _cyclonedx_properties(
                     "value": digest,
                 }
             )
+    properties.extend(
+        {
+            "name": (
+                "trustcheck:malicious-package:heuristic:"
+                f"{_property_token(finding.code)}"
+            ),
+            "value": json.dumps(
+                {
+                    "category": finding.category,
+                    "severity": finding.severity,
+                    "confidence": finding.confidence,
+                    "score": finding.score,
+                    "message": finding.message,
+                    "evidence": finding.evidence,
+                    "location": finding.location,
+                    "artifact": finding.artifact,
+                    "heuristic": True,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        }
+        for finding in report.malicious_package.findings
+    )
     properties.extend(
         {
             "name": f"trustcheck:vulnerability:{vulnerability.id}",
@@ -1299,6 +1395,14 @@ def _spdx_annotations(
     comments: list[str] = []
     comments.extend(
         (
+            f"{spdx_id}:trustcheck:malicious-package-heuristic:{finding.code}:"
+            f"{finding.severity}:{finding.confidence}:{finding.score}:"
+            f"{finding.message}:not-proof-of-malware"
+        )
+        for finding in report.malicious_package.findings
+    )
+    comments.extend(
+        (
             f"{spdx_id}:trustcheck:vulnerability:{vulnerability.id}:"
             f"{vulnerability.severity or 'unknown'}:{vulnerability.summary}"
         )
@@ -1341,7 +1445,20 @@ def _spdx_trust_comment(package: ExportPackage) -> str:
             "trustcheck:provenance:verified-artifacts="
             f"{report.coverage.verified_files}/{report.coverage.total_files}"
         ),
+        (
+            "trustcheck:malicious-package="
+            f"{report.malicious_package.level};score={report.malicious_package.score};"
+            "heuristic=true;not-proof-of-malware"
+        ),
     ]
+    lines.extend(
+        (
+            f"trustcheck:malicious-package-heuristic:{finding.code}="
+            f"{finding.severity};confidence={finding.confidence};"
+            f"score={finding.score};message={finding.message}"
+        )
+        for finding in report.malicious_package.findings
+    )
     lines.extend(
         (
             f"trustcheck:vulnerability:{vulnerability.id}="
@@ -1502,8 +1619,40 @@ def _markdown_document(
                     f"{'passed' if report.policy.passed else 'failed'} "
                     f"(`{_markdown_escape(report.policy.profile)}`) |"
                 ),
+                (
+                    "| Malicious-package heuristics | "
+                    f"`{_markdown_escape(report.malicious_package.level)}` "
+                    f"(score {report.malicious_package.score}) |"
+                ),
             ]
         )
+        if report.malicious_package.findings:
+            lines.extend(
+                [
+                    "",
+                    "### Malicious-Package Heuristics",
+                    "",
+                    f"> {_markdown_escape(report.malicious_package.disclaimer)}",
+                    "",
+                    "| Finding | Severity | Confidence | Score | Location |",
+                    "| --- | --- | --- | --- | --- |",
+                ]
+            )
+            for finding in report.malicious_package.findings:
+                location = " / ".join(
+                    value
+                    for value in (finding.artifact, finding.location)
+                    if value
+                ) or "-"
+                lines.append(
+                    "| "
+                    f"`{_markdown_escape(finding.code)}`: "
+                    f"{_markdown_escape(finding.message)} | "
+                    f"{_markdown_escape(finding.severity)} | "
+                    f"{_markdown_escape(finding.confidence)} | "
+                    f"{finding.score} | "
+                    f"{_markdown_escape(location)} |"
+                )
         artifacts = _all_artifacts(package)
         if artifacts:
             lines.extend(

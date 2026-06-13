@@ -24,6 +24,7 @@ from .advisories import (
 from .artifacts import compare_artifact_metadata, inspect_artifact
 from .attestations import Distribution as AttestedDistribution
 from .attestations import Provenance, VerificationError
+from .malicious import assess_package, finding_for_artifact
 from .models import (
     ArtifactDiagnostic,
     CoverageSummary,
@@ -116,6 +117,13 @@ class DependencyTraversalContext:
     seen: set[str] = field(default_factory=set)
 
 
+@dataclass(slots=True)
+class PackageHistoryContext:
+    project_payload: Mapping[str, object] | None = None
+    previous_version: str | None = None
+    previous_payload: Mapping[str, object] | None = None
+
+
 class DiagnosticsCollector:
     def __init__(self) -> None:
         self.request_count = 0
@@ -201,6 +209,8 @@ def inspect_package(
     target_environment: TargetEnvironment | None = None,
     complete_locked_versions: bool = False,
     expected_artifacts: Sequence[ArtifactReference] = (),
+    dependency_confusion_indexes: Sequence[str] = (),
+    trusted_projects: Sequence[str] = (),
     _dependency_context: DependencyTraversalContext | None = None,
 ) -> TrustReport:
     client = client or PypiClient()
@@ -288,6 +298,12 @@ def inspect_package(
         )
         if inspect_artifacts:
             compare_artifact_metadata(file.artifact for file in files)
+        history = _load_package_history(project, selected_version, client)
+        artifact_findings = [
+            finding_for_artifact(finding, file.filename)
+            for file in files
+            for finding in file.artifact.heuristic_findings
+        ]
 
         report = TrustReport(
             project=project,
@@ -313,6 +329,19 @@ def inspect_package(
                 selected_version,
                 client,
                 current_files=files,
+                history=history,
+            ),
+            malicious_package=assess_package(
+                project,
+                current_info=info,
+                current_ownership=ownership,
+                current_repositories=declared_repository_urls,
+                project_payload=history.project_payload,
+                previous_payload=history.previous_payload,
+                dependency_confusion_indexes=dependency_confusion_indexes,
+                artifact_findings=artifact_findings,
+                artifact_analysis=inspect_artifacts,
+                trusted_projects=trusted_projects,
             ),
             diagnostics=diagnostics.to_report_diagnostics(client),
         )
@@ -329,6 +358,7 @@ def inspect_package(
                 vulnerability_client=vulnerability_client,
                 locked_versions=normalized_locked_versions,
                 complete_locked_versions=complete_locked_versions,
+                trusted_projects=trusted_projects,
             )
         report.dependency_summary = _build_dependency_summary(
             declared_dependencies,
@@ -668,6 +698,7 @@ def _inspect_dependencies(
     vulnerability_client: VulnerabilityIntelligenceClient | None,
     locked_versions: Mapping[str, str],
     complete_locked_versions: bool,
+    trusted_projects: Sequence[str],
 ) -> list[DependencyInspection]:
     inspections: list[DependencyInspection] = []
     environment: dict[str, str] = {
@@ -695,6 +726,7 @@ def _inspect_dependencies(
             vulnerability_client=vulnerability_client,
             locked_versions=locked_versions,
             complete_locked_versions=complete_locked_versions,
+            trusted_projects=trusted_projects,
         )
         if inspection is None:
             continue
@@ -726,6 +758,7 @@ def _inspect_dependency_requirement(
     vulnerability_client: VulnerabilityIntelligenceClient | None,
     locked_versions: Mapping[str, str],
     complete_locked_versions: bool,
+    trusted_projects: Sequence[str],
 ) -> tuple[DependencyInspection | None, list[str]]:
     try:
         requirement = Requirement(requirement_text)
@@ -798,6 +831,7 @@ def _inspect_dependency_requirement(
             _dependency_context=dependency_context,
             locked_versions=locked_versions,
             complete_locked_versions=complete_locked_versions,
+            trusted_projects=trusted_projects,
         )
         if dependency_progress_callback is not None and not nested_report.files:
             dependency_progress_callback(project_name, depth, 100, True)
@@ -1034,6 +1068,33 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
         for failure in report.diagnostics.artifact_failures
         if failure.stage == "lockfile-hash"
     ]
+
+    if report.malicious_package.score >= 25:
+        severity = "high" if report.malicious_package.score >= 50 else "medium"
+        flags.append(
+            RiskFlag(
+                code="malicious_package_heuristics",
+                severity=severity,
+                message=(
+                    "Static analysis found malicious-package heuristic indicators; "
+                    "this is not proof of malware."
+                ),
+                why=[
+                    (
+                        f"{finding.code}"
+                        f"{f' at {finding.location}' if finding.location else ''}: "
+                        f"{finding.message}"
+                    )
+                    for finding in report.malicious_package.findings[:5]
+                ],
+                remediation=[
+                    "Review the cited source, metadata, index, and native-code evidence.",
+                    "Confirm package ownership and repository history through an "
+                    "independent trusted channel.",
+                    "Analyze high-scoring artifacts in an isolated sandbox before use.",
+                ],
+            )
+        )
 
     if invalid_lock_hashes:
         flags.append(
@@ -1729,14 +1790,21 @@ def _build_release_drift_summary(
     client: PackageClient,
     *,
     current_files: list[FileProvenance],
+    history: PackageHistoryContext,
 ) -> ReleaseDriftSummary:
-    previous_version = _previous_release_version(project, version, client)
+    previous_version = history.previous_version
     if not previous_version:
         return ReleaseDriftSummary()
 
     try:
-        previous_payload = client.get_release(project, previous_version)
-        previous_files = _collect_files(project, previous_version, previous_payload, client)
+        if history.previous_payload is None:
+            return ReleaseDriftSummary(compared_to_version=previous_version)
+        previous_files = _collect_files(
+            project,
+            previous_version,
+            dict(history.previous_payload),
+            client,
+        )
     except PypiClientError:
         return ReleaseDriftSummary(compared_to_version=previous_version)
 
@@ -1761,6 +1829,32 @@ def _build_release_drift_summary(
     )
 
 
+def _load_package_history(
+    project: str,
+    version: str,
+    client: PackageClient,
+) -> PackageHistoryContext:
+    try:
+        project_payload = client.get_project(project)
+    except PypiClientError:
+        return PackageHistoryContext()
+    previous_version = _previous_release_version_from_payload(
+        project_payload,
+        version,
+    )
+    if previous_version is None:
+        return PackageHistoryContext(project_payload=project_payload)
+    try:
+        previous_payload = client.get_release(project, previous_version)
+    except PypiClientError:
+        previous_payload = None
+    return PackageHistoryContext(
+        project_payload=project_payload,
+        previous_version=previous_version,
+        previous_payload=previous_payload,
+    )
+
+
 def _previous_release_version(
     project: str,
     version: str,
@@ -1771,6 +1865,13 @@ def _previous_release_version(
     except PypiClientError:
         return None
 
+    return _previous_release_version_from_payload(project_payload, version)
+
+
+def _previous_release_version_from_payload(
+    project_payload: Mapping[str, object],
+    version: str,
+) -> str | None:
     releases = project_payload.get("releases") or {}
     if not isinstance(releases, dict):
         return None

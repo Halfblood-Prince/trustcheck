@@ -64,16 +64,20 @@
           "console_scripts": [],
           "error": null,
           "file_count": 0,
+          "heuristic_findings": [],
           "inspected": false,
           "kind": "unknown",
           "metadata_mismatches": [],
           "metadata_name": null,
           "metadata_requires_dist": [],
           "metadata_version": null,
+          "native_binaries": [],
           "native_files": [],
           "oversized_files": [],
           "record_errors": [],
           "record_valid": null,
+          "source_files_analyzed": 0,
+          "source_parse_errors": [],
           "suspicious_entry_points": [],
           "suspicious_files": [],
           "total_uncompressed_size": 0,
@@ -105,6 +109,14 @@
         "verified_attestation_count": 1
       }
     ],
+    "malicious_package": {
+      "artifact_analysis": false,
+      "disclaimer": "These findings are heuristic indicators for review, not proof that the package is malicious.",
+      "findings": [],
+      "level": "none",
+      "score": 0,
+      "trusted_name_count": 0
+    },
     "ownership": {
       "organization": "example-org",
       "roles": [
@@ -161,6 +173,15 @@
       ],
       "publisher_repository_drift": false,
       "publisher_workflow_drift": false
+    },
+    "remediation": {
+      "attempts": 0,
+      "blocked_fixes": 0,
+      "minimal": false,
+      "patch_files": [],
+      "pull_request_url": null,
+      "status": "not-requested",
+      "upgrades_planned": 0
     },
     "repository_urls": [
       "https://github.com/example/demo"
@@ -220,5 +241,5 @@
       }
     ]
   },
-  "schema_version": "1.6.0"
+  "schema_version": "1.8.0"
 }

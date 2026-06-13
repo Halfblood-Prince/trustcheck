@@ -12,17 +12,17 @@
 
 ## Current schema identifiers
 
-- `JSON_SCHEMA_VERSION = "1.6.0"`
-- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.6.0"`
+- `JSON_SCHEMA_VERSION = "1.8.0"`
+- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.8.0"`
 
-Package versions and report schema versions are independent. Schema `1.6.0`
-adds normalized vulnerability intelligence and auditable suppression state.
+Package versions and report schema versions are independent. Schema `1.8.0`
+adds an optional remediation summary to every report.
 
 ## Top-level shape
 
 ```json
 {
-  "schema_version": "1.6.0",
+  "schema_version": "1.8.0",
   "report": {
     "project": "demo",
     "version": "1.2.3",
@@ -115,6 +115,14 @@ adds normalized vulnerability intelligence and auditable suppression state.
       "previous_repositories": [],
       "previous_workflows": []
     },
+    "malicious_package": {
+      "score": 0,
+      "level": "none",
+      "artifact_analysis": false,
+      "trusted_name_count": 56,
+      "findings": [],
+      "disclaimer": "These findings are heuristic indicators for review, not proof that the package is malicious."
+    },
     "dependencies": [
       {
         "requirement": "depalpha>=1.0",
@@ -140,6 +148,15 @@ adds normalized vulnerability intelligence and auditable suppression state.
       "highest_risk_projects": ["depalpha"]
     },
     "risk_flags": [],
+    "remediation": {
+      "status": "not-requested",
+      "minimal": false,
+      "attempts": 0,
+      "upgrades_planned": 0,
+      "blocked_fixes": 0,
+      "patch_files": [],
+      "pull_request_url": null
+    },
     "recommendation": "verified"
   }
 }
@@ -174,6 +191,13 @@ entry records:
 
 This scan-level metadata does not change the per-package report schema.
 
+When remediation is requested, combined scan JSON also includes a top-level
+`remediation` object using
+`urn:trustcheck:remediation:1.0.0`. It contains source digests, semantic edits,
+unified diffs, commands, selected upgrades, blocked fixes, minimality status,
+validation results, and optional pull-request metadata. The same object can be
+written independently with `--remediation-output`.
+
 Artifact URLs and index URLs never expose embedded credentials. Lock hashes
 are represented as an algorithm-to-hex-digest object under each item in
 `artifacts`.
@@ -193,6 +217,25 @@ With `--inspect-artifacts` or `inspect_artifacts=True`, the block includes:
 - parsed Name, Version, and Requires-Dist metadata
 - parsed Wheel-Version, Root-Is-Purelib, and Tag metadata
 - metadata mismatches between PyPI, wheel, and sdist evidence
+- `source_files_analyzed` and bounded AST parse errors
+- `heuristic_findings` with category, severity, confidence, score, evidence,
+  source location, and artifact name
+- `native_binaries` with PE, ELF, or Mach-O format, architecture, imports,
+  embedded signature presence, entropy, embedded payloads, and parse notes
+
+## Malicious-package heuristic fields
+
+`report.malicious_package` is always present. Metadata and name checks run for
+normal package inspection; `artifact_analysis` indicates whether
+`--inspect-artifacts` enabled AST and native-binary inspection.
+
+The aggregate `score` is bounded to 0-100 and maps to `none`, `low`,
+`elevated`, `high`, or `critical`. Each finding preserves its own score,
+confidence, evidence, artifact, and best-effort source location.
+
+The assessment is deliberately heuristic. Neither a finding nor a high score
+is proof of malware. Consumers must preserve the `heuristic` marker and
+`disclaimer` when presenting or transforming this data.
 
 ## Runtime schema access
 

@@ -9,11 +9,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from trustcheck.cli import EXIT_DATA_ERROR, EXIT_OK, EXIT_POLICY_FAILURE, EXIT_USAGE
+from trustcheck.contract import JSON_SCHEMA_VERSION
 from trustcheck.github_action import (
     ActionInputError,
     ActionResult,
     ActionSettings,
     _resolve_workspace_path,
+    _write_step_summary,
     build_cli_arguments,
     main,
     render_result,
@@ -24,7 +26,7 @@ from trustcheck.github_action import (
 
 def report_payload(*, recommendation: str = "verified", policy_passed: bool = True):
     return {
-        "schema_version": "1.6.0",
+        "schema_version": JSON_SCHEMA_VERSION,
         "report": {
             "policy": {"passed": policy_passed},
             "recommendation": recommendation,
@@ -38,7 +40,7 @@ def complete_report_payload(
     policy_passed: bool = True,
 ):
     return {
-        "schema_version": "1.6.0",
+        "schema_version": JSON_SCHEMA_VERSION,
         "report": {
             "project": "sampleproject",
             "version": "4.0.0",
@@ -70,6 +72,7 @@ class GitHubActionTests(unittest.TestCase):
                 extra_index_urls=("https://pypi.org/simple",),
                 keyring_provider="subprocess",
                 allow_dependency_confusion=True,
+                trusted_projects=("requests", "internal-sdk"),
             )
 
             arguments = build_cli_arguments(settings, workspace=workspace)
@@ -93,6 +96,8 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("--keyring-provider", arguments)
         self.assertIn("subprocess", arguments)
         self.assertIn("--allow-dependency-confusion", arguments)
+        self.assertEqual(arguments.count("--trusted-project"), 2)
+        self.assertIn("internal-sdk", arguments)
         self.assertEqual(arguments[-2:], ["--format", "json"])
 
     def test_all_documented_dependency_files_use_scan_command(self) -> None:
@@ -119,6 +124,122 @@ class GitHubActionTests(unittest.TestCase):
                 self.assertEqual(arguments[:2], ["scan", str(target.resolve())])
                 self.assertIn("--policy", arguments)
                 self.assertIn("strict", arguments)
+
+    def test_dependency_file_maps_remediation_and_pull_request_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            target = workspace / "requirements.txt"
+            source = workspace / "requirements.in"
+            target.write_text("demo==1\n", encoding="utf-8")
+            source.write_text("demo\n", encoding="utf-8")
+
+            arguments = build_cli_arguments(
+                ActionSettings(
+                    target="requirements.txt",
+                    remediation="fix",
+                    allow_constraint_changes=True,
+                    source_manifest="requirements.in",
+                    remediation_path="reports/remediation.json",
+                    max_fix_attempts=42,
+                    create_pr=True,
+                    pr_base="main",
+                    pr_branch="trustcheck/fix-demo",
+                    pr_title="Fix demo",
+                    pr_ready=True,
+                ),
+                workspace=workspace,
+            )
+
+        self.assertIn("--fix", arguments)
+        self.assertIn("--allow-constraint-changes", arguments)
+        self.assertIn("--source-manifest", arguments)
+        self.assertIn("--remediation-output", arguments)
+        self.assertIn("--max-fix-attempts", arguments)
+        self.assertIn("42", arguments)
+        self.assertIn("--create-pr", arguments)
+        self.assertIn("--pr-base", arguments)
+        self.assertIn("--pr-branch", arguments)
+        self.assertIn("--pr-title", arguments)
+        self.assertIn("--pr-ready", arguments)
+
+    def test_action_rejects_invalid_remediation_combinations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            target = workspace / "requirements.txt"
+            target.write_text("demo==1\n", encoding="utf-8")
+            cases = [
+                ActionSettings(
+                    target="requirements.txt",
+                    remediation="plan",
+                    dry_run=True,
+                ),
+                ActionSettings(
+                    target="requirements.txt",
+                    remediation="fix",
+                    dry_run=True,
+                    create_pr=True,
+                ),
+                ActionSettings(
+                    target="requirements.txt",
+                    remediation="unknown",
+                ),
+            ]
+            for settings in cases:
+                with self.subTest(settings=settings):
+                    with self.assertRaises(ActionInputError):
+                        build_cli_arguments(settings, workspace=workspace)
+
+            with self.assertRaisesRegex(ActionInputError, "dependency files"):
+                build_cli_arguments(
+                    ActionSettings(target="demo", remediation="plan"),
+                    workspace=workspace,
+                )
+
+    def test_action_maps_plan_and_valid_fix_dry_run_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            target = workspace / "requirements.txt"
+            target.write_text("demo==1\n", encoding="utf-8")
+
+            planned = build_cli_arguments(
+                ActionSettings(
+                    target="requirements.txt",
+                    remediation="plan",
+                ),
+                workspace=workspace,
+            )
+            dry_run = build_cli_arguments(
+                ActionSettings(
+                    target="requirements.txt",
+                    remediation="fix",
+                    dry_run=True,
+                ),
+                workspace=workspace,
+            )
+
+            self.assertIn("--plan-fixes", planned)
+            self.assertIn("--remediation-output", planned)
+            self.assertIn("--fix", dry_run)
+            self.assertIn("--dry-run", dry_run)
+
+            with self.assertRaisesRegex(ActionInputError, "source manifest"):
+                build_cli_arguments(
+                    ActionSettings(
+                        target="requirements.txt",
+                        remediation="plan",
+                        source_manifest="missing.in",
+                    ),
+                    workspace=workspace,
+                )
+            with self.assertRaisesRegex(ActionInputError, "at least 1"):
+                build_cli_arguments(
+                    ActionSettings(
+                        target="requirements.txt",
+                        remediation="plan",
+                        max_fix_attempts=0,
+                    ),
+                    workspace=workspace,
+                )
 
     def test_invalid_action_inputs_create_json_error_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -305,6 +426,10 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("policy-passed=true", outputs)
         self.assertIn("report-path=", outputs)
         self.assertIn("exit-code=0", outputs)
+        self.assertIn("remediation-status=not-requested", outputs)
+        self.assertIn("applied-fixes=0", outputs)
+        self.assertIn("patch-path=", outputs)
+        self.assertIn("pr-url=", outputs)
         self.assertIn("Policy: **passed**", summary)
         self.assertIn("recommendation: verified", stdout.getvalue())
 
@@ -460,6 +585,10 @@ class GitHubActionTests(unittest.TestCase):
                 ),
                 "TRUSTCHECK_ACTION_KEYRING_PROVIDER": "subprocess",
                 "TRUSTCHECK_ACTION_ALLOW_DEPENDENCY_CONFUSION": "true",
+                "TRUSTCHECK_ACTION_REMEDIATION": "fix",
+                "TRUSTCHECK_ACTION_DRY_RUN": "true",
+                "TRUSTCHECK_ACTION_ALLOW_CONSTRAINT_CHANGES": "true",
+                "TRUSTCHECK_ACTION_MAX_FIX_ATTEMPTS": "99",
             }
         )
 
@@ -480,6 +609,96 @@ class GitHubActionTests(unittest.TestCase):
         )
         self.assertEqual(settings.keyring_provider, "subprocess")
         self.assertTrue(settings.allow_dependency_confusion)
+        self.assertEqual(settings.remediation, "fix")
+        self.assertTrue(settings.dry_run)
+        self.assertTrue(settings.allow_constraint_changes)
+        self.assertEqual(settings.max_fix_attempts, 99)
+
+    def test_environment_rejects_invalid_remediation_and_attempt_values(self) -> None:
+        cases = (
+            (
+                {
+                    "TRUSTCHECK_ACTION_TARGET": "requirements.txt",
+                    "TRUSTCHECK_ACTION_REMEDIATION": "invalid",
+                },
+                "remediation",
+            ),
+            (
+                {
+                    "TRUSTCHECK_ACTION_TARGET": "requirements.txt",
+                    "TRUSTCHECK_ACTION_MAX_FIX_ATTEMPTS": "many",
+                },
+                "integer",
+            ),
+            (
+                {
+                    "TRUSTCHECK_ACTION_TARGET": "requirements.txt",
+                    "TRUSTCHECK_ACTION_MAX_FIX_ATTEMPTS": "0",
+                },
+                "at least 1",
+            ),
+        )
+        for environment, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ActionInputError, message):
+                    ActionSettings.from_environment(environment)
+
+    def test_action_exposes_remediation_and_pull_request_results(self) -> None:
+        payload = {
+            "schema_version": JSON_SCHEMA_VERSION,
+            "reports": [
+                {
+                    "recommendation": "verified",
+                    "policy": {"passed": True},
+                }
+            ],
+            "failures": [],
+            "remediation": {
+                "status": "pull-request-created",
+                "upgrades": [{"project": "demo"}],
+                "pull_request": {
+                    "branch": "trustcheck/fix-demo",
+                    "url": "https://github.com/example/repo/pull/1",
+                },
+            },
+        }
+
+        def passing_runner(arguments):
+            self.assertIn("--fix", arguments)
+            print(json.dumps(payload))
+            return EXIT_OK
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            target = workspace / "requirements.txt"
+            target.write_text("demo==1\n", encoding="utf-8")
+            result = run_action(
+                ActionSettings(
+                    target="requirements.txt",
+                    remediation="fix",
+                    create_pr=True,
+                    remediation_path="remediation.json",
+                ),
+                workspace=workspace,
+                runner=passing_runner,
+            )
+            summary = workspace / "summary.md"
+            environment = {"GITHUB_STEP_SUMMARY": str(summary)}
+            _write_step_summary(
+                result,
+                ActionSettings(target="requirements.txt"),
+                environment,
+            )
+            rendered_summary = summary.read_text(encoding="utf-8")
+
+        self.assertEqual(result.remediation_status, "pull-request-created")
+        self.assertEqual(result.applied_fixes, 1)
+        self.assertEqual(result.pr_branch, "trustcheck/fix-demo")
+        self.assertEqual(
+            result.pr_url,
+            "https://github.com/example/repo/pull/1",
+        )
+        self.assertIn("Pull request:", rendered_summary)
 
     def test_environment_derives_report_extension_from_format(self) -> None:
         settings = ActionSettings.from_environment(

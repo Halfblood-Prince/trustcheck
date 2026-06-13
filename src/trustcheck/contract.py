@@ -13,12 +13,16 @@ from .models import (
     DependencyInspection,
     DependencySummary,
     FileProvenance,
+    HeuristicFinding,
+    MaliciousPackageAssessment,
+    NativeBinaryInspection,
     PolicyEvaluation,
     PolicyViolation,
     ProvenanceConsistency,
     PublisherIdentity,
     PublisherTrustSummary,
     ReleaseDriftSummary,
+    RemediationSummary,
     ReportDiagnostics,
     RequestFailureDiagnostic,
     RiskFlag,
@@ -27,10 +31,10 @@ from .models import (
     VulnerabilitySuppression,
 )
 
-JSON_SCHEMA_VERSION: Final = "1.6.0"
+JSON_SCHEMA_VERSION: Final = "1.8.0"
 JSON_SCHEMA_ID = f"urn:trustcheck:report:{JSON_SCHEMA_VERSION}"
-SchemaVersion: TypeAlias = Literal["1.6.0"]
-DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.6.0"
+SchemaVersion: TypeAlias = Literal["1.8.0"]
+DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.8.0"
 
 
 class RiskFlagPayload(BaseModel):
@@ -90,6 +94,35 @@ class PublisherIdentityPayload(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
+class HeuristicFindingPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    category: str
+    severity: str
+    confidence: str
+    score: int
+    message: str
+    evidence: list[str] = Field(default_factory=list)
+    location: str | None = None
+    artifact: str | None = None
+    heuristic: bool = True
+
+
+class NativeBinaryInspectionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    format: str = "unknown"
+    architecture: str | None = None
+    imports: list[str] = Field(default_factory=list)
+    signature_present: bool | None = None
+    signature_status: str = "not-applicable"
+    entropy: float | None = None
+    embedded_payloads: list[str] = Field(default_factory=list)
+    parse_error: str | None = None
+
+
 class ArtifactInspectionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -114,6 +147,10 @@ class ArtifactInspectionPayload(BaseModel):
     wheel_root_is_purelib: bool | None = None
     wheel_tags: list[str] = Field(default_factory=list)
     metadata_mismatches: list[str] = Field(default_factory=list)
+    source_files_analyzed: int = 0
+    source_parse_errors: list[str] = Field(default_factory=list)
+    native_binaries: list[NativeBinaryInspectionPayload] = Field(default_factory=list)
+    heuristic_findings: list[HeuristicFindingPayload] = Field(default_factory=list)
     error: str | None = None
 
 
@@ -170,6 +207,20 @@ class ReleaseDriftSummaryPayload(BaseModel):
     publisher_workflow_drift: bool | None = None
     previous_repositories: list[str] = Field(default_factory=list)
     previous_workflows: list[str] = Field(default_factory=list)
+
+
+class MaliciousPackageAssessmentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    score: int = 0
+    level: str = "none"
+    artifact_analysis: bool = False
+    trusted_name_count: int = 0
+    findings: list[HeuristicFindingPayload] = Field(default_factory=list)
+    disclaimer: str = (
+        "These findings are heuristic indicators for review, not proof that "
+        "the package is malicious."
+    )
 
 
 class DependencyInspectionPayload(BaseModel):
@@ -265,6 +316,18 @@ class ReportDiagnosticsPayload(BaseModel):
     artifact_failures: list[ArtifactDiagnosticPayload] = Field(default_factory=list)
 
 
+class RemediationSummaryPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = "not-requested"
+    minimal: bool = False
+    attempts: int = 0
+    upgrades_planned: int = 0
+    blocked_fixes: int = 0
+    patch_files: list[str] = Field(default_factory=list)
+    pull_request_url: str | None = None
+
+
 class OwnershipRolePayload(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -301,12 +364,16 @@ class TrustReportPayload(BaseModel):
         default_factory=ProvenanceConsistencyPayload
     )
     release_drift: ReleaseDriftSummaryPayload = Field(default_factory=ReleaseDriftSummaryPayload)
+    malicious_package: MaliciousPackageAssessmentPayload = Field(
+        default_factory=MaliciousPackageAssessmentPayload
+    )
     dependencies: list[DependencyInspectionPayload] = Field(default_factory=list)
     dependency_summary: DependencySummaryPayload = Field(default_factory=DependencySummaryPayload)
     risk_flags: list[RiskFlagPayload] = Field(default_factory=list)
     recommendation: str = "metadata-only"
     policy: PolicyEvaluationPayload = Field(default_factory=PolicyEvaluationPayload)
     diagnostics: ReportDiagnosticsPayload = Field(default_factory=ReportDiagnosticsPayload)
+    remediation: RemediationSummaryPayload = Field(default_factory=RemediationSummaryPayload)
 
 
 class TrustReportEnvelopePayload(BaseModel):
@@ -335,7 +402,19 @@ def deserialize_report(payload: Mapping[str, object]) -> TrustReport:
                     PublisherIdentity(**identity)
                     for identity in item["publisher_identities"]
                 ],
-                "artifact": ArtifactInspection(**item["artifact"]),
+                "artifact": ArtifactInspection(
+                    **{
+                        **item["artifact"],
+                        "native_binaries": [
+                            NativeBinaryInspection(**native)
+                            for native in item["artifact"]["native_binaries"]
+                        ],
+                        "heuristic_findings": [
+                            HeuristicFinding(**finding)
+                            for finding in item["artifact"]["heuristic_findings"]
+                        ],
+                    }
+                ),
             }
         )
         for item in data.pop("files")
@@ -344,6 +423,7 @@ def deserialize_report(payload: Mapping[str, object]) -> TrustReport:
     publisher_trust_data = data.pop("publisher_trust")
     consistency_data = data.pop("provenance_consistency")
     release_drift_data = data.pop("release_drift")
+    malicious_package_data = data.pop("malicious_package")
     dependencies = [
         DependencyInspection(
             **{
@@ -360,6 +440,7 @@ def deserialize_report(payload: Mapping[str, object]) -> TrustReport:
     risk_flags_data = data.pop("risk_flags")
     policy_data = data.pop("policy")
     diagnostics_data = data.pop("diagnostics")
+    remediation_data = data.pop("remediation")
     return TrustReport(
         **data,
         vulnerabilities=[
@@ -380,6 +461,15 @@ def deserialize_report(payload: Mapping[str, object]) -> TrustReport:
         publisher_trust=PublisherTrustSummary(**publisher_trust_data),
         provenance_consistency=ProvenanceConsistency(**consistency_data),
         release_drift=ReleaseDriftSummary(**release_drift_data),
+        malicious_package=MaliciousPackageAssessment(
+            **{
+                **malicious_package_data,
+                "findings": [
+                    HeuristicFinding(**item)
+                    for item in malicious_package_data["findings"]
+                ],
+            }
+        ),
         dependencies=dependencies,
         dependency_summary=DependencySummary(**dependency_summary_data),
         risk_flags=[
@@ -407,6 +497,7 @@ def deserialize_report(payload: Mapping[str, object]) -> TrustReport:
                 ],
             }
         ),
+        remediation=RemediationSummary(**remediation_data),
     )
 
 

@@ -36,6 +36,14 @@
     },
     "expected_repository": null,
     "files": [],
+    "malicious_package": {
+      "artifact_analysis": false,
+      "disclaimer": "These findings are heuristic indicators for review, not proof that the package is malicious.",
+      "findings": [],
+      "level": "none",
+      "score": 0,
+      "trusted_name_count": 0
+    },
     "ownership": {
       "organization": null,
       "roles": []
@@ -77,11 +85,20 @@
       "publisher_repository_drift": null,
       "publisher_workflow_drift": null
     },
+    "remediation": {
+      "attempts": 0,
+      "blocked_fixes": 0,
+      "minimal": false,
+      "patch_files": [],
+      "pull_request_url": null,
+      "status": "not-requested",
+      "upgrades_planned": 0
+    },
     "repository_urls": [],
     "risk_flags": [],
     "summary": null,
     "version": "0.0.1",
     "vulnerabilities": []
   },
-  "schema_version": "1.6.0"
+  "schema_version": "1.8.0"
 }

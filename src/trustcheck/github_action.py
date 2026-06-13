@@ -59,6 +59,18 @@ class ActionSettings:
     extra_index_urls: tuple[str, ...] = ()
     keyring_provider: str = "auto"
     allow_dependency_confusion: bool = False
+    trusted_projects: tuple[str, ...] = ()
+    remediation: str = "none"
+    dry_run: bool = False
+    allow_constraint_changes: bool = False
+    source_manifest: str = ""
+    remediation_path: str = "trustcheck-remediation.json"
+    max_fix_attempts: int = 256
+    create_pr: bool = False
+    pr_base: str = ""
+    pr_branch: str = ""
+    pr_title: str = ""
+    pr_ready: bool = False
     output_format: str = "text"
     report_path: str = "trustcheck-report.json"
 
@@ -74,6 +86,29 @@ class ActionSettings:
         if output_format not in OUTPUT_FORMATS:
             raise ActionInputError(
                 "'format' must be one of: " + ", ".join(OUTPUT_FORMATS)
+            )
+        remediation = (
+            environment.get("TRUSTCHECK_ACTION_REMEDIATION", "none").strip()
+            or "none"
+        )
+        if remediation not in {"none", "plan", "fix"}:
+            raise ActionInputError(
+                "'remediation' must be 'none', 'plan', or 'fix'"
+            )
+        try:
+            max_fix_attempts = int(
+                environment.get(
+                    "TRUSTCHECK_ACTION_MAX_FIX_ATTEMPTS",
+                    "256",
+                )
+            )
+        except ValueError as exc:
+            raise ActionInputError(
+                "'max-fix-attempts' must be an integer"
+            ) from exc
+        if max_fix_attempts < 1:
+            raise ActionInputError(
+                "'max-fix-attempts' must be at least 1"
             )
         report_path = environment.get(
             "TRUSTCHECK_ACTION_REPORT_PATH", ""
@@ -133,6 +168,51 @@ class ActionSettings:
                 ),
                 name="allow-dependency-confusion",
             ),
+            trusted_projects=_parse_multi_value(
+                environment.get("TRUSTCHECK_ACTION_TRUSTED_PROJECTS", "")
+            ),
+            remediation=remediation,
+            dry_run=_parse_bool(
+                environment.get("TRUSTCHECK_ACTION_DRY_RUN", "false"),
+                name="dry-run",
+            ),
+            allow_constraint_changes=_parse_bool(
+                environment.get(
+                    "TRUSTCHECK_ACTION_ALLOW_CONSTRAINT_CHANGES",
+                    "false",
+                ),
+                name="allow-constraint-changes",
+            ),
+            source_manifest=environment.get(
+                "TRUSTCHECK_ACTION_SOURCE_MANIFEST",
+                "",
+            ).strip(),
+            remediation_path=environment.get(
+                "TRUSTCHECK_ACTION_REMEDIATION_PATH",
+                "",
+            ).strip()
+            or "trustcheck-remediation.json",
+            max_fix_attempts=max_fix_attempts,
+            create_pr=_parse_bool(
+                environment.get("TRUSTCHECK_ACTION_CREATE_PR", "false"),
+                name="create-pr",
+            ),
+            pr_base=environment.get(
+                "TRUSTCHECK_ACTION_PR_BASE",
+                "",
+            ).strip(),
+            pr_branch=environment.get(
+                "TRUSTCHECK_ACTION_PR_BRANCH",
+                "",
+            ).strip(),
+            pr_title=environment.get(
+                "TRUSTCHECK_ACTION_PR_TITLE",
+                "",
+            ).strip(),
+            pr_ready=_parse_bool(
+                environment.get("TRUSTCHECK_ACTION_PR_READY", "false"),
+                name="pr-ready",
+            ),
             output_format=output_format,
             report_path=report_path,
         )
@@ -146,6 +226,11 @@ class ActionResult:
     report_path: Path
     payload: dict[str, object]
     stderr: str = ""
+    remediation_status: str = "not-requested"
+    applied_fixes: int = 0
+    remediation_path: Path | None = None
+    pr_branch: str = ""
+    pr_url: str = ""
 
 
 def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[str]:
@@ -166,6 +251,20 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
         raise ActionInputError(
             "'keyring-provider' must be 'auto', 'disabled', 'import', or 'subprocess'"
         )
+    if settings.remediation not in {"none", "plan", "fix"}:
+        raise ActionInputError(
+            "'remediation' must be 'none', 'plan', or 'fix'"
+        )
+    if settings.max_fix_attempts < 1:
+        raise ActionInputError("'max-fix-attempts' must be at least 1")
+    if settings.dry_run and settings.remediation != "fix":
+        raise ActionInputError("'dry-run' requires remediation mode 'fix'")
+    if settings.create_pr and (
+        settings.remediation != "fix" or settings.dry_run
+    ):
+        raise ActionInputError(
+            "'create-pr' requires non-dry-run remediation mode 'fix'"
+        )
 
     target_path = _resolve_workspace_path(settings.target, workspace)
     target_is_file = target_path.is_file()
@@ -178,7 +277,50 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
                 "'expected-repo' applies to package targets, not dependency files"
             )
         arguments = ["scan", str(target_path)]
+        if settings.remediation == "plan":
+            arguments.append("--plan-fixes")
+        elif settings.remediation == "fix":
+            arguments.append("--fix")
+        if settings.dry_run:
+            arguments.append("--dry-run")
+        if settings.allow_constraint_changes:
+            arguments.append("--allow-constraint-changes")
+        if settings.source_manifest:
+            source_manifest = _resolve_workspace_path(
+                settings.source_manifest,
+                workspace,
+            )
+            if not source_manifest.is_file():
+                raise ActionInputError(
+                    f"source manifest does not exist: {settings.source_manifest}"
+                )
+            arguments.extend(["--source-manifest", str(source_manifest)])
+        if settings.remediation != "none":
+            remediation_path = _resolve_workspace_path(
+                settings.remediation_path,
+                workspace,
+            )
+            arguments.extend(
+                ["--remediation-output", str(remediation_path)]
+            )
+            arguments.extend(
+                ["--max-fix-attempts", str(settings.max_fix_attempts)]
+            )
+        if settings.create_pr:
+            arguments.append("--create-pr")
+            if settings.pr_base:
+                arguments.extend(["--pr-base", settings.pr_base])
+            if settings.pr_branch:
+                arguments.extend(["--pr-branch", settings.pr_branch])
+            if settings.pr_title:
+                arguments.extend(["--pr-title", settings.pr_title])
+            if settings.pr_ready:
+                arguments.append("--pr-ready")
     else:
+        if settings.remediation != "none":
+            raise ActionInputError(
+                "remediation applies to dependency files, not package targets"
+            )
         arguments = ["inspect", settings.target]
         if settings.expected_repo:
             arguments.extend(["--expected-repo", settings.expected_repo])
@@ -216,6 +358,8 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
     arguments.extend(["--keyring-provider", settings.keyring_provider])
     if settings.allow_dependency_confusion:
         arguments.append("--allow-dependency-confusion")
+    for project in settings.trusted_projects:
+        arguments.extend(["--trusted-project", project])
     arguments.extend(["--format", "json"])
     return arguments
 
@@ -278,6 +422,24 @@ def run_action(
         encoding="utf-8",
     )
     recommendation, policy_passed = summarize_payload(payload, exit_code=exit_code)
+    remediation = payload.get("remediation")
+    remediation_status = "not-requested"
+    applied_fixes = 0
+    pr_branch = ""
+    pr_url = ""
+    if isinstance(remediation, dict):
+        status = remediation.get("status")
+        if isinstance(status, str):
+            remediation_status = status
+        upgrades = remediation.get("upgrades")
+        if isinstance(upgrades, list):
+            applied_fixes = len(upgrades)
+        pull_request = remediation.get("pull_request")
+        if isinstance(pull_request, dict):
+            raw_branch = pull_request.get("branch")
+            raw_url = pull_request.get("url")
+            pr_branch = raw_branch if isinstance(raw_branch, str) else ""
+            pr_url = raw_url if isinstance(raw_url, str) else ""
     return ActionResult(
         exit_code=exit_code,
         recommendation=recommendation,
@@ -285,6 +447,15 @@ def run_action(
         report_path=report_path,
         payload=payload,
         stderr=stderr_output,
+        remediation_status=remediation_status,
+        applied_fixes=applied_fixes,
+        remediation_path=(
+            _resolve_workspace_path(settings.remediation_path, workspace)
+            if settings.remediation != "none"
+            else None
+        ),
+        pr_branch=pr_branch,
+        pr_url=pr_url,
     )
 
 
@@ -327,6 +498,7 @@ def render_result(result: ActionResult, *, output_format: str, target: str) -> s
             f"  recommendation: {result.recommendation}",
             f"  policy: {policy_label}",
             f"  report: {result.report_path}",
+            f"  remediation: {result.remediation_status}",
         ]
     )
 
@@ -402,6 +574,14 @@ def _write_action_outputs(
         output.write(f"policy-passed={str(result.policy_passed).lower()}\n")
         output.write(f"report-path={result.report_path}\n")
         output.write(f"exit-code={result.exit_code}\n")
+        output.write(f"remediation-status={result.remediation_status}\n")
+        output.write(f"applied-fixes={result.applied_fixes}\n")
+        output.write(
+            "patch-path="
+            f"{result.remediation_path or ''}\n"
+        )
+        output.write(f"pr-branch={result.pr_branch}\n")
+        output.write(f"pr-url={result.pr_url}\n")
 
 
 def _write_step_summary(
@@ -419,6 +599,9 @@ def _write_step_summary(
         summary.write(f"- Recommendation: `{result.recommendation}`\n")
         summary.write(f"- Policy: **{policy_label}**\n")
         summary.write(f"- Report: `{result.report_path}`\n")
+        summary.write(f"- Remediation: `{result.remediation_status}`\n")
+        if result.pr_url:
+            summary.write(f"- Pull request: {result.pr_url}\n")
 
 
 def _report_recommendation(report: Mapping[str, object]) -> str:

@@ -24,6 +24,10 @@ For a selected package version, `trustcheck` can:
 - export SARIF 2.1.0, CycloneDX 1.6 JSON/XML, SPDX 2.3 JSON,
   OpenVEX 0.2.0, Markdown, or native JSON
 - statically inspect wheel and sdist contents without importing package code
+- score typosquatting and package-history anomalies, and inspect Python ASTs
+  plus PE, ELF, and Mach-O binaries for suspicious capabilities
+- calculate, validate, dry-run, and transactionally apply minimal secure
+  dependency upgrades
 - emit a concise human-readable report or structured JSON
 
 ## Install
@@ -103,6 +107,13 @@ Inspect exact versions from a supported lockfile:
 trustcheck scan uv.lock --with-transitive-deps
 ```
 
+Plan or validate a safe dependency repair:
+
+```bash
+trustcheck scan requirements.txt --with-osv --plan-fixes
+trustcheck scan uv.lock --with-osv --fix --dry-run
+```
+
 Inspect wheel and sdist contents:
 
 ```bash
@@ -128,7 +139,7 @@ print(report.to_dict()["report"]["coverage"]["status"])
 print(report.dependency_summary.highest_risk_recommendation)
 ```
 
-Machine-readable reports currently use JSON schema `1.6.0`. The package release
+Machine-readable reports currently use JSON schema `1.8.0`. The package release
 and report schema are versioned independently.
 
 <script

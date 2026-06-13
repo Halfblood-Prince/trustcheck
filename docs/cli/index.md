@@ -41,6 +41,8 @@ trustcheck --version
 - `--with-deps`: inspect direct runtime dependencies and summarize the highest-risk dependency
 - `--with-transitive-deps`: inspect direct and transitive runtime dependencies recursively
 - `--inspect-artifacts`: statically inspect downloaded wheels and sdists
+- `--trusted-project NAME`: add a project to the typosquatting reference set;
+  repeatable
 - `--strict`: apply the built-in strict policy
 - `--policy default|strict|internal-metadata`: evaluate a built-in policy profile
 - `--policy-file PATH`: load policy settings from a JSON file
@@ -200,6 +202,37 @@ Scan dependencies declared in a TOML project file:
 trustcheck scan pyproject.toml
 ```
 
+Plan secure dependency changes without invoking writers:
+
+```bash
+trustcheck scan requirements.txt \
+  --with-osv \
+  --plan-fixes \
+  --remediation-output reports/remediation.json
+```
+
+Regenerate and validate the exact patch in an isolated project mirror:
+
+```bash
+trustcheck scan pyproject.toml --with-osv --fix --dry-run
+```
+
+Apply the validated bytes transactionally:
+
+```bash
+trustcheck scan uv.lock --with-osv --fix
+```
+
+`--allow-constraint-changes` permits only the minimum range change needed when
+all secure releases are excluded. `--source-manifest` identifies the roots for
+a generated lockfile. `--max-fix-attempts` bounds branch-and-bound resolution;
+Trustcheck refuses application when the search cannot prove minimality.
+
+`--create-pr` publishes the validated patch through fixed-argument `git` and
+`gh` commands from a temporary worktree. Use `--pr-base`, `--pr-branch`,
+`--pr-title`, and `--pr-ready` to control the pull request. Draft is the
+default. See [Safe remediation](../reference/remediation.md).
+
 Select only particular extras and dependency groups:
 
 ```bash
@@ -295,10 +328,17 @@ trustcheck inspect sampleproject --version 4.0.0 --inspect-artifacts --verbose
 
 `--inspect-artifacts` never imports or executes package code. For wheels it
 validates every non-`RECORD` file against its secure `RECORD` hash and size,
-lists console scripts, detects native extensions, and reports unexpected
-top-level files. For sdists it reports suspicious scripts, oversized or unusual
-files, and metadata differences. When combined with dependency inspection, the
-same static checks are applied to inspected dependency artifacts.
+lists console scripts, parses bounded Python source with `ast`, and reports
+unexpected top-level files. For sdists it gives install and build-hook source
+extra weight. PE, ELF, and Mach-O files are inspected for imports,
+architecture, signature-record presence, entropy, and embedded payload
+signatures. When combined with dependency inspection, the same static checks
+are applied to inspected dependency artifacts.
+
+Typosquatting, dependency-confusion, ownership, repository, and release-cadence
+heuristics run without `--inspect-artifacts`. Add local reference names with
+repeatable `--trusted-project NAME`. Findings and scores are explicitly
+heuristic indicators for review, not proof of malware.
 
 When dependency inspection is enabled, `trustcheck` resolves the complete set
 with pip first and uses the resulting exact version map while traversing
@@ -318,7 +358,7 @@ for both direct and transitive inspection.
 
 Package releases and the machine-readable report schema are versioned
 independently. Vulnerability Intelligence 2.0 is represented in report schema
-`1.6.0`.
+`1.8.0`.
 
 For top-level package analysis, a complete absence of published provenance is typically surfaced as `review-required`. Stronger negative evidence such as failed verification, inconsistent provenance, or known vulnerabilities still drives `high-risk` outcomes.
 

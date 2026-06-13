@@ -21,6 +21,8 @@ nav:
       - Industry output formats: reference/industry-formats.md
       - Compatibility: reference/compatibility.md
       - Trust model and repository matching: reference/trust-model.md
+      - Malicious-package detection: reference/malicious-package-detection.md
+      - Safe remediation: reference/remediation.md
       - Recommendation model: reference/recommendations.md
   - Guides:
       - TrustCheck Package Scanner: guides/ci-integration.md

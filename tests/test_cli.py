@@ -63,6 +63,9 @@ from trustcheck.models import (
     DependencyInspection,
     DependencySummary,
     FileProvenance,
+    HeuristicFinding,
+    MaliciousPackageAssessment,
+    NativeBinaryInspection,
     PolicyViolation,
     ProvenanceConsistency,
     PublisherTrustSummary,
@@ -1581,6 +1584,7 @@ class CliBehaviorTests(unittest.TestCase):
                 "diagnostics",
                 "expected_repository",
                 "files",
+                "malicious_package",
                 "ownership",
                 "package_url",
                 "policy",
@@ -1589,6 +1593,7 @@ class CliBehaviorTests(unittest.TestCase):
                 "publisher_trust",
                 "recommendation",
                 "release_drift",
+                "remediation",
                 "repository_urls",
                 "risk_flags",
                 "summary",
@@ -2217,6 +2222,31 @@ class CliBehaviorTests(unittest.TestCase):
 
         self.assertEqual(exit_code, EXIT_OK)
 
+    def test_cli_forwards_custom_typosquatting_reference_projects(self) -> None:
+        stdout = io.StringIO()
+
+        def fake_inspect_package(*args, **kwargs):
+            self.assertEqual(
+                kwargs["trusted_projects"],
+                ["requests", "internal-sdk"],
+            )
+            return make_report()
+
+        with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(
+                    [
+                        "inspect",
+                        "gridoptim",
+                        "--trusted-project",
+                        "requests",
+                        "--trusted-project",
+                        "internal-sdk",
+                    ]
+                )
+
+        self.assertEqual(exit_code, EXIT_OK)
+
     def test_cli_text_output_shows_file_errors_in_verbose_mode(self) -> None:
         report = make_report()
         report.files[0].verified = False
@@ -2244,6 +2274,39 @@ class CliBehaviorTests(unittest.TestCase):
             unexpected_top_level_files=["NOTICE.txt"],
             metadata_name="gridoptim",
             metadata_version="2.2.0",
+            source_files_analyzed=2,
+            source_parse_errors=["bad.py: unable to parse Python AST"],
+            native_binaries=[
+                NativeBinaryInspection(
+                    path="gridoptim/native.pyd",
+                    format="PE",
+                    architecture="x86-64",
+                    imports=["WINHTTP.dll"],
+                    signature_present=False,
+                    signature_status="no-embedded-certificate",
+                    entropy=7.4,
+                    embedded_payloads=["zip signature at byte offset 100"],
+                    parse_error="partial import table",
+                )
+            ],
+        )
+        report.malicious_package = MaliciousPackageAssessment(
+            score=58,
+            level="high",
+            artifact_analysis=True,
+            findings=[
+                HeuristicFinding(
+                    code="ast_credential_network_chain",
+                    category="credential-access",
+                    severity="critical",
+                    confidence="medium",
+                    score=58,
+                    message="Credential access and network capability are combined.",
+                    evidence=["credential-access", "network"],
+                    location="gridoptim/setup.py:4",
+                    artifact="gridoptim.tar.gz",
+                )
+            ],
         )
         stdout = io.StringIO()
 
@@ -2261,6 +2324,12 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("wheel RECORD: invalid", stdout.getvalue())
         self.assertIn("console scripts:", stdout.getvalue())
         self.assertIn("gridoptim/native.pyd", stdout.getvalue())
+        self.assertIn("malicious-package heuristic indicators:", stdout.getvalue())
+        self.assertIn("not proof", stdout.getvalue())
+        self.assertIn("native binary analysis:", stdout.getvalue())
+        self.assertIn("WINHTTP.dll", stdout.getvalue())
+        self.assertIn("embedded payloads:", stdout.getvalue())
+        self.assertIn("parse note:", stdout.getvalue())
 
     def test_cli_non_verbose_output_is_concise(self) -> None:
         report = make_report()

