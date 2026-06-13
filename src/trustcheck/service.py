@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,7 +35,8 @@ from .models import (
     VulnerabilityRecord,
 )
 from .policy import advisory_evaluation_for
-from .pypi import PypiClient, PypiClientError
+from .pypi import PackageClient, PypiClient, PypiClientError
+from .resolver import ArtifactReference, PipResolver, ResolutionError, TargetEnvironment
 
 GITHUB_RESERVED_SEGMENTS = {
     "about",
@@ -160,7 +161,7 @@ class DiagnosticsCollector:
             )
         )
 
-    def to_report_diagnostics(self, client: PypiClient) -> ReportDiagnostics:
+    def to_report_diagnostics(self, client: PackageClient) -> ReportDiagnostics:
         return ReportDiagnostics(
             timeout=float(getattr(client, "timeout", 10.0)),
             max_retries=int(getattr(client, "max_retries", 2)),
@@ -180,7 +181,7 @@ def inspect_package(
     *,
     version: str | None = None,
     expected_repository: str | None = None,
-    client: PypiClient | None = None,
+    client: PackageClient | None = None,
     progress_callback: ProgressCallback | None = None,
     dependency_progress_callback: DependencyProgressCallback | None = None,
     include_dependencies: bool = False,
@@ -189,12 +190,48 @@ def inspect_package(
     inspect_artifacts: bool = False,
     osv_client: OsvClient | None = None,
     locked_versions: Mapping[str, str] | None = None,
+    resolver: PipResolver | None = None,
+    target_environment: TargetEnvironment | None = None,
+    complete_locked_versions: bool = False,
+    expected_artifacts: Sequence[ArtifactReference] = (),
     _dependency_context: DependencyTraversalContext | None = None,
 ) -> TrustReport:
     client = client or PypiClient()
     diagnostics = DiagnosticsCollector()
     dependency_context = _dependency_context or DependencyTraversalContext()
     dependency_context.seen.add(canonicalize_name(project))
+    dependency_inspection_requested = include_dependencies or include_transitive_dependencies
+    normalized_locked_versions: dict[str, str] = {
+        str(canonicalize_name(name)): str(locked_version)
+        for name, locked_version in (locked_versions or {}).items()
+    }
+
+    if dependency_inspection_requested and not normalized_locked_versions:
+        root_requirement = f"{project}=={version}" if version else project
+        try:
+            resolution = (resolver or PipResolver()).resolve_requirements(
+                [root_requirement],
+                target=target_environment,
+                offline=bool(getattr(client, "offline", False)),
+            )
+        except ResolutionError as exc:
+            raise PypiClientError(
+                f"unable to resolve dependencies for {root_requirement!r}: {exc}",
+                transient=False,
+                code="dependency",
+                subcode="resolution_failed",
+            ) from exc
+        normalized_locked_versions = resolution.versions
+        selected_root_version = normalized_locked_versions.get(canonicalize_name(project))
+        if selected_root_version is None:
+            raise PypiClientError(
+                f"dependency resolver did not return the root package {project!r}",
+                transient=False,
+                code="dependency",
+                subcode="root_missing",
+            )
+        version = selected_root_version
+        complete_locked_versions = True
 
     with _instrument_client(client, diagnostics.on_request_event):
         payload = client.get_release(project, version) if version else client.get_project(project)
@@ -229,6 +266,7 @@ def inspect_package(
             diagnostics=diagnostics,
             inspect_artifacts=inspect_artifacts,
             expected_requires_dist=declared_dependencies,
+            expected_artifacts=expected_artifacts,
         )
         if inspect_artifacts:
             compare_artifact_metadata(file.artifact for file in files)
@@ -237,7 +275,11 @@ def inspect_package(
             project=project,
             version=selected_version,
             summary=info.get("summary"),
-            package_url=f"https://pypi.org/project/{project}/{selected_version}/",
+            package_url=(
+                client.package_url(project, selected_version)
+                if hasattr(client, "package_url")
+                else f"https://pypi.org/project/{project}/{selected_version}/"
+            ),
             declared_dependencies=declared_dependencies,
             declared_repository_urls=declared_repository_urls,
             repository_urls=declared_repository_urls,
@@ -256,7 +298,6 @@ def inspect_package(
             ),
             diagnostics=diagnostics.to_report_diagnostics(client),
         )
-        dependency_inspection_requested = include_dependencies or include_transitive_dependencies
         if dependency_inspection_requested:
             report.dependencies = _inspect_dependencies(
                 report,
@@ -267,10 +308,8 @@ def inspect_package(
                 include_osv=include_osv,
                 inspect_artifacts=inspect_artifacts,
                 osv_client=osv_client,
-                locked_versions={
-                    canonicalize_name(name): str(locked_version)
-                    for name, locked_version in (locked_versions or {}).items()
-                },
+                locked_versions=normalized_locked_versions,
+                complete_locked_versions=complete_locked_versions,
             )
         report.dependency_summary = _build_dependency_summary(
             declared_dependencies,
@@ -287,32 +326,64 @@ def _collect_files(
     project: str,
     version: str,
     payload: dict[str, Any],
-    client: PypiClient,
+    client: PackageClient,
     *,
     progress_callback: ProgressCallback | None = None,
     diagnostics: DiagnosticsCollector | None = None,
     inspect_artifacts: bool = False,
     expected_requires_dist: list[str] | None = None,
+    expected_artifacts: Sequence[ArtifactReference] = (),
 ) -> list[FileProvenance]:
     urls = payload.get("urls") or []
+    selected_urls = _select_expected_artifacts(urls, expected_artifacts)
     results: list[FileProvenance] = []
 
-    total_files = len(urls)
-    for index, item in enumerate(urls, start=1):
+    total_files = len(selected_urls)
+    for index, (item, matched_artifacts) in enumerate(selected_urls, start=1):
         filename = item.get("filename") or ""
         if progress_callback is not None:
             progress_callback(filename, index, total_files)
         provenance = FileProvenance(
             filename=filename,
             url=item.get("url") or "",
-            sha256=(item.get("digests") or {}).get("sha256"),
+            sha256=_expected_sha256(item, matched_artifacts),
             has_provenance=False,
         )
         artifact_bytes: bytes | None = None
         download_error: PypiClientError | None = None
-        if inspect_artifacts:
+        if any(
+            artifact.hashes or artifact.size is not None
+            for artifact in matched_artifacts
+        ):
             try:
                 artifact_bytes = client.download_distribution(provenance.url)
+                _verify_locked_artifact(
+                    provenance,
+                    artifact_bytes,
+                    matched_artifacts,
+                )
+            except (PypiClientError, VerificationError) as exc:
+                provenance.error = str(exc)
+                if diagnostics is not None:
+                    diagnostics.add_artifact_failure(
+                        filename=filename,
+                        stage="lockfile-hash",
+                        code=(
+                            exc.code
+                            if isinstance(exc, PypiClientError)
+                            else "verification"
+                        ),
+                        subcode=(
+                            exc.subcode
+                            if isinstance(exc, PypiClientError)
+                            else "lockfile_hash_mismatch"
+                        ),
+                        message=str(exc),
+                    )
+        if inspect_artifacts:
+            try:
+                if artifact_bytes is None:
+                    artifact_bytes = client.download_distribution(provenance.url)
                 provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
                 provenance.artifact = inspect_artifact(
                     filename,
@@ -353,27 +424,37 @@ def _collect_files(
             provenance.attestation_count = sum(len(bundle.attestations) for bundle in bundles)
             provenance.publisher_identities = _parse_publisher_identities(bundles)
 
-            if artifact_bytes is None:
-                if download_error is not None:
-                    raise download_error
-                artifact_bytes = client.download_distribution(provenance.url)
-            provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
-            if provenance.sha256 and provenance.observed_sha256 != provenance.sha256:
-                raise VerificationError("downloaded artifact digest does not match PyPI metadata")
+            if bundles:
+                if artifact_bytes is None:
+                    if download_error is not None:
+                        raise download_error
+                    artifact_bytes = client.download_distribution(provenance.url)
+                provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+                if provenance.sha256 and provenance.observed_sha256 != provenance.sha256:
+                    raise VerificationError(
+                        "downloaded artifact digest does not match PyPI metadata"
+                    )
 
-            dist = AttestedDistribution(name=filename, digest=provenance.observed_sha256)
-            for bundle in bundles:
-                for attestation in bundle.attestations:
-                    attestation.verify(bundle.publisher, dist)
-                    provenance.verified_attestation_count += 1
+                dist = AttestedDistribution(
+                    name=filename,
+                    digest=provenance.observed_sha256,
+                )
+                for bundle in bundles:
+                    for attestation in bundle.attestations:
+                        attestation.verify(bundle.publisher, dist)
+                        provenance.verified_attestation_count += 1
 
-            provenance.verified = provenance.has_provenance and (
-                provenance.verified_attestation_count == provenance.attestation_count
+            provenance.verified = (
+                provenance.has_provenance
+                and provenance.attestation_count > 0
+                and provenance.verified_attestation_count
+                == provenance.attestation_count
             )
             if provenance.has_provenance and not provenance.verified:
                 raise VerificationError("no attestations were successfully verified")
         except PypiClientError as exc:
-            provenance.error = str(exc)
+            if provenance.error is None:
+                provenance.error = str(exc)
             if diagnostics is not None:
                 diagnostics.add_artifact_failure(
                     filename=filename,
@@ -383,7 +464,8 @@ def _collect_files(
                     message=str(exc),
                 )
         except VerificationError as exc:
-            provenance.error = str(exc)
+            if provenance.error is None:
+                provenance.error = str(exc)
             if diagnostics is not None:
                 diagnostics.add_artifact_failure(
                     filename=filename,
@@ -393,7 +475,8 @@ def _collect_files(
                     message=str(exc),
                 )
         except Exception as exc:
-            provenance.error = f"attestation verification failed: {exc}"
+            if provenance.error is None:
+                provenance.error = f"attestation verification failed: {exc}"
             if diagnostics is not None:
                 diagnostics.add_artifact_failure(
                     filename=filename,
@@ -404,6 +487,124 @@ def _collect_files(
                 )
         results.append(provenance)
     return results
+
+
+def _select_expected_artifacts(
+    urls: Sequence[dict[str, Any]],
+    expected_artifacts: Sequence[ArtifactReference],
+) -> list[tuple[dict[str, Any], tuple[ArtifactReference, ...]]]:
+    if not expected_artifacts:
+        return [(item, ()) for item in urls]
+    selected: list[tuple[dict[str, Any], tuple[ArtifactReference, ...]]] = []
+    for item in urls:
+        filename = item.get("filename")
+        url = item.get("url")
+        digests = item.get("digests")
+        release_hashes = (
+            {
+                str(algorithm).lower(): str(digest).lower()
+                for algorithm, digest in digests.items()
+                if digest is not None
+            }
+            if isinstance(digests, dict)
+            else {}
+        )
+        matches = tuple(
+            artifact
+            for artifact in expected_artifacts
+            if _artifact_matches_release_file(
+                artifact,
+                filename=filename,
+                url=url,
+                release_hashes=release_hashes,
+            )
+        )
+        if matches:
+            selected.append((item, matches))
+    if not selected:
+        raise ValueError(
+            "none of the release artifacts match the filenames, URLs, or hashes "
+            "recorded by the lockfile"
+        )
+    return selected
+
+
+def _artifact_matches_release_file(
+    artifact: ArtifactReference,
+    *,
+    filename: object,
+    url: object,
+    release_hashes: Mapping[str, str],
+) -> bool:
+    if artifact.filename and artifact.filename == filename:
+        return True
+    if artifact.url and artifact.url == url:
+        return True
+    if artifact.filename or artifact.url:
+        return False
+    return any(
+        release_hashes.get(algorithm.lower()) == digest.lower()
+        for algorithm, digest in artifact.hashes
+    )
+
+
+def _expected_hash_mapping(
+    artifacts: Sequence[ArtifactReference],
+) -> dict[str, list[str]]:
+    expected: dict[str, list[str]] = {}
+    for artifact in artifacts:
+        for algorithm, digest in artifact.hashes:
+            values = expected.setdefault(algorithm.lower(), [])
+            if digest.lower() not in values:
+                values.append(digest.lower())
+    return expected
+
+
+def _expected_sha256(
+    item: Mapping[str, Any],
+    artifacts: Sequence[ArtifactReference],
+) -> str | None:
+    expected = _expected_hash_mapping(artifacts).get("sha256", [])
+    if len(expected) == 1:
+        return expected[0]
+    digests = item.get("digests")
+    if isinstance(digests, dict):
+        digest = digests.get("sha256")
+        return str(digest) if digest is not None else None
+    return None
+
+
+def _verify_locked_artifact(
+    provenance: FileProvenance,
+    artifact_bytes: bytes,
+    artifacts: Sequence[ArtifactReference],
+) -> None:
+    expected_size = next(
+        (
+            artifact.size
+            for artifact in artifacts
+            if artifact.size is not None
+        ),
+        None,
+    )
+    if expected_size is not None and len(artifact_bytes) != expected_size:
+        raise VerificationError(
+            f"locked artifact size mismatch: expected {expected_size}, "
+            f"observed {len(artifact_bytes)}"
+        )
+    expected_hashes = _expected_hash_mapping(artifacts)
+    for algorithm, allowed_digests in expected_hashes.items():
+        try:
+            observed = hashlib.new(algorithm, artifact_bytes).hexdigest()
+        except ValueError as exc:
+            raise VerificationError(
+                f"lockfile uses unsupported hash algorithm {algorithm!r}"
+            ) from exc
+        if observed not in allowed_digests:
+            raise VerificationError(
+                f"locked artifact {algorithm} digest mismatch"
+            )
+    provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
 
 
 @contextmanager
@@ -450,7 +651,7 @@ def _extract_declared_dependencies(requires_dist: object) -> list[str]:
 
 def _inspect_dependencies(
     report: TrustReport,
-    client: PypiClient,
+    client: PackageClient,
     *,
     dependency_context: DependencyTraversalContext,
     dependency_progress_callback: DependencyProgressCallback | None = None,
@@ -459,6 +660,7 @@ def _inspect_dependencies(
     inspect_artifacts: bool,
     osv_client: OsvClient | None,
     locked_versions: Mapping[str, str],
+    complete_locked_versions: bool,
 ) -> list[DependencyInspection]:
     inspections: list[DependencyInspection] = []
     environment: dict[str, str] = {
@@ -484,6 +686,7 @@ def _inspect_dependencies(
             inspect_artifacts=inspect_artifacts,
             osv_client=osv_client,
             locked_versions=locked_versions,
+            complete_locked_versions=complete_locked_versions,
         )
         if inspection is None:
             continue
@@ -502,7 +705,7 @@ def _inspect_dependencies(
 
 def _inspect_dependency_requirement(
     requirement_text: str,
-    client: PypiClient,
+    client: PackageClient,
     *,
     dependency_context: DependencyTraversalContext,
     parent: tuple[str, str],
@@ -513,6 +716,7 @@ def _inspect_dependency_requirement(
     inspect_artifacts: bool,
     osv_client: OsvClient | None,
     locked_versions: Mapping[str, str],
+    complete_locked_versions: bool,
 ) -> tuple[DependencyInspection | None, list[str]]:
     try:
         requirement = Requirement(requirement_text)
@@ -531,11 +735,15 @@ def _inspect_dependency_requirement(
             [],
         )
 
-    if requirement.marker is not None and not requirement.marker.evaluate(environment):
-        return None, []
-
     project_name = requirement.name
     dependency_key = canonicalize_name(project_name)
+    locked_version = locked_versions.get(dependency_key)
+    if complete_locked_versions:
+        if locked_version is None:
+            return None, []
+    elif requirement.marker is not None and not requirement.marker.evaluate(environment):
+        return None, []
+
     if dependency_key in dependency_context.seen:
         return None, []
     dependency_context.seen.add(dependency_key)
@@ -543,7 +751,6 @@ def _inspect_dependency_requirement(
         dependency_progress_callback(project_name, depth, 0, False)
 
     try:
-        locked_version = locked_versions.get(dependency_key)
         if locked_version is not None:
             selected_version = _validate_locked_dependency_version(
                 requirement,
@@ -579,6 +786,8 @@ def _inspect_dependency_requirement(
             inspect_artifacts=inspect_artifacts,
             osv_client=osv_client,
             _dependency_context=dependency_context,
+            locked_versions=locked_versions,
+            complete_locked_versions=complete_locked_versions,
         )
         if dependency_progress_callback is not None and not nested_report.files:
             dependency_progress_callback(project_name, depth, 100, True)
@@ -810,6 +1019,30 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
         for file in report.files
         if file.artifact.suspicious_entry_points or file.artifact.suspicious_files
     ]
+    invalid_lock_hashes = [
+        failure
+        for failure in report.diagnostics.artifact_failures
+        if failure.stage == "lockfile-hash"
+    ]
+
+    if invalid_lock_hashes:
+        flags.append(
+            RiskFlag(
+                code="lockfile_hash_mismatch",
+                severity="high",
+                message="One or more artifacts failed lockfile integrity verification.",
+                why=[
+                    *[
+                        f"{failure.filename}: {failure.message}"
+                        for failure in invalid_lock_hashes
+                    ][:5],
+                ],
+                remediation=[
+                    "Do not install an artifact that does not match the lockfile.",
+                    "Regenerate the lockfile only after confirming the intended source.",
+                ],
+            )
+        )
 
     if invalid_records:
         flags.append(
@@ -1478,7 +1711,7 @@ def _build_provenance_consistency(files: list[FileProvenance]) -> ProvenanceCons
 def _build_release_drift_summary(
     project: str,
     version: str,
-    client: PypiClient,
+    client: PackageClient,
     *,
     current_files: list[FileProvenance],
 ) -> ReleaseDriftSummary:
@@ -1513,7 +1746,11 @@ def _build_release_drift_summary(
     )
 
 
-def _previous_release_version(project: str, version: str, client: PypiClient) -> str | None:
+def _previous_release_version(
+    project: str,
+    version: str,
+    client: PackageClient,
+) -> str | None:
     try:
         project_payload = client.get_project(project)
     except PypiClientError:

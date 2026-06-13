@@ -64,10 +64,24 @@ trustcheck inspect sampleproject --version 4.0.0 --with-transitive-deps
 trustcheck scan requirements.txt
 ```
 
+Pip resolves the complete dependency set before trustcheck audits it. Nested
+requirements, constraints, hashes, editable installs, and VCS references are
+supported.
+
+```bash
+trustcheck scan requirements.txt --constraint constraints.txt
+```
+
 ## Scan a TOML dependency file
 
 ```bash
 trustcheck scan pyproject.toml
+```
+
+Select extras and dependency groups:
+
+```bash
+trustcheck scan pyproject.toml --extra security --group test
 ```
 
 ## Scan a supported lockfile
@@ -76,8 +90,34 @@ trustcheck scan pyproject.toml
 trustcheck scan uv.lock --with-transitive-deps
 ```
 
-Supported lockfiles are `uv.lock`, `poetry.lock`, and `pdm.lock`. Exact locked
-versions are retained during direct and transitive dependency inspection.
+Supported lockfiles are PEP 751 `pylock.toml` and named `pylock.<name>.toml`
+files, `Pipfile.lock`, `uv.lock`, `poetry.lock`, and `pdm.lock`. Exact locked
+versions, source indexes, artifact URLs, sizes, and hashes are retained during
+inspection. Hash-pinned pip-tools output is recognized as a requirements input.
+
+## Scan a private index
+
+```bash
+trustcheck scan requirements.txt \
+  --index-url https://username@packages.example.com/simple \
+  --keyring-provider subprocess
+```
+
+Add `--extra-index-url` for each fallback index. Trustcheck stops by default
+when the same normalized project name exists on multiple configured indexes,
+which identifies a dependency-confusion opportunity.
+
+## Audit an installed environment
+
+```bash
+trustcheck environment
+```
+
+Audit an explicit environment without activating it:
+
+```bash
+trustcheck environment --path .venv/lib/python3.12/site-packages
+```
 
 ## Inspect artifact contents
 

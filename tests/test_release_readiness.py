@@ -124,5 +124,11 @@ class ReleaseReadinessTests(unittest.TestCase):
         )
 
         self.assertNotIn("does not yet ingest lockfiles", documentation)
-        for filename in ("uv.lock", "poetry.lock", "pdm.lock"):
+        for filename in (
+            "pylock.toml",
+            "Pipfile.lock",
+            "uv.lock",
+            "poetry.lock",
+            "pdm.lock",
+        ):
             self.assertIn(filename, documentation)

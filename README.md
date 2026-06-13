@@ -35,7 +35,15 @@ For a selected package version, `trustcheck` can:
 - surface Trusted Publisher repository and workflow identity hints
 - compare expected repository input against declared and attested signals
 - flag publisher drift, missing verification, and known vulnerabilities
-- scan requirements files, project TOML, and `uv.lock`, `poetry.lock`, or `pdm.lock`
+- scan requirements files, project TOML, `pylock.toml`, `Pipfile.lock`,
+  pip-tools output, and `uv.lock`, `poetry.lock`, or `pdm.lock`
+- resolve complete dependency sets with pip installation reports, including
+  constraints, nested requirements, extras, dependency groups, editable
+  requirements, and VCS references
+- audit the active Python environment or arbitrary `site-packages` directories
+- resolve against PEP 503/691 private indexes with optional keyring credentials
+- block dependency-confusion collisions across public and private indexes
+- preserve and verify lockfile artifact hashes before trusting downloaded bytes
 - optionally inspect wheel and sdist contents without importing or executing package code
 - emit concise text output or structured JSON for automation
 
@@ -51,6 +59,13 @@ Install from PyPI:
 
 ```bash
 pip install trustcheck
+```
+
+Install the optional Python keyring provider when private-index credentials are
+stored in an in-process keyring backend:
+
+```bash
+pip install "trustcheck[keyring]"
 ```
 
 Or install the Snap Store package:
@@ -100,7 +115,7 @@ steps:
 The action installs and runs `trustcheck`, uploads `trustcheck-report.json` as
 a workflow artifact, and fails the job with the CLI's exit code when policy
 evaluation fails. `target` also accepts a PyPI package name, `pyproject.toml`,
-`uv.lock`, `poetry.lock`, or `pdm.lock`.
+`pylock.toml`, `Pipfile.lock`, `uv.lock`, `poetry.lock`, or `pdm.lock`.
 Each stable release publishes an immutable full version tag and updates the
 compatible major action tag used above.
 
@@ -151,16 +166,77 @@ Inspect every package listed in a requirements-style file:
 trustcheck scan requirements.txt
 ```
 
+Resolution uses `pip install --dry-run --report` and includes transitive
+packages selected by pip:
+
+```bash
+trustcheck scan requirements.txt \
+  --constraint constraints.txt \
+  --python-version 3.12 \
+  --platform manylinux_2_28_x86_64 \
+  --implementation cp \
+  --abi cp312
+```
+
+Resolver note: pip may invoke build-backend metadata hooks for source, local,
+editable, or VCS requirements even in dry-run mode. Do not resolve an
+untrusted source requirement outside an appropriate sandbox. Cross-target
+resolution is wheel-only.
+
 Inspect dependencies declared in a TOML project file:
 
 ```bash
 trustcheck scan pyproject.toml
 ```
 
+Select project extras and dependency groups:
+
+```bash
+trustcheck scan pyproject.toml --extra security --group test
+```
+
 Inspect exact direct and transitive versions from a supported lockfile:
 
 ```bash
-trustcheck scan uv.lock --with-transitive-deps
+trustcheck scan pylock.toml --with-transitive-deps
+trustcheck scan Pipfile.lock
+```
+
+Hash-pinned pip-tools output is detected automatically. Every retained
+lockfile hash is emitted in combined JSON and checked against the downloaded
+artifact. This integrity check does not require `--inspect-artifacts`.
+
+Resolve and audit from a private PEP 503/691 index:
+
+```bash
+trustcheck scan requirements.txt \
+  --index-url https://username@packages.example.com/simple \
+  --keyring-provider subprocess
+```
+
+Adding a public fallback is deliberately guarded:
+
+```bash
+trustcheck scan requirements.txt \
+  --index-url https://username@packages.example.com/simple \
+  --extra-index-url https://pypi.org/simple
+```
+
+If the same normalized project name exists on both indexes, the scan stops
+with a dependency-confusion error. `--allow-dependency-confusion` is available
+for a source collision that has been independently reviewed; the finding
+remains in combined JSON.
+
+Audit the active environment:
+
+```bash
+trustcheck environment
+```
+
+Audit one or more explicit `site-packages` directories:
+
+```bash
+trustcheck environment --path .venv/lib/python3.12/site-packages
 ```
 
 Statically inspect wheel and sdist contents:

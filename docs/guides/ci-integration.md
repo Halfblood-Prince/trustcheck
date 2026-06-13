@@ -37,6 +37,8 @@ The `target` input accepts:
 - a PyPI package name, such as `sampleproject`
 - `requirements.txt` or another requirements-style `.txt` file
 - `pyproject.toml`
+- PEP 751 `pylock.toml` or a named `pylock.<name>.toml` file
+- `Pipfile.lock`
 - `uv.lock`
 - `poetry.lock`
 - `pdm.lock`
@@ -97,10 +99,19 @@ The file uses the same schema as CLI `--policy-file`.
 | `with-deps` | `false` | Inspect direct runtime dependencies. |
 | `with-transitive-deps` | `false` | Inspect the complete runtime dependency tree. |
 | `inspect-artifacts` | `false` | Statically inspect wheel and sdist contents. |
+| `index-url` | empty | Primary PEP 503/691 Simple Repository index. |
+| `extra-index-urls` | empty | Whitespace- or newline-separated additional indexes. |
+| `keyring-provider` | `auto` | `auto`, `disabled`, `import`, or `subprocess`. |
+| `allow-dependency-confusion` | `false` | Continue after reporting a cross-index project-name collision. |
 | `format` | `text` | Action log format: `text` or `json`. SARIF is reserved for a later release. |
 | `report-path` | `trustcheck-report.json` | JSON report location in the caller workspace. |
 | `artifact-name` | `trustcheck-report` | Uploaded workflow artifact name. |
 | `python-version` | `3.12` | Python version used by the action. |
+
+Private-index credentials can be supplied through URL user information,
+`.netrc`, or the configured keyring provider. Reports redact URL passwords.
+With multiple indexes, a normalized name found on more than one index fails
+closed unless `allow-dependency-confusion` is explicitly enabled.
 
 ## Outputs
 

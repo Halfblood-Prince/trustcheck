@@ -128,6 +128,27 @@ When dependency inspection is enabled with `--with-deps`, `--with-transitive-dep
 
 If dependency inspection is not requested, these fields are still present in the contract with empty or default values so JSON consumers can rely on a stable shape.
 
+## Combined scan resolution metadata
+
+`trustcheck scan --format json` and `trustcheck environment --format json`
+include a top-level `resolved` array alongside `reports` and `failures`. Each
+entry records:
+
+- the exact resolved project and version
+- whether the distribution was explicitly requested
+- its direct source URL when pip or PEP 610 metadata provides one
+- editable status
+- VCS type and immutable commit identifier when available
+- the redacted source index URL
+- every retained lockfile artifact filename, URL, path, size, kind, and hash
+- configured-index collisions in `dependency_confusion`
+
+This scan-level metadata does not change the per-package report schema.
+
+Artifact URLs and index URLs never expose embedded credentials. Lock hashes
+are represented as an algorithm-to-hex-digest object under each item in
+`artifacts`.
+
 ## Artifact inspection fields
 
 Every item in `report.files` contains an `artifact` object. When artifact

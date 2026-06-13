@@ -8,12 +8,15 @@ import time
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 from urllib import error, parse, request
 
 from pydantic import ValidationError
 
 from .schemas import ProjectResponsePayload, ProvenanceEnvelopePayload
+
+if TYPE_CHECKING:
+    from .resolver import ArtifactReference
 
 PYPI_BASE_URL = "https://pypi.org"
 JSON_ACCEPT = "application/json"
@@ -72,6 +75,27 @@ class PypiClientError(RuntimeError):
         self.url = url
         self.code = code
         self.subcode = subcode
+
+
+class PackageClient(Protocol):
+    timeout: float
+    max_retries: int
+    backoff_factor: float
+    offline: bool
+    request_hook: Callable[[str, dict[str, Any]], None] | None
+
+    def get_project(self, project: str) -> dict[str, Any]: ...
+
+    def get_release(self, project: str, version: str) -> dict[str, Any]: ...
+
+    def get_provenance(
+        self,
+        project: str,
+        version: str,
+        filename: str,
+    ) -> dict[str, Any]: ...
+
+    def download_distribution(self, url: str) -> bytes: ...
 
 
 @dataclass(slots=True)
@@ -388,3 +412,165 @@ class PypiClient:
                 code="upstream",
                 subcode="provenance_shape_invalid",
             ) from exc
+
+
+@dataclass(slots=True)
+class IndexBackedPackageClient:
+    base_client: PypiClient
+    project: str
+    version: str
+    index_url: str
+    artifacts: tuple[ArtifactReference, ...] = ()
+    requires_dist: tuple[str, ...] = ()
+    request_hook: Callable[[str, dict[str, Any]], None] | None = None
+    repository_client: Any = None
+
+    def __post_init__(self) -> None:
+        if self.repository_client is None:
+            from .indexes import SimpleRepositoryClient
+
+            self.repository_client = SimpleRepositoryClient(
+                timeout=self.base_client.timeout,
+            )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.base_client, name)
+
+    def get_project(self, project: str) -> dict[str, Any]:
+        self._validate_project(project)
+        payload = self._release_payload()
+        payload["releases"] = {self.version: payload["urls"]}
+        return payload
+
+    def get_release(self, project: str, version: str) -> dict[str, Any]:
+        self._validate_project(project)
+        if version != self.version:
+            raise PypiClientError(
+                f"index-backed package only provides locked version {self.version}",
+                code="upstream",
+                subcode="release_not_locked",
+            )
+        return self._release_payload()
+
+    def get_provenance(
+        self,
+        project: str,
+        version: str,
+        filename: str,
+    ) -> dict[str, Any]:
+        del filename
+        self._validate_project(project)
+        if version != self.version:
+            raise PypiClientError(
+                f"index-backed package only provides locked version {self.version}",
+                code="upstream",
+                subcode="release_not_locked",
+            )
+        return {"version": 1, "attestation_bundles": []}
+
+    def download_distribution(self, url: str) -> bytes:
+        parsed = parse.urlsplit(url)
+        if parsed.scheme == "file":
+            try:
+                return Path(request.url2pathname(parsed.path)).read_bytes()
+            except OSError as exc:
+                raise PypiClientError(
+                    f"unable to read locked artifact {url}: {exc}",
+                    code="upstream",
+                    subcode="artifact_read_failed",
+                ) from exc
+        try:
+            return bytes(self.repository_client.download(
+                url,
+                index_url=self.index_url,
+            ))
+        except Exception as exc:
+            raise PypiClientError(
+                str(exc),
+                code="upstream",
+                subcode="artifact_download_failed",
+            ) from exc
+
+    def package_url(self, project: str, version: str) -> str:
+        from .indexes import normalize_index_url, redact_url_credentials
+
+        base = redact_url_credentials(normalize_index_url(self.index_url))
+        return parse.urljoin(base, f"{parse.quote(project)}/{parse.quote(version)}/")
+
+    def _validate_project(self, project: str) -> None:
+        from packaging.utils import canonicalize_name
+
+        if canonicalize_name(project) != canonicalize_name(self.project):
+            raise PypiClientError(
+                f"index-backed client is scoped to {self.project!r}",
+                code="upstream",
+                subcode="project_scope_mismatch",
+            )
+
+    def _release_payload(self) -> dict[str, Any]:
+        from .indexes import files_for_version
+
+        artifacts = list(self.artifacts)
+        if not any(item.url for item in artifacts):
+            project = self.repository_client.get_project(
+                self.index_url,
+                self.project,
+            )
+            if project is None:
+                raise PypiClientError(
+                    f"project {self.project!r} was not found on the configured index",
+                    code="upstream",
+                    subcode="index_project_not_found",
+                )
+            expected_hashes = {
+                hash_value
+                for artifact in artifacts
+                for hash_value in artifact.hashes
+            }
+            for item in files_for_version(project, self.version):
+                if expected_hashes and not expected_hashes.intersection(item.hashes):
+                    continue
+                from .resolver import ArtifactReference
+
+                artifacts.append(
+                    ArtifactReference(
+                        filename=item.filename,
+                        url=item.url,
+                        hashes=item.hashes,
+                        size=item.size,
+                        kind="index",
+                    )
+                )
+
+        urls = []
+        for artifact in artifacts:
+            if not artifact.url:
+                continue
+            hashes = dict(artifact.hashes)
+            urls.append(
+                {
+                    "filename": artifact.filename
+                    or Path(parse.urlsplit(artifact.url).path).name,
+                    "url": artifact.url,
+                    "digests": {"sha256": hashes.get("sha256")},
+                }
+            )
+        if not urls:
+            raise PypiClientError(
+                f"no locked artifacts for {self.project}=={self.version} "
+                "were available from the configured index",
+                code="upstream",
+                subcode="locked_artifact_missing",
+            )
+        return {
+            "info": {
+                "version": self.version,
+                "summary": None,
+                "project_urls": {},
+                "ownership": {},
+                "requires_dist": list(self.requires_dist),
+            },
+            "releases": {},
+            "urls": urls,
+            "vulnerabilities": [],
+        }

@@ -14,8 +14,10 @@ from .cli import main as cli_main
 from .contract import JSON_SCHEMA_VERSION
 
 SUPPORTED_SCAN_FILENAMES = {
+    "pipfile.lock",
     "pdm.lock",
     "poetry.lock",
+    "pylock.toml",
     "pyproject.toml",
     "requirements.txt",
     "uv.lock",
@@ -43,6 +45,10 @@ class ActionSettings:
     with_deps: bool = False
     with_transitive_deps: bool = False
     inspect_artifacts: bool = False
+    index_url: str = ""
+    extra_index_urls: tuple[str, ...] = ()
+    keyring_provider: str = "auto"
+    allow_dependency_confusion: bool = False
     output_format: str = "text"
     report_path: str = "trustcheck-report.json"
 
@@ -74,6 +80,20 @@ class ActionSettings:
                 environment.get("TRUSTCHECK_ACTION_INSPECT_ARTIFACTS", "false"),
                 name="inspect-artifacts",
             ),
+            index_url=environment.get("TRUSTCHECK_ACTION_INDEX_URL", "").strip(),
+            extra_index_urls=_parse_multi_value(
+                environment.get("TRUSTCHECK_ACTION_EXTRA_INDEX_URLS", "")
+            ),
+            keyring_provider=environment.get(
+                "TRUSTCHECK_ACTION_KEYRING_PROVIDER", "auto"
+            ).strip()
+            or "auto",
+            allow_dependency_confusion=_parse_bool(
+                environment.get(
+                    "TRUSTCHECK_ACTION_ALLOW_DEPENDENCY_CONFUSION", "false"
+                ),
+                name="allow-dependency-confusion",
+            ),
             output_format=environment.get(
                 "TRUSTCHECK_ACTION_FORMAT", "text"
             ).strip()
@@ -103,6 +123,15 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
     if settings.output_format not in {"text", "json"}:
         raise ActionInputError(
             "'format' must be 'text' or 'json'; SARIF output is not available yet"
+        )
+    if settings.keyring_provider not in {
+        "auto",
+        "disabled",
+        "import",
+        "subprocess",
+    }:
+        raise ActionInputError(
+            "'keyring-provider' must be 'auto', 'disabled', 'import', or 'subprocess'"
         )
 
     target_path = _resolve_workspace_path(settings.target, workspace)
@@ -139,6 +168,13 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
         arguments.append("--with-transitive-deps")
     if settings.inspect_artifacts:
         arguments.append("--inspect-artifacts")
+    if settings.index_url:
+        arguments.extend(["--index-url", settings.index_url])
+    for index_url in settings.extra_index_urls:
+        arguments.extend(["--extra-index-url", index_url])
+    arguments.extend(["--keyring-provider", settings.keyring_provider])
+    if settings.allow_dependency_confusion:
+        arguments.append("--allow-dependency-confusion")
     arguments.extend(["--format", "json"])
     return arguments
 
@@ -358,10 +394,16 @@ def _resolve_workspace_path(value: str, workspace: Path) -> Path:
 
 def _looks_like_scan_file(target: str) -> bool:
     path = Path(target)
+    filename = path.name.lower()
     return (
-        path.name.lower() in SUPPORTED_SCAN_FILENAMES
+        filename in SUPPORTED_SCAN_FILENAMES
+        or (filename.startswith("pylock.") and filename.endswith(".toml"))
         or path.suffix.lower() in {".lock", ".toml", ".txt"}
     )
+
+
+def _parse_multi_value(value: str) -> tuple[str, ...]:
+    return tuple(item for line in value.splitlines() for item in line.split())
 
 
 def _parse_bool(value: str, *, name: str) -> bool:

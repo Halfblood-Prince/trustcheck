@@ -12,6 +12,12 @@ Requirements file scan:
 trustcheck scan <filename>
 ```
 
+Installed environment scan:
+
+```bash
+trustcheck environment --path .venv/lib/python3.12/site-packages
+```
+
 Show the installed package and report schema versions:
 
 ```bash
@@ -33,6 +39,32 @@ trustcheck --version
 - `--policy default|strict|internal-metadata`: evaluate a built-in policy profile
 - `--policy-file PATH`: load policy settings from a JSON file
 - `scan <filename>`: read a requirements, project TOML, or supported lockfile and inspect each entry
+- `environment`: inspect exact distributions installed in the active
+  interpreter, or in repeatable `--path` locations
+
+## Resolver flags
+
+- `--constraint FILE`: apply a pip constraints file; repeatable
+- `--extra NAME`: select a project optional-dependency extra; repeatable
+- `--group NAME`: select a standard or Poetry dependency group; repeatable
+- `--python-version VERSION`: resolve for a target Python version
+- `--platform TAG`: resolve for a target wheel platform; repeatable
+- `--implementation TAG`: resolve for an interpreter implementation such as `cp`
+- `--abi TAG`: resolve for a target wheel ABI; repeatable
+
+## Package index flags
+
+- `--index-url URL`: primary PEP 503/691 Simple Repository index
+- `--extra-index-url URL`: additional index; repeatable
+- `--keyring-provider auto|disabled|import|subprocess`: pip-compatible
+  credential provider
+- `--allow-dependency-confusion`: continue after a cross-index name collision
+  that has been independently reviewed
+
+`--extra-index-url` is secure by default: `trustcheck` checks every resolved
+name independently on each configured index and stops when public and private
+indexes both provide the name. Index credentials are redacted from errors and
+JSON output.
 
 ## Policy override flags
 
@@ -98,17 +130,92 @@ Scan every package listed in a requirements-style file:
 trustcheck scan requirements.txt
 ```
 
+Requirements scans are resolved as complete environments with pip's
+installation-report interface. Nested `-r` requirements, nested `-c`
+constraints, hashes, extras, editable requirements, direct URLs, and VCS
+requirements use pip's own parsing and resolution behavior.
+
+Apply an additional constraints file and resolve for a target:
+
+```bash
+trustcheck scan requirements.txt \
+  --constraint constraints.txt \
+  --python-version 3.12 \
+  --platform manylinux_2_28_x86_64 \
+  --implementation cp \
+  --abi cp312
+```
+
+Cross-target resolution uses wheels only because pip cannot safely build source
+distributions for a foreign interpreter or platform.
+
+!!! warning
+
+    Pip can invoke build-backend metadata hooks while resolving source,
+    editable, local, or VCS requirements, including with `--dry-run`. Treat
+    resolver inputs with the same caution as installation inputs and use an
+    external sandbox for untrusted source projects.
+
 Scan dependencies declared in a TOML project file:
 
 ```bash
 trustcheck scan pyproject.toml
 ```
 
-Scan resolved dependencies from `uv.lock`, `poetry.lock`, or `pdm.lock`:
+Select only particular extras and dependency groups:
 
 ```bash
-trustcheck scan uv.lock --with-transitive-deps
+trustcheck scan pyproject.toml --extra security --group test
 ```
+
+Without `--extra` or `--group`, all statically declared extras and groups are
+included for backward compatibility. Standard dependency-group
+`include-group` entries are expanded with cycle detection.
+
+Scan a standard PEP 751 lockfile or another supported lock:
+
+```bash
+trustcheck scan pylock.toml --with-transitive-deps
+trustcheck scan Pipfile.lock
+```
+
+Supported lock inputs are `pylock.toml`, named `pylock.<name>.toml` files,
+`Pipfile.lock`, `uv.lock`, `poetry.lock`, and `pdm.lock`. Hash-pinned pip-tools
+requirements files are recognized automatically, including nested `-r`
+includes.
+
+PEP 751 `requires-python`, `environments`, package markers, extras, default
+groups, selected `--extra`/`--group` values, index origins, archives, sdists,
+wheels, directories, and immutable VCS revisions are validated. A versionless
+source-tree entry is reported as unsupported instead of being silently
+reinterpreted as a public-index package.
+
+Every artifact hash retained from a lockfile is verified against downloaded
+bytes, independently of provenance and `--inspect-artifacts`. A mismatch or
+unsupported algorithm produces a high-severity `lockfile_hash_mismatch`.
+
+Resolve through a private index with keyring authentication:
+
+```bash
+trustcheck scan requirements.txt \
+  --index-url https://username@packages.example.com/simple \
+  --keyring-provider subprocess
+```
+
+The `import` provider requires `pip install "trustcheck[keyring]"`. As with
+pip, `auto` does not query keyring while non-interactive resolution uses
+`--no-input`; select `import` or `subprocess` explicitly when required.
+
+Audit installed distributions:
+
+```bash
+trustcheck environment
+trustcheck environment --path .venv/lib/python3.12/site-packages
+```
+
+Installed scans use `importlib.metadata` and retain exact installed versions.
+PEP 610 `direct_url.json` metadata is recorded for editable, local, and VCS
+installations in combined JSON output.
 
 Scan a requirements-style file and emit JSON:
 
@@ -129,9 +236,21 @@ top-level files. For sdists it reports suspicious scripts, oversized or unusual
 files, and metadata differences. When combined with dependency inspection, the
 same static checks are applied to inspected dependency artifacts.
 
-When dependency inspection is enabled, `trustcheck` reads `requires_dist` metadata, resolves compatible dependency versions from PyPI, and adds a dependency summary to the report. `--with-deps` stops at the immediate dependencies of the inspected package. `--with-transitive-deps` continues recursively through nested dependencies. The top-level result can be escalated if an inspected dependency is `review-required` or `high-risk`.
+When dependency inspection is enabled, `trustcheck` resolves the complete set
+with pip first and uses the resulting exact version map while traversing
+`requires_dist` metadata. `--with-deps` stops at immediate dependencies.
+`--with-transitive-deps` continues recursively. The top-level result can be
+escalated if an inspected dependency is `review-required` or `high-risk`.
 
-When `scan` is used, `trustcheck` reads a requirements-style file, a TOML project file, or a supported lockfile. Requirements files support exact pins with multiline `--hash` entries. TOML project files read dependencies from `[project.dependencies]`, `[project.optional-dependencies]`, `[tool.poetry.dependencies]`, and Poetry dependency groups. Lockfile scans support `uv.lock`, `poetry.lock`, and `pdm.lock`, skip local or VCS-only entries, and inspect exact resolved package versions. With dependency inspection enabled, locked versions are retained for both direct and transitive packages instead of being replaced by the newest compatible PyPI release.
+When `scan` is used, `trustcheck` reads a requirements-style file, TOML project
+file, or supported lockfile. Requirements inputs are delegated to pip so their
+complete resolved set is audited. TOML project files support
+`[project.dependencies]`, optional dependencies, standard
+`[dependency-groups]`, Poetry dependencies, and Poetry groups. Lockfile scans
+support PEP 751 `pylock.toml`, `Pipfile.lock`, `uv.lock`, `poetry.lock`, and
+`pdm.lock`; pip-tools hashes are retained from requirements files. Exact
+resolved versions, index origins, artifact candidates, and hashes are retained
+for both direct and transitive inspection.
 
 Package releases and the machine-readable report schema are versioned
 independently. Artifact inspection is represented in report schema `1.5.0`.

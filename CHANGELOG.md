@@ -8,6 +8,34 @@ The project follows Semantic Versioning for the supported public API described i
 
 ### Added
 
+- Added standard PEP 751 `pylock.toml` and named `pylock.<name>.toml` inputs,
+  including environment, extras, dependency-group, source, index, and artifact
+  validation.
+- Added `Pipfile.lock` and hash-preserving pip-tools input support alongside
+  the existing installed-environment, uv, Poetry, and PDM inputs.
+- Added PEP 503/691 private-index support with `--index-url`, repeatable
+  `--extra-index-url`, and pip-compatible `--keyring-provider` selection.
+- Added secure-by-default dependency-confusion detection across configured and
+  lockfile-recorded indexes, with an explicit reviewed override.
+- Added lockfile artifact filename, URL, size, and multi-algorithm hash
+  preservation in scan JSON and independent downloaded-byte verification.
+- Added source-scoped auditing for direct, local, editable, archive, and VCS
+  packages so they cannot silently fall back to a same-named public project.
+- Added resolver-correct auditing through pip's `--dry-run --report` installation
+  reports instead of selecting every requirement's newest compatible release in
+  isolation.
+- Added installed-environment auditing with `trustcheck environment`, including
+  repeatable `--path` support for arbitrary `site-packages` directories.
+- Added recursive requirements and constraints support by delegating
+  requirements-file interpretation to pip, including nested `-r`/`-c` files,
+  hashes, extras, editable requirements, and VCS/direct references.
+- Added `--constraint`, `--extra`, and `--group` scan options, including
+  standard dependency groups with `include-group` and Poetry dependency groups.
+- Added target resolution controls for Python version, wheel platform,
+  implementation, and ABI.
+- Added structured resolved-source metadata to combined scan JSON, including
+  requested, direct URL, editable, VCS, and commit information.
+- Added public resolver models and installed-distribution discovery helpers.
 - Added a first-class reusable GitHub Action through `action.yml`.
 - Added action inputs for package and dependency-file targets, built-in or custom policy, expected repository checks, OSV, dependency traversal, artifact inspection, and output format.
 - Added action outputs for recommendation, policy status, and JSON report path, with automatic workflow artifact upload before CLI exit-code enforcement.

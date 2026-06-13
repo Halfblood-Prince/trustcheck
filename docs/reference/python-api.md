@@ -5,6 +5,12 @@
 ## Supported symbols
 
 - `trustcheck.inspect_package`
+- `trustcheck.PipResolver`
+- `trustcheck.TargetEnvironment`
+- `trustcheck.Resolution`
+- `trustcheck.ResolvedDistribution`
+- `trustcheck.ResolutionError`
+- `trustcheck.discover_installed_distributions`
 - `trustcheck.TrustReport`
 - `trustcheck.TrustReport.to_dict()`
 - `trustcheck.JSON_SCHEMA_VERSION`
@@ -12,6 +18,49 @@
 - `trustcheck.get_json_schema()`
 
 Everything else under `trustcheck.*` should be treated as internal implementation detail and may change between minor releases.
+
+## Dependency resolution
+
+Use `PipResolver` to obtain the exact package set selected by pip without
+installing it:
+
+```python
+from trustcheck import PipResolver, TargetEnvironment
+
+resolution = PipResolver().resolve_requirements_file(
+    "requirements.txt",
+    constraints=["constraints.txt"],
+    target=TargetEnvironment(
+        python_version="3.12",
+        platforms=("manylinux_2_28_x86_64",),
+        implementation="cp",
+        abis=("cp312",),
+    ),
+)
+
+print(resolution.versions)
+```
+
+The resolver invokes pip with `--dry-run --ignore-installed --report -`.
+Cross-target resolution adds `--only-binary :all:` because source builds cannot
+be performed correctly for a foreign target.
+
+Pip may still invoke build-backend metadata hooks for source, local, editable,
+or VCS requirements. Dry-run resolution is therefore not a sandbox.
+
+## Installed distributions
+
+```python
+from trustcheck import discover_installed_distributions
+
+active = discover_installed_distributions()
+other = discover_installed_distributions(
+    [".venv/lib/python3.12/site-packages"]
+)
+```
+
+Discovery uses `importlib.metadata` and reads PEP 610 `direct_url.json` when it
+is available.
 
 ## Example
 
@@ -102,7 +151,7 @@ print(json.dumps(payload, indent=2))
 
 ## `inspect_package`
 
-Use `inspect_package(project, version=None, expected_repository=None, client=None, progress_callback=None, include_dependencies=False, include_transitive_dependencies=False, include_osv=False, inspect_artifacts=False, osv_client=None, locked_versions=None)` to collect evidence and build a `TrustReport`.
+Use `inspect_package(project, version=None, expected_repository=None, client=None, progress_callback=None, include_dependencies=False, include_transitive_dependencies=False, include_osv=False, inspect_artifacts=False, osv_client=None, locked_versions=None, resolver=None, target_environment=None, complete_locked_versions=False, expected_artifacts=())` to collect evidence and build a `TrustReport`.
 
 In most applications, you only need to provide:
 
@@ -114,6 +163,24 @@ In most applications, you only need to provide:
 - optionally `include_osv=True` to query OSV for the exact selected versions
 - optionally `inspect_artifacts=True` to statically inspect downloaded wheels and sdists
 - optionally `locked_versions={"dependency-name": "1.2.3"}` to retain resolved direct and transitive versions
+- optionally `target_environment=TargetEnvironment(...)` for resolver target controls
+- optionally `expected_artifacts=(ArtifactReference(...),)` to require locked
+  filenames, URLs, sizes, and hashes
+
+When dependency inspection is requested without `locked_versions`,
+`inspect_package` resolves the root package and dependency set through
+`PipResolver`.
+
+`PipResolver(indexes=IndexConfiguration(...))` supports primary and extra
+PEP 503/691 indexes, keyring provider selection, source attribution, and
+dependency-confusion detection. Cross-index collisions raise
+`ResolutionError` unless `allow_dependency_confusion=True`.
+
+`load_lockfile(path, extras=(), groups=(), environment=None)` returns a
+`LockfileResolution` containing exact `LockedPackage` entries and retained
+`ArtifactReference` records for PEP 751, Pipfile, uv, Poetry, and PDM locks.
+`SimpleRepositoryClient` is the public PEP 503/691 parser and authenticated
+index client.
 
 Artifact inspection reads archive contents only. It does not import or execute
 the inspected package.

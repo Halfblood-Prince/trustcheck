@@ -10,6 +10,7 @@ import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
+from urllib import parse
 
 from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
@@ -19,10 +20,32 @@ from packaging.version import InvalidVersion, Version
 from . import __version__
 from .advisories import OsvClient
 from .contract import JSON_SCHEMA_VERSION
-from .lockfiles import is_supported_lockfile, load_lockfile
+from .indexes import (
+    DEFAULT_INDEX_URL,
+    IndexConfiguration,
+    SimpleRepositoryClient,
+    normalize_index_url,
+    redact_url_credentials,
+)
+from .lockfiles import (
+    LockedPackage,
+    LockfileResolution,
+    is_supported_lockfile,
+    load_lockfile,
+    load_pip_tools_lock,
+)
 from .models import TrustReport
-from .policy import BUILTIN_POLICIES, evaluate_policy, resolve_policy
-from .pypi import PypiClient, PypiClientError
+from .policy import BUILTIN_POLICIES, PolicySettings, evaluate_policy, resolve_policy
+from .pypi import IndexBackedPackageClient, PypiClient, PypiClientError
+from .resolver import (
+    ArtifactReference,
+    PipResolver,
+    Resolution,
+    ResolutionError,
+    ResolvedDistribution,
+    TargetEnvironment,
+    discover_installed_distributions,
+)
 from .service import DependencyProgressCallback, ProgressCallback, inspect_package
 
 EXIT_OK = 0
@@ -40,6 +63,16 @@ class ScanTarget:
     failure_message: str | None = None
     failure_exit_code: int = EXIT_OK
     locked_versions: dict[str, str] = field(default_factory=dict)
+    complete_locked_versions: bool = False
+    source_url: str | None = None
+    requested: bool = True
+    editable: bool = False
+    vcs: str | None = None
+    vcs_commit: str | None = None
+    artifacts: tuple[ArtifactReference, ...] = ()
+    index_url: str | None = None
+    requires_dist: tuple[str, ...] = ()
+    dependency_confusion: tuple[str, ...] = ()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -192,6 +225,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use cached responses only and do not make network requests.",
     )
+    _add_target_environment_arguments(inspect_parser)
+    _add_index_arguments(inspect_parser)
 
     scan_parser = subparsers.add_parser(
         "scan",
@@ -199,7 +234,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan_parser.add_argument(
         "filename",
-        help="Path to requirements.txt, pyproject.toml, uv.lock, poetry.lock, or pdm.lock.",
+        help=(
+            "Path to requirements.txt, pyproject.toml, pylock.toml, "
+            "Pipfile.lock, uv.lock, poetry.lock, or pdm.lock."
+        ),
     )
     scan_parser.add_argument(
         "--config-file",
@@ -312,9 +350,200 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use cached responses only and do not make network requests.",
     )
+    scan_parser.add_argument(
+        "--constraint",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="Apply a pip constraints file during dependency resolution; repeatable.",
+    )
+    scan_parser.add_argument(
+        "--extra",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Select an optional-dependency extra from pyproject.toml; repeatable.",
+    )
+    scan_parser.add_argument(
+        "--group",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Select a standard or Poetry dependency group; repeatable.",
+    )
+    _add_target_environment_arguments(scan_parser)
+    _add_index_arguments(scan_parser)
+
+    environment_parser = subparsers.add_parser(
+        "environment",
+        help="Inspect installed distributions in the active environment or site-packages paths.",
+    )
+    environment_parser.add_argument(
+        "--path",
+        action="append",
+        default=[],
+        metavar="SITE_PACKAGES",
+        help="Discover distributions from this site-packages path; repeatable.",
+    )
+    environment_parser.add_argument(
+        "--config-file",
+        help="Path to a JSON config file with optional network settings.",
+    )
+    environment_parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format.",
+    )
+    environment_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show detailed per-file verification evidence.",
+    )
+    environment_parser.add_argument(
+        "--inspect-artifacts",
+        action="store_true",
+        help="Statically inspect wheel and sdist contents without executing package code.",
+    )
+    environment_parser.add_argument(
+        "--cve",
+        action="store_true",
+        help="Show only known vulnerability records for each installed distribution.",
+    )
+    environment_parser.add_argument(
+        "--with-osv",
+        action="store_true",
+        help="Query OSV for each installed distribution.",
+    )
+    environment_dependency_group = environment_parser.add_mutually_exclusive_group()
+    environment_dependency_group.add_argument(
+        "--with-deps",
+        action="store_true",
+        help="Inspect immediate dependencies using installed versions.",
+    )
+    environment_dependency_group.add_argument(
+        "--with-transitive-deps",
+        action="store_true",
+        help="Inspect transitive dependencies using installed versions.",
+    )
+    environment_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Apply the built-in strict policy.",
+    )
+    environment_parser.add_argument(
+        "--policy",
+        choices=tuple(BUILTIN_POLICIES),
+        default="default",
+        help="Built-in policy profile to evaluate after evidence collection.",
+    )
+    environment_parser.add_argument(
+        "--policy-file",
+        help="Path to a JSON file containing policy settings.",
+    )
+    environment_parser.add_argument(
+        "--require-verified-provenance",
+        choices=("none", "all"),
+        help="Override whether policy requires verified provenance for every artifact.",
+    )
+    environment_parser.add_argument(
+        "--allow-metadata-only",
+        action="store_true",
+        default=None,
+        help="Allow metadata-only outcomes under the selected policy.",
+    )
+    environment_parser.add_argument(
+        "--disallow-metadata-only",
+        action="store_false",
+        dest="allow_metadata_only",
+        default=None,
+        help="Fail policy evaluation when the result is metadata-only.",
+    )
+    environment_parser.add_argument(
+        "--fail-on-vulnerability",
+        choices=("ignore", "any"),
+        help="Override vulnerability handling for policy evaluation.",
+    )
+    environment_parser.add_argument(
+        "--fail-on-risk-severity",
+        choices=("none", "medium", "high"),
+        help="Fail policy evaluation when risk flags meet or exceed this severity.",
+    )
+    environment_parser.add_argument("--timeout", type=float, help="Network timeout in seconds.")
+    environment_parser.add_argument(
+        "--retries",
+        type=int,
+        help="Maximum retry count for transient failures.",
+    )
+    environment_parser.add_argument(
+        "--backoff",
+        type=float,
+        help="Retry backoff factor in seconds.",
+    )
+    environment_parser.add_argument(
+        "--cache-dir",
+        help="Optional persistent cache directory for PyPI responses.",
+    )
+    environment_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use cached responses only and do not make network requests.",
+    )
+    _add_index_arguments(environment_parser)
     return parser
 
 
+def _add_target_environment_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--python-version",
+        help="Resolve dependencies for this target Python version.",
+    )
+    parser.add_argument(
+        "--platform",
+        action="append",
+        default=[],
+        help="Resolve wheels for this target platform; repeatable.",
+    )
+    parser.add_argument(
+        "--implementation",
+        help="Resolve wheels for this Python implementation tag, such as cp or pp.",
+    )
+    parser.add_argument(
+        "--abi",
+        action="append",
+        default=[],
+        help="Resolve wheels for this target ABI; repeatable.",
+    )
+
+
+def _add_index_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--index-url",
+        default=DEFAULT_INDEX_URL,
+        metavar="URL",
+        help="Primary PEP 503/691 package index.",
+    )
+    parser.add_argument(
+        "--extra-index-url",
+        action="append",
+        default=[],
+        metavar="URL",
+        help="Additional PEP 503/691 package index; repeatable.",
+    )
+    parser.add_argument(
+        "--keyring-provider",
+        choices=("auto", "disabled", "import", "subprocess"),
+        default="auto",
+        help="Credential provider used by pip and private-index requests.",
+    )
+    parser.add_argument(
+        "--allow-dependency-confusion",
+        action="store_true",
+        help=(
+            "Continue when a project name exists on more than one configured "
+            "index; unsafe unless the source has been independently verified."
+        ),
+    )
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -336,11 +565,53 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
             )
             osv_client = _build_osv_client(client) if args.with_osv else None
+            resolver = _resolver_from_args(args)
+            inspection_client: PypiClient | IndexBackedPackageClient = client
+            expected_artifacts: tuple[ArtifactReference, ...] = ()
+            selected_version = args.version
+            if _uses_nondefault_indexes(args):
+                root_requirement = (
+                    f"{args.project}=={args.version}"
+                    if args.version
+                    else args.project
+                )
+                resolution = resolver.resolve_requirements(
+                    [root_requirement],
+                    target=_target_environment_from_args(args),
+                    offline=client.offline,
+                )
+                root = next(
+                    (
+                        item
+                        for item in resolution.distributions
+                        if canonicalize_name(item.name)
+                        == canonicalize_name(args.project)
+                    ),
+                    None,
+                )
+                if root is None:
+                    raise ResolutionError(
+                        f"resolver did not return root package {args.project!r}"
+                    )
+                selected_version = root.version
+                expected_artifacts = root.artifacts
+                inspection_client = _client_for_target(
+                    client,
+                    ScanTarget(
+                        requirement=f"{root.name}=={root.version}",
+                        project=root.name,
+                        version=root.version,
+                        artifacts=root.artifacts,
+                        index_url=root.index_url,
+                        requires_dist=root.requires_dist,
+                    ),
+                    keyring_provider=args.keyring_provider,
+                )
             report = inspect_package(
                 args.project,
-                version=args.version,
+                version=selected_version,
                 expected_repository=args.expected_repo,
-                client=client,
+                client=inspection_client,
                 progress_callback=progress_callback,
                 dependency_progress_callback=dependency_progress_callback,
                 include_dependencies=args.with_deps,
@@ -348,6 +619,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 include_osv=args.with_osv,
                 inspect_artifacts=args.inspect_artifacts,
                 osv_client=osv_client,
+                resolver=resolver,
+                target_environment=_target_environment_from_args(args),
+                expected_artifacts=expected_artifacts,
             )
             policy_name = "strict" if args.strict else args.policy
             policy = resolve_policy(
@@ -401,90 +675,72 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "fail_on_severity": args.fail_on_risk_severity,
                 },
             )
-            targets = _load_scan_targets(args.filename, client)
-            reports: list[TrustReport] = []
-            failures: list[dict[str, str]] = []
-            overall_exit_code = EXIT_OK
-            for target in targets:
-                if target.failure_message is not None:
-                    failures.append(
-                        {
-                            "requirement": target.requirement,
-                            "message": target.failure_message,
-                        }
-                    )
-                    overall_exit_code = _merge_exit_codes(
-                        overall_exit_code,
-                        target.failure_exit_code,
-                    )
-                    continue
-                try:
-                    report = inspect_package(
-                        target.project,
-                        version=target.version,
-                        client=client,
-                        progress_callback=progress_callback,
-                        dependency_progress_callback=dependency_progress_callback,
-                        include_dependencies=args.with_deps,
-                        include_transitive_dependencies=args.with_transitive_deps,
-                        include_osv=args.with_osv,
-                        inspect_artifacts=args.inspect_artifacts,
-                        osv_client=osv_client,
-                        locked_versions=target.locked_versions,
-                    )
-                    evaluation = evaluate_policy(report, policy)
-                    reports.append(report)
-                    if not evaluation.passed and overall_exit_code == EXIT_OK:
-                        overall_exit_code = EXIT_POLICY_FAILURE
-                except PypiClientError as exc:
-                    failures.append(
-                        {
-                            "requirement": target.requirement,
-                            "message": _format_upstream_error(exc),
-                        }
-                    )
-                    overall_exit_code = _merge_exit_codes(
-                        overall_exit_code,
-                        EXIT_UPSTREAM_FAILURE,
-                    )
-                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                    failures.append(
-                        {
-                            "requirement": target.requirement,
-                            "message": (
-                                "error: received an invalid response while "
-                                f"inspecting the package: {exc}"
-                            ),
-                        }
-                    )
-                    overall_exit_code = _merge_exit_codes(
-                        overall_exit_code,
-                        EXIT_DATA_ERROR,
-                    )
-            if args.format == "json":
-                print(
-                    json.dumps(
-                        _render_scan_json(
-                            args.filename,
-                            reports,
-                            failures=failures,
-                            cve_only=args.cve,
-                        ),
-                        indent=2,
-                        sort_keys=True,
-                    )
-                )
-            else:
-                print(
-                    _render_scan_text(
-                        args.filename,
-                        reports,
-                        failures=failures,
-                        verbose=args.verbose,
-                        cve_only=args.cve,
-                    )
-                )
-            return overall_exit_code
+            targets = _load_scan_targets(
+                args.filename,
+                client,
+                resolver=_resolver_from_args(args),
+                constraints=args.constraint,
+                extras=args.extra,
+                groups=args.group,
+                target_environment=_target_environment_from_args(args),
+                offline=client.offline,
+            )
+            return _run_scan_targets(
+                args.filename,
+                targets,
+                args=args,
+                client=client,
+                osv_client=osv_client,
+                policy=policy,
+                progress_callback=progress_callback,
+                dependency_progress_callback=dependency_progress_callback,
+            )
+        if args.command == "environment":
+            config_payload = _load_config_file(args.config_file)
+            progress_callback = None
+            dependency_progress_callback = None
+            if args.format == "text":
+                progress_callback = _build_progress_callback()
+                dependency_progress_callback = _build_dependency_progress_callback()
+            client = _build_client(
+                args,
+                config_payload=config_payload,
+                request_hook=_build_debug_request_hook(
+                    enabled=args.debug,
+                    log_format=args.log_format,
+                ),
+            )
+            osv_client = _build_osv_client(client) if args.with_osv else None
+            policy_name = "strict" if args.strict else args.policy
+            policy = resolve_policy(
+                builtin_name=policy_name,
+                config_path=args.policy_file,
+                cli_overrides={
+                    "require_verified_provenance": args.require_verified_provenance,
+                    "allow_metadata_only": args.allow_metadata_only,
+                    "vulnerability_mode": args.fail_on_vulnerability,
+                    "fail_on_severity": args.fail_on_risk_severity,
+                },
+            )
+            resolution = discover_installed_distributions(args.path)
+            if _uses_nondefault_indexes(args):
+                resolution = _resolver_from_args(args).annotate_indexes(resolution)
+            targets = _scan_targets_from_resolution(resolution)
+            source_label = (
+                ", ".join(str(Path(path).resolve()) for path in args.path)
+                if args.path
+                else "active Python environment"
+            )
+            return _run_scan_targets(
+                source_label,
+                targets,
+                args=args,
+                client=client,
+                osv_client=osv_client,
+                policy=policy,
+                progress_callback=progress_callback,
+                dependency_progress_callback=dependency_progress_callback,
+            )
 
         parser.error("unknown command")
         return EXIT_USAGE
@@ -494,7 +750,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             EXIT_UPSTREAM_FAILURE,
             debug=args.debug,
         )
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        ResolutionError,
+    ) as exc:
         return _handle_error(
             f"error: received an invalid response while inspecting the package: {exc}",
             EXIT_DATA_ERROR,
@@ -506,6 +768,110 @@ def main(argv: Sequence[str] | None = None) -> int:
             EXIT_DATA_ERROR,
             debug=args.debug,
         )
+
+
+def _run_scan_targets(
+    source_label: str,
+    targets: list[ScanTarget],
+    *,
+    args: argparse.Namespace,
+    client: PypiClient,
+    osv_client: OsvClient | None,
+    policy: PolicySettings,
+    progress_callback: ProgressCallback | None,
+    dependency_progress_callback: DependencyProgressCallback | None,
+) -> int:
+    reports: list[TrustReport] = []
+    failures: list[dict[str, str]] = []
+    overall_exit_code = EXIT_OK
+    for target in targets:
+        if target.failure_message is not None:
+            failures.append(
+                {
+                    "requirement": target.requirement,
+                    "message": target.failure_message,
+                }
+            )
+            overall_exit_code = _merge_exit_codes(
+                overall_exit_code,
+                target.failure_exit_code,
+            )
+            continue
+        try:
+            target_client = _client_for_target(
+                client,
+                target,
+                keyring_provider=args.keyring_provider,
+            )
+            report = inspect_package(
+                target.project,
+                version=target.version,
+                client=target_client,
+                progress_callback=progress_callback,
+                dependency_progress_callback=dependency_progress_callback,
+                include_dependencies=args.with_deps,
+                include_transitive_dependencies=args.with_transitive_deps,
+                include_osv=args.with_osv,
+                inspect_artifacts=args.inspect_artifacts,
+                osv_client=osv_client,
+                locked_versions=target.locked_versions,
+                complete_locked_versions=target.complete_locked_versions,
+                expected_artifacts=target.artifacts,
+            )
+            evaluation = evaluate_policy(report, policy)
+            reports.append(report)
+            if not evaluation.passed and overall_exit_code == EXIT_OK:
+                overall_exit_code = EXIT_POLICY_FAILURE
+        except PypiClientError as exc:
+            failures.append(
+                {
+                    "requirement": target.requirement,
+                    "message": _format_upstream_error(exc),
+                }
+            )
+            overall_exit_code = _merge_exit_codes(
+                overall_exit_code,
+                EXIT_UPSTREAM_FAILURE,
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            failures.append(
+                {
+                    "requirement": target.requirement,
+                    "message": (
+                        "error: received an invalid response while "
+                        f"inspecting the package: {exc}"
+                    ),
+                }
+            )
+            overall_exit_code = _merge_exit_codes(
+                overall_exit_code,
+                EXIT_DATA_ERROR,
+            )
+    if args.format == "json":
+        print(
+            json.dumps(
+                _render_scan_json(
+                    source_label,
+                    reports,
+                    failures=failures,
+                    cve_only=args.cve,
+                    targets=targets,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        print(
+            _render_scan_text(
+                source_label,
+                reports,
+                failures=failures,
+                verbose=args.verbose,
+                cve_only=args.cve,
+            )
+        )
+    return overall_exit_code
 
 
 def _handle_error(message: str, exit_code: int, *, debug: bool) -> int:
@@ -539,6 +905,124 @@ def _build_dependency_progress_callback() -> DependencyProgressCallback:
         previous_length = 0 if done else len(message)
 
     return emit
+
+
+def _target_environment_from_args(args: argparse.Namespace) -> TargetEnvironment:
+    return TargetEnvironment(
+        python_version=getattr(args, "python_version", None),
+        platforms=tuple(getattr(args, "platform", ()) or ()),
+        implementation=getattr(args, "implementation", None),
+        abis=tuple(getattr(args, "abi", ()) or ()),
+    )
+
+
+def _target_marker_environment(
+    target: TargetEnvironment | None,
+) -> dict[str, str]:
+    environment = {
+        key: str(value) for key, value in default_environment().items()
+    }
+    if target is None:
+        return environment
+    if target.python_version:
+        parts = target.python_version.split(".")
+        environment["python_version"] = ".".join(parts[:2])
+        environment["python_full_version"] = target.python_version
+    if target.implementation:
+        implementation = target.implementation.lower()
+        implementation_names = {
+            "cp": "cpython",
+            "pp": "pypy",
+            "py": "python",
+        }
+        environment["implementation_name"] = implementation_names.get(
+            implementation,
+            implementation,
+        )
+    if target.platforms:
+        platform = target.platforms[0].lower()
+        if "win" in platform:
+            environment["sys_platform"] = "win32"
+        elif "macosx" in platform:
+            environment["sys_platform"] = "darwin"
+        elif "linux" in platform or "manylinux" in platform or "musllinux" in platform:
+            environment["sys_platform"] = "linux"
+    return environment
+
+
+def _index_configuration_from_args(
+    args: argparse.Namespace,
+) -> IndexConfiguration:
+    return IndexConfiguration(
+        index_url=args.index_url,
+        extra_index_urls=tuple(args.extra_index_url),
+        keyring_provider=args.keyring_provider,
+    )
+
+
+def _resolver_from_args(args: argparse.Namespace) -> PipResolver:
+    indexes = _index_configuration_from_args(args)
+    return PipResolver(
+        indexes=indexes,
+        index_client=SimpleRepositoryClient(
+            keyring_provider=indexes.keyring_provider,
+        ),
+        allow_dependency_confusion=args.allow_dependency_confusion,
+    )
+
+
+def _uses_nondefault_indexes(args: argparse.Namespace) -> bool:
+    configuration = _index_configuration_from_args(args)
+    return (
+        redact_url_credentials(normalize_index_url(configuration.index_url))
+        != normalize_index_url(DEFAULT_INDEX_URL)
+        or bool(configuration.extra_index_urls)
+    )
+
+
+def _client_for_target(
+    client: PypiClient,
+    target: ScanTarget,
+    *,
+    keyring_provider: str,
+) -> PypiClient | IndexBackedPackageClient:
+    if target.version is None:
+        return client
+    index_url = target.index_url
+    artifact_urls = [
+        artifact.url for artifact in target.artifacts if artifact.url
+    ]
+    if index_url and (
+        redact_url_credentials(normalize_index_url(index_url))
+        == normalize_index_url(DEFAULT_INDEX_URL)
+    ):
+        return client
+    if not index_url and all(
+        _is_pypi_artifact_url(url) for url in artifact_urls
+    ):
+        return client
+    if not index_url and not artifact_urls:
+        return client
+    if index_url is None:
+        parsed = parse.urlsplit(artifact_urls[0])
+        index_url = f"{parsed.scheme}://{parsed.netloc}/"
+    return IndexBackedPackageClient(
+        base_client=client,
+        project=target.project,
+        version=target.version,
+        index_url=index_url,
+        artifacts=target.artifacts,
+        requires_dist=target.requires_dist,
+        repository_client=SimpleRepositoryClient(
+            timeout=client.timeout,
+            keyring_provider=keyring_provider,
+        ),
+    )
+
+
+def _is_pypi_artifact_url(url: str) -> bool:
+    hostname = (parse.urlsplit(url).hostname or "").lower()
+    return hostname in {"files.pythonhosted.org", "pypi.org"}
 
 
 def _build_client(
@@ -695,7 +1179,12 @@ def _build_debug_request_hook(
 
 
 def _format_upstream_error(exc: PypiClientError) -> str:
-    source = "advisory service" if exc.code == "advisory" else "PyPI"
+    if exc.code == "advisory":
+        source = "advisory service"
+    elif exc.code == "dependency":
+        source = "dependency resolver"
+    else:
+        source = "PyPI"
     return (
         f"error: unable to inspect package from {source}: "
         f"{exc} [code={exc.code} subcode={exc.subcode}]"
@@ -712,22 +1201,57 @@ def _merge_exit_codes(current: int, new: int) -> int:
     return max(current, new)
 
 
-def _load_scan_targets(path: str, client: PypiClient) -> list[ScanTarget]:
+def _load_scan_targets(
+    path: str,
+    client: PypiClient,
+    *,
+    resolver: PipResolver | None = None,
+    constraints: Sequence[str | Path] = (),
+    extras: Sequence[str] = (),
+    groups: Sequence[str] = (),
+    target_environment: TargetEnvironment | None = None,
+    offline: bool = False,
+) -> list[ScanTarget]:
     file_path = Path(path)
     if not file_path.exists():
         raise ValueError(f"scan file not found: {path}")
 
     if is_supported_lockfile(file_path):
-        resolution = load_lockfile(file_path)
-        return _build_scan_targets(
-            resolution.requirements,
-            client,
-            source_path=file_path,
-            locked_versions=resolution.versions,
+        lockfile_resolution = load_lockfile(
+            file_path,
+            extras=extras,
+            groups=groups,
+            environment=_target_marker_environment(target_environment),
+        )
+        return _scan_targets_from_lockfile(
+            lockfile_resolution,
+            resolver=resolver,
         )
 
     if file_path.suffix.lower() == ".toml":
-        return _load_scan_targets_from_toml(file_path, client)
+        return _load_scan_targets_from_toml(
+            file_path,
+            client,
+            resolver=resolver,
+            constraints=constraints,
+            extras=extras,
+            groups=groups,
+            target_environment=target_environment,
+            offline=offline,
+        )
+
+    if resolver is not None:
+        pip_resolution = resolver.resolve_requirements_file(
+            file_path,
+            constraints=constraints,
+            target=target_environment,
+            offline=offline,
+        )
+        pip_tools_resolution = load_pip_tools_lock(file_path)
+        return _scan_targets_from_resolution(
+            pip_resolution,
+            lockfile_resolution=pip_tools_resolution,
+        )
 
     requirement_lines = _read_requirements_file(file_path)
     locked_versions = _locked_versions_from_requirements(
@@ -742,7 +1266,17 @@ def _load_scan_targets(path: str, client: PypiClient) -> list[ScanTarget]:
     )
 
 
-def _load_scan_targets_from_toml(file_path: Path, client: PypiClient) -> list[ScanTarget]:
+def _load_scan_targets_from_toml(
+    file_path: Path,
+    client: PypiClient,
+    *,
+    resolver: PipResolver | None = None,
+    constraints: Sequence[str | Path] = (),
+    extras: Sequence[str] = (),
+    groups: Sequence[str] = (),
+    target_environment: TargetEnvironment | None = None,
+    offline: bool = False,
+) -> list[ScanTarget]:
     try:
         with file_path.open("rb") as toml_file:
             payload = tomllib.load(toml_file)
@@ -751,9 +1285,24 @@ def _load_scan_targets_from_toml(file_path: Path, client: PypiClient) -> list[Sc
     if not isinstance(payload, dict):
         raise ValueError(f"TOML file must contain a top-level table: {file_path}")
 
-    requirement_lines = _extract_scan_requirements_from_toml(payload)
+    requirement_lines = _extract_scan_requirements_from_toml(
+        payload,
+        extras=extras,
+        groups=groups,
+        base_path=file_path.parent,
+    )
     if not requirement_lines:
         raise ValueError(f"no supported package requirements found in {file_path}")
+
+    if resolver is not None:
+        resolution = resolver.resolve_requirements(
+            requirement_lines,
+            constraints=constraints,
+            target=target_environment,
+            cwd=file_path.parent,
+            offline=offline,
+        )
+        return _scan_targets_from_resolution(resolution)
 
     return _build_scan_targets(
         requirement_lines,
@@ -769,6 +1318,7 @@ def _build_scan_targets(
     *,
     source_path: Path,
     locked_versions: dict[str, str] | None = None,
+    complete_locked_versions: bool = False,
     entry_label: str = "line",
 ) -> list[ScanTarget]:
     environment = {key: str(value) for key, value in default_environment().items()}
@@ -796,10 +1346,141 @@ def _build_scan_targets(
                 failure_message=failure_message,
                 failure_exit_code=failure_exit_code,
                 locked_versions=resolved_versions,
+                complete_locked_versions=complete_locked_versions,
             )
         )
     if not targets:
         raise ValueError(f"no supported package requirements found in {source_path}")
+    return targets
+
+
+def _scan_targets_from_resolution(
+    resolution: Resolution,
+    *,
+    lockfile_resolution: LockfileResolution | None = None,
+) -> list[ScanTarget]:
+    if not resolution.distributions:
+        raise ResolutionError("dependency resolution produced no distributions")
+    versions = resolution.versions
+    locked_packages = (
+        {
+            canonicalize_name(package.name): package
+            for package in lockfile_resolution.packages
+        }
+        if lockfile_resolution is not None
+        else {}
+    )
+    confusion = {
+        canonicalize_name(finding.project): finding.indexes
+        for finding in resolution.dependency_confusion
+    }
+    return [
+        _scan_target_from_resolved_distribution(
+            item,
+            versions,
+            locked_package=locked_packages.get(canonicalize_name(item.name)),
+            dependency_confusion=confusion.get(
+                canonicalize_name(item.name),
+                (),
+            ),
+        )
+        for item in resolution.distributions
+    ]
+
+
+def _scan_target_from_resolved_distribution(
+    item: ResolvedDistribution,
+    versions: dict[str, str],
+    *,
+    locked_package: LockedPackage | None = None,
+    dependency_confusion: tuple[str, ...] = (),
+) -> ScanTarget:
+    artifacts = (
+        locked_package.artifacts
+        if locked_package is not None and locked_package.artifacts
+        else item.artifacts
+    )
+    return ScanTarget(
+        requirement=f"{item.name}=={item.version}",
+        project=item.name,
+        version=item.version,
+        locked_versions=versions,
+        complete_locked_versions=True,
+        source_url=item.source_url,
+        requested=item.requested,
+        editable=item.editable,
+        vcs=item.vcs,
+        vcs_commit=item.vcs_commit,
+        artifacts=artifacts,
+        index_url=(
+            locked_package.index_url
+            if locked_package is not None and locked_package.index_url
+            else item.index_url
+        ),
+        requires_dist=(
+            locked_package.requires_dist
+            if locked_package is not None and locked_package.requires_dist
+            else item.requires_dist
+        ),
+        dependency_confusion=dependency_confusion,
+    )
+
+
+def _scan_targets_from_lockfile(
+    resolution: LockfileResolution,
+    *,
+    resolver: PipResolver | None = None,
+) -> list[ScanTarget]:
+    findings: dict[str, tuple[str, ...]] = {}
+    if resolver is not None:
+        detected = resolver.check_dependency_confusion(
+            [package.name for package in resolution.packages],
+            additional_indexes=[
+                package.index_url
+                for package in resolution.packages
+                if package.index_url is not None
+            ],
+        )
+        findings = {
+            canonicalize_name(finding.project): finding.indexes
+            for finding in detected
+        }
+    targets = [
+        ScanTarget(
+            requirement=package.requirement,
+            project=package.name,
+            version=package.version,
+            locked_versions=resolution.versions,
+            complete_locked_versions=True,
+            source_url=next(
+                (
+                    artifact.url
+                    for artifact in package.artifacts
+                    if artifact.url is not None
+                ),
+                None,
+            ),
+            artifacts=package.artifacts,
+            index_url=package.index_url,
+            requires_dist=package.requires_dist,
+            dependency_confusion=findings.get(
+                canonicalize_name(package.name),
+                (),
+            ),
+        )
+        for package in resolution.packages
+    ]
+    targets.extend(
+        ScanTarget(
+            requirement=warning,
+            project=warning.split(":", 1)[0],
+            failure_message=warning,
+            failure_exit_code=EXIT_DATA_ERROR,
+            locked_versions=resolution.versions,
+            complete_locked_versions=True,
+        )
+        for warning in resolution.warnings
+    )
     return targets
 
 
@@ -861,30 +1542,97 @@ def _locked_versions_from_requirements(
     return versions
 
 
-def _extract_scan_requirements_from_toml(payload: dict[str, object]) -> list[str]:
+def _extract_scan_requirements_from_toml(
+    payload: dict[str, object],
+    *,
+    extras: Sequence[str] = (),
+    groups: Sequence[str] = (),
+    base_path: Path | None = None,
+) -> list[str]:
     requirements: list[str] = []
+    available_extras: dict[str, tuple[str, object]] = {}
+    available_groups: dict[str, tuple[str, object, str]] = {}
 
     project = payload.get("project")
     if isinstance(project, dict):
         requirements.extend(_collect_requirement_strings(project.get("dependencies")))
         optional_dependencies = project.get("optional-dependencies")
         if isinstance(optional_dependencies, dict):
-            for group_requirements in optional_dependencies.values():
-                requirements.extend(_collect_requirement_strings(group_requirements))
+            for name, extra_requirements in optional_dependencies.items():
+                key = canonicalize_name(str(name))
+                if key in available_extras:
+                    raise ValueError(f"duplicate optional dependency extra: {name}")
+                available_extras[key] = (str(name), extra_requirements)
+
+    standard_groups = payload.get("dependency-groups")
+    if isinstance(standard_groups, dict):
+        for name, group_payload in standard_groups.items():
+            key = canonicalize_name(str(name))
+            if key in available_groups:
+                raise ValueError(f"duplicate dependency group: {name}")
+            available_groups[key] = (str(name), group_payload, "standard")
+
+    selected_extras = (
+        [canonicalize_name(name) for name in extras]
+        if extras
+        else list(available_extras)
+    )
+    for extra_key in selected_extras:
+        extra_entry = available_extras.get(extra_key)
+        if extra_entry is None:
+            raise ValueError(f"unknown optional dependency extra: {extra_key}")
+        requirements.extend(_collect_requirement_strings(extra_entry[1]))
 
     tool = payload.get("tool")
     if isinstance(tool, dict):
         poetry = tool.get("poetry")
         if isinstance(poetry, dict):
-            requirements.extend(_extract_poetry_dependency_requirements(poetry.get("dependencies")))
-            groups = poetry.get("group")
-            if isinstance(groups, dict):
-                for group_payload in groups.values():
+            requirements.extend(
+                _extract_poetry_dependency_requirements(
+                    poetry.get("dependencies"),
+                    base_path=base_path,
+                )
+            )
+            poetry_groups = poetry.get("group")
+            if isinstance(poetry_groups, dict):
+                for name, group_payload in poetry_groups.items():
                     if not isinstance(group_payload, dict):
                         continue
-                    requirements.extend(
-                        _extract_poetry_dependency_requirements(group_payload.get("dependencies"))
+                    key = canonicalize_name(str(name))
+                    if key in available_groups:
+                        raise ValueError(
+                            f"dependency group {name!r} is defined more than once"
+                        )
+                    available_groups[key] = (
+                        str(name),
+                        group_payload.get("dependencies"),
+                        "poetry",
                     )
+
+    selected_groups = (
+        [canonicalize_name(name) for name in groups]
+        if groups
+        else list(available_groups)
+    )
+    for group_key in selected_groups:
+        group_entry = available_groups.get(group_key)
+        if group_entry is None:
+            raise ValueError(f"unknown dependency group: {group_key}")
+        if group_entry[2] == "poetry":
+            requirements.extend(
+                _extract_poetry_dependency_requirements(
+                    group_entry[1],
+                    base_path=base_path,
+                )
+            )
+        else:
+            requirements.extend(
+                _resolve_standard_dependency_group(
+                    available_groups,
+                    group_key,
+                )
+            )
+
     deduped: list[str] = []
     seen: set[str] = set()
     for requirement in requirements:
@@ -894,26 +1642,83 @@ def _extract_scan_requirements_from_toml(payload: dict[str, object]) -> list[str
     return deduped
 
 
+def _resolve_standard_dependency_group(
+    available_groups: dict[str, tuple[str, object, str]],
+    group: str,
+    past_groups: tuple[str, ...] = (),
+) -> list[str]:
+    if group in past_groups:
+        chain = " -> ".join((*past_groups, group))
+        raise ValueError(f"cyclic dependency group include: {chain}")
+    entry = available_groups.get(group)
+    if entry is None or entry[2] != "standard":
+        raise ValueError(f"unknown standard dependency group: {group}")
+    raw_group = entry[1]
+    if not isinstance(raw_group, list):
+        raise ValueError(f"dependency group {entry[0]!r} must be a list")
+
+    requirements: list[str] = []
+    for item in raw_group:
+        if isinstance(item, str):
+            try:
+                Requirement(item)
+            except InvalidRequirement as exc:
+                raise ValueError(
+                    f"invalid requirement in dependency group {entry[0]!r}: {exc}"
+                ) from exc
+            requirements.append(item)
+            continue
+        if isinstance(item, dict) and tuple(item) == ("include-group",):
+            include_name = item["include-group"]
+            if not isinstance(include_name, str):
+                raise ValueError(
+                    f"dependency group include in {entry[0]!r} must name a group"
+                )
+            requirements.extend(
+                _resolve_standard_dependency_group(
+                    available_groups,
+                    canonicalize_name(include_name),
+                    (*past_groups, group),
+                )
+            )
+            continue
+        raise ValueError(f"invalid dependency group item in {entry[0]!r}: {item!r}")
+    return requirements
+
+
 def _collect_requirement_strings(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
 
 
-def _extract_poetry_dependency_requirements(value: object) -> list[str]:
+def _extract_poetry_dependency_requirements(
+    value: object,
+    *,
+    base_path: Path | None = None,
+) -> list[str]:
     if not isinstance(value, dict):
         return []
     requirements: list[str] = []
     for name, spec in value.items():
         if str(name).lower() == "python":
             continue
-        requirement = _poetry_dependency_to_requirement(str(name), spec)
+        requirement = _poetry_dependency_to_requirement(
+            str(name),
+            spec,
+            base_path=base_path,
+        )
         if requirement:
             requirements.append(requirement)
     return requirements
 
 
-def _poetry_dependency_to_requirement(name: str, spec: object) -> str | None:
+def _poetry_dependency_to_requirement(
+    name: str,
+    spec: object,
+    *,
+    base_path: Path | None = None,
+) -> str | None:
     if isinstance(spec, str):
         cleaned = spec.strip()
         if not cleaned or cleaned == "*":
@@ -923,14 +1728,56 @@ def _poetry_dependency_to_requirement(name: str, spec: object) -> str | None:
             return f"{name}{translated}"
         return f"{name}{cleaned}"
     if isinstance(spec, dict):
+        extras = spec.get("extras")
+        requirement_name = name
+        if isinstance(extras, list):
+            selected_extras = [
+                item for item in extras if isinstance(item, str) and item
+            ]
+            if selected_extras:
+                requirement_name = f"{name}[{','.join(selected_extras)}]"
+        marker = spec.get("markers")
+        marker_suffix = (
+            f"; {marker}"
+            if isinstance(marker, str) and marker.strip()
+            else ""
+        )
+        git = spec.get("git")
+        if isinstance(git, str) and git.strip():
+            url = git.strip()
+            if not url.startswith("git+"):
+                url = f"git+{url}"
+            reference = next(
+                (
+                    str(spec[key]).strip()
+                    for key in ("rev", "tag", "branch")
+                    if spec.get(key) is not None and str(spec[key]).strip()
+                ),
+                None,
+            )
+            if reference:
+                url = f"{url}@{reference}"
+            return f"{requirement_name} @ {url}{marker_suffix}"
+        direct_url = spec.get("url")
+        if isinstance(direct_url, str) and direct_url.strip():
+            return f"{requirement_name} @ {direct_url.strip()}{marker_suffix}"
+        path = spec.get("path")
+        if isinstance(path, str) and path.strip():
+            resolved_path = Path(path)
+            if not resolved_path.is_absolute() and base_path is not None:
+                resolved_path = base_path / resolved_path
+            return (
+                f"{requirement_name} @ "
+                f"{resolved_path.resolve().as_uri()}{marker_suffix}"
+            )
         version = spec.get("version")
         if version is None or str(version).strip() in {"", "*"}:
-            return name
+            return f"{requirement_name}{marker_suffix}"
         cleaned = str(version).strip()
         translated = _translate_poetry_version_specifier(cleaned)
         if translated is not None:
-            return f"{name}{translated}"
-        return f"{name}{cleaned}"
+            return f"{requirement_name}{translated}{marker_suffix}"
+        return f"{requirement_name}{cleaned}{marker_suffix}"
     return None
 
 
@@ -1459,10 +2306,33 @@ def _render_scan_json(
     *,
     failures: list[dict[str, str]],
     cve_only: bool,
+    targets: Sequence[ScanTarget] = (),
 ) -> dict[str, object]:
     return {
         "file": filename,
         "schema_version": JSON_SCHEMA_VERSION,
+        "resolved": [
+            {
+                "requirement": target.requirement,
+                "project": target.project,
+                "version": target.version,
+                "requested": target.requested,
+                "source_url": target.source_url,
+                "editable": target.editable,
+                "vcs": target.vcs,
+                "vcs_commit": target.vcs_commit,
+                "index_url": (
+                    redact_url_credentials(target.index_url)
+                    if target.index_url
+                    else None
+                ),
+                "artifacts": [
+                    artifact.to_dict() for artifact in target.artifacts
+                ],
+                "dependency_confusion": list(target.dependency_confusion),
+            }
+            for target in targets
+        ],
         "reports": [
             _render_cve_json(report) if cve_only else report.to_dict()["report"]
             for report in reports

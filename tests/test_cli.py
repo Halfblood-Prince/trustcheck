@@ -19,12 +19,15 @@ from trustcheck.cli import (
     _build_debug_request_hook,
     _build_scan_targets,
     _clean_requirement_line,
+    _client_for_target,
     _collect_requirement_strings,
     _evidence_summary,
     _expand_poetry_caret_specifier,
     _expand_poetry_tilde_specifier,
     _extract_poetry_dependency_requirements,
     _extract_scan_requirements_from_toml,
+    _format_upstream_error,
+    _index_configuration_from_args,
     _load_scan_targets,
     _load_scan_targets_from_toml,
     _locked_versions_from_requirements,
@@ -39,11 +42,19 @@ from trustcheck.cli import (
     _resolve_bool,
     _resolve_scan_target_version,
     _resolve_scan_target_version_for_scan,
+    _resolver_from_args,
+    _scan_targets_from_lockfile,
+    _scan_targets_from_resolution,
+    _target_environment_from_args,
+    _target_marker_environment,
     _translate_poetry_version_specifier,
+    _uses_nondefault_indexes,
+    build_parser,
     main,
 )
 from trustcheck.contract import JSON_SCHEMA_VERSION
-from trustcheck.lockfiles import load_lockfile
+from trustcheck.indexes import DependencyConfusionFinding
+from trustcheck.lockfiles import LockedPackage, LockfileResolution, load_lockfile
 from trustcheck.models import (
     ArtifactInspection,
     CoverageSummary,
@@ -60,7 +71,14 @@ from trustcheck.models import (
     TrustReport,
     VulnerabilityRecord,
 )
-from trustcheck.pypi import PypiClientError
+from trustcheck.pypi import IndexBackedPackageClient, PypiClient, PypiClientError
+from trustcheck.resolver import (
+    ArtifactReference,
+    Resolution,
+    ResolutionError,
+    ResolvedDistribution,
+    TargetEnvironment,
+)
 from trustcheck.schemas import ProjectInfoPayload
 
 
@@ -148,6 +166,587 @@ def make_report() -> TrustReport:
 
 
 class CliBehaviorTests(unittest.TestCase):
+    def test_parser_accepts_resolver_environment_and_installed_path_options(self) -> None:
+        parser = build_parser()
+        scan_args = parser.parse_args(
+            [
+                "scan",
+                "requirements.txt",
+                "--constraint",
+                "constraints.txt",
+                "--extra",
+                "security",
+                "--group",
+                "test",
+                "--python-version",
+                "3.12",
+                "--platform",
+                "manylinux_2_28_x86_64",
+                "--implementation",
+                "cp",
+                "--abi",
+                "cp312",
+                "--index-url",
+                "https://private.example/simple",
+                "--extra-index-url",
+                "https://pypi.org/simple",
+                "--keyring-provider",
+                "subprocess",
+                "--allow-dependency-confusion",
+            ]
+        )
+        self.assertEqual(scan_args.constraint, ["constraints.txt"])
+        self.assertEqual(scan_args.extra, ["security"])
+        self.assertEqual(scan_args.group, ["test"])
+        self.assertEqual(scan_args.index_url, "https://private.example/simple")
+        self.assertEqual(scan_args.extra_index_url, ["https://pypi.org/simple"])
+        self.assertEqual(scan_args.keyring_provider, "subprocess")
+        self.assertTrue(scan_args.allow_dependency_confusion)
+        self.assertEqual(
+            _target_environment_from_args(scan_args),
+            TargetEnvironment(
+                python_version="3.12",
+                platforms=("manylinux_2_28_x86_64",),
+                implementation="cp",
+                abis=("cp312",),
+            ),
+        )
+
+        environment_args = parser.parse_args(
+            ["environment", "--path", "one", "--path", "two"]
+        )
+        self.assertEqual(environment_args.path, ["one", "two"])
+
+    def test_index_and_target_helpers_cover_private_source_variants(self) -> None:
+        parser = build_parser()
+        default_args = parser.parse_args(["scan", "requirements.txt"])
+        self.assertFalse(_uses_nondefault_indexes(default_args))
+        self.assertEqual(
+            _index_configuration_from_args(default_args).index_url,
+            "https://pypi.org/simple",
+        )
+        self.assertIsInstance(_resolver_from_args(default_args), object)
+
+        private_args = parser.parse_args(
+            [
+                "scan",
+                "requirements.txt",
+                "--index-url",
+                "https://private.example/simple",
+            ]
+        )
+        self.assertTrue(_uses_nondefault_indexes(private_args))
+
+        self.assertIn("python_version", _target_marker_environment(None))
+        environments = [
+            (
+                TargetEnvironment(
+                    python_version="3.12.1",
+                    implementation="cp",
+                    platforms=("win_amd64",),
+                ),
+                ("3.12", "cpython", "win32"),
+            ),
+            (
+                TargetEnvironment(
+                    implementation="pp",
+                    platforms=("macosx_14_0_arm64",),
+                ),
+                (
+                    _target_marker_environment(None)["python_version"],
+                    "pypy",
+                    "darwin",
+                ),
+            ),
+            (
+                TargetEnvironment(
+                    implementation="custom",
+                    platforms=("manylinux_2_28_x86_64",),
+                ),
+                (
+                    _target_marker_environment(None)["python_version"],
+                    "custom",
+                    "linux",
+                ),
+            ),
+        ]
+        for target, expected in environments:
+            with self.subTest(target=target):
+                environment = _target_marker_environment(target)
+                self.assertEqual(
+                    (
+                        environment["python_version"],
+                        environment["implementation_name"],
+                        environment["sys_platform"],
+                    ),
+                    expected,
+                )
+
+        client = PypiClient()
+        self.assertIs(
+            _client_for_target(
+                client,
+                ScanTarget(requirement="demo", project="demo"),
+                keyring_provider="auto",
+            ),
+            client,
+        )
+        self.assertIs(
+            _client_for_target(
+                client,
+                ScanTarget(
+                    requirement="demo==1",
+                    project="demo",
+                    version="1",
+                    index_url="https://pypi.org/simple",
+                ),
+                keyring_provider="auto",
+            ),
+            client,
+        )
+        self.assertIs(
+            _client_for_target(
+                client,
+                ScanTarget(
+                    requirement="demo==1",
+                    project="demo",
+                    version="1",
+                    artifacts=(
+                        ArtifactReference(
+                            url="https://files.pythonhosted.org/demo.whl"
+                        ),
+                    ),
+                ),
+                keyring_provider="auto",
+            ),
+            client,
+        )
+        private_client = _client_for_target(
+            client,
+            ScanTarget(
+                requirement="demo==1",
+                project="demo",
+                version="1",
+                artifacts=(
+                    ArtifactReference(url="https://private.example/demo.whl"),
+                ),
+            ),
+            keyring_provider="disabled",
+        )
+        self.assertIsInstance(private_client, IndexBackedPackageClient)
+        assert isinstance(private_client, IndexBackedPackageClient)
+        self.assertEqual(private_client.index_url, "https://private.example/")
+
+    def test_lockfile_targets_record_allowed_dependency_confusion(self) -> None:
+        resolution = LockfileResolution(
+            requirements=["demo==1"],
+            versions={"demo": "1"},
+            packages=(
+                LockedPackage(
+                    name="demo",
+                    version="1",
+                    requirement="demo==1",
+                    index_url="https://private.example/simple",
+                ),
+            ),
+        )
+
+        class Resolver:
+            def check_dependency_confusion(self, projects, additional_indexes=()):
+                self.projects = projects
+                self.indexes = additional_indexes
+                return (
+                    DependencyConfusionFinding(
+                        project="demo",
+                        indexes=("private", "public"),
+                    ),
+                )
+
+        targets = _scan_targets_from_lockfile(
+            resolution,
+            resolver=Resolver(),  # type: ignore[arg-type]
+        )
+        self.assertEqual(
+            targets[0].dependency_confusion,
+            ("private", "public"),
+        )
+
+    def test_inspect_uses_private_index_resolution(self) -> None:
+        report = make_report()
+        artifact = ArtifactReference(
+            filename="gridoptim.whl",
+            url="https://private.example/gridoptim.whl",
+            hashes=(("sha256", "a" * 64),),
+        )
+
+        class Resolver:
+            def resolve_requirements(self, requirements, **kwargs):
+                self.requirements = requirements
+                self.kwargs = kwargs
+                return Resolution(
+                    distributions=[
+                        ResolvedDistribution(
+                            name="gridoptim",
+                            version="2.2.0",
+                            artifacts=(artifact,),
+                            index_url="https://private.example/simple",
+                        )
+                    ]
+                )
+
+        resolver = Resolver()
+        fake_client = PypiClient()
+        with patch("trustcheck.cli._resolver_from_args", return_value=resolver), patch(
+            "trustcheck.cli._build_client",
+            return_value=fake_client,
+        ), patch("trustcheck.cli.inspect_package", return_value=report) as inspect:
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "inspect",
+                        "gridoptim",
+                        "--index-url",
+                        "https://private.example/simple",
+                        "--format",
+                        "json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertEqual(resolver.requirements, ["gridoptim"])
+        self.assertEqual(inspect.call_args.kwargs["version"], "2.2.0")
+        self.assertEqual(inspect.call_args.kwargs["expected_artifacts"], (artifact,))
+        self.assertIsInstance(
+            inspect.call_args.kwargs["client"],
+            IndexBackedPackageClient,
+        )
+
+    def test_inspect_private_index_requires_resolved_root(self) -> None:
+        class Resolver:
+            def resolve_requirements(self, requirements, **kwargs):
+                del requirements, kwargs
+                return Resolution(
+                    distributions=[ResolvedDistribution("other", "1")]
+                )
+
+        with patch("trustcheck.cli._resolver_from_args", return_value=Resolver()), patch(
+            "trustcheck.cli._build_client",
+            return_value=PypiClient(),
+        ):
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                exit_code = main(
+                    [
+                        "inspect",
+                        "gridoptim",
+                        "--index-url",
+                        "https://private.example/simple",
+                    ]
+                )
+        self.assertEqual(exit_code, EXIT_DATA_ERROR)
+        self.assertIn("did not return root", stderr.getvalue())
+
+    def test_scan_uses_complete_pip_resolution_for_all_packages(self) -> None:
+        class FakeResolver:
+            def __init__(self) -> None:
+                self.calls: list[tuple[Path, dict[str, object]]] = []
+
+            def resolve_requirements_file(self, path, **kwargs):
+                self.calls.append((Path(path), kwargs))
+                return Resolution(
+                    distributions=[
+                        ResolvedDistribution(
+                            "root",
+                            "1.0",
+                            requested=True,
+                            source_url="https://files.example/root.whl",
+                        ),
+                        ResolvedDistribution("transitive", "2.0"),
+                    ]
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            requirements = Path(tmpdir) / "requirements.txt"
+            requirements.write_text(
+                "-r nested.txt\n-c nested-constraints.txt\nroot>=1\n",
+                encoding="utf-8",
+            )
+            constraints = Path(tmpdir) / "constraints.txt"
+            constraints.write_text("transitive<3\n", encoding="utf-8")
+            resolver = FakeResolver()
+            target = TargetEnvironment(python_version="3.12")
+            targets = _load_scan_targets(
+                str(requirements),
+                object(),  # type: ignore[arg-type]
+                resolver=resolver,  # type: ignore[arg-type]
+                constraints=[constraints],
+                target_environment=target,
+                offline=True,
+            )
+
+        self.assertEqual(
+            [(item.project, item.version) for item in targets],
+            [("root", "1.0"), ("transitive", "2.0")],
+        )
+        self.assertTrue(all(item.complete_locked_versions for item in targets))
+        self.assertEqual(
+            targets[0].locked_versions,
+            {"root": "1.0", "transitive": "2.0"},
+        )
+        self.assertEqual(targets[0].source_url, "https://files.example/root.whl")
+        _, kwargs = resolver.calls[0]
+        self.assertEqual(kwargs["constraints"], [constraints])
+        self.assertEqual(kwargs["target"], target)
+        self.assertIs(kwargs["offline"], True)
+
+    def test_toml_selection_supports_extras_and_dependency_group_includes(self) -> None:
+        payload = {
+            "project": {
+                "dependencies": ["base>=1"],
+                "optional-dependencies": {
+                    "security": ["cryptography>=42"],
+                    "docs": ["mkdocs>=1"],
+                },
+            },
+            "dependency-groups": {
+                "lint": ["ruff>=0.11"],
+                "test": [
+                    {"include-group": "lint"},
+                    "pytest>=8",
+                ],
+            },
+        }
+        self.assertEqual(
+            _extract_scan_requirements_from_toml(
+                payload,
+                extras=["security"],
+                groups=["test"],
+            ),
+            ["base>=1", "cryptography>=42", "ruff>=0.11", "pytest>=8"],
+        )
+        with self.assertRaisesRegex(ValueError, "unknown optional"):
+            _extract_scan_requirements_from_toml(payload, extras=["missing"])
+        with self.assertRaisesRegex(ValueError, "unknown dependency group"):
+            _extract_scan_requirements_from_toml(payload, groups=["missing"])
+
+        duplicate_extra = {
+            "project": {
+                "optional-dependencies": {
+                    "Demo_Name": ["one"],
+                    "demo-name": ["two"],
+                }
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "duplicate optional"):
+            _extract_scan_requirements_from_toml(duplicate_extra)
+
+        duplicate_group = {
+            "dependency-groups": {
+                "Demo_Group": ["one"],
+                "demo-group": ["two"],
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "duplicate dependency group"):
+            _extract_scan_requirements_from_toml(duplicate_group)
+
+        duplicate_poetry_group = {
+            "dependency-groups": {"test": ["pytest"]},
+            "tool": {
+                "poetry": {
+                    "group": {
+                        "test": {"dependencies": {"coverage": "*"}},
+                    }
+                }
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "defined more than once"):
+            _extract_scan_requirements_from_toml(duplicate_poetry_group)
+
+    def test_dependency_group_validation_rejects_invalid_and_cyclic_groups(self) -> None:
+        cases = [
+            (
+                {"dependency-groups": {"bad": "pytest"}},
+                "must be a list",
+            ),
+            (
+                {"dependency-groups": {"bad": ["not valid ???"]}},
+                "invalid requirement",
+            ),
+            (
+                {"dependency-groups": {"bad": [{"include-group": 3}]}},
+                "must name a group",
+            ),
+            (
+                {"dependency-groups": {"bad": [{"unexpected": "value"}]}},
+                "invalid dependency group item",
+            ),
+            (
+                {
+                    "dependency-groups": {
+                        "one": [{"include-group": "two"}],
+                        "two": [{"include-group": "one"}],
+                    }
+                },
+                "cyclic dependency group",
+            ),
+        ]
+        for payload, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    _extract_scan_requirements_from_toml(payload)
+
+    def test_scan_targets_preserve_editable_and_vcs_source_metadata(self) -> None:
+        targets = _scan_targets_from_resolution(
+            Resolution(
+                distributions=[
+                    ResolvedDistribution(
+                        "demo",
+                        "1.2.3",
+                        requested=True,
+                        source_url="git+https://example.com/demo.git",
+                        is_direct=True,
+                        editable=True,
+                        vcs="git",
+                        vcs_commit="abc",
+                    )
+                ]
+            )
+        )
+        target = targets[0]
+        self.assertTrue(target.requested)
+        self.assertTrue(target.editable)
+        self.assertEqual(target.vcs, "git")
+        self.assertEqual(target.vcs_commit, "abc")
+        with self.assertRaisesRegex(ResolutionError, "no distributions"):
+            _scan_targets_from_resolution(Resolution())
+
+    def test_toml_scan_delegates_selected_requirements_to_resolver(self) -> None:
+        class FakeResolver:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def resolve_requirements(self, requirements, **kwargs):
+                self.calls.append((requirements, kwargs))
+                return Resolution(
+                    distributions=[ResolvedDistribution("demo", "2.0")]
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir) / "pyproject.toml"
+            constraint = Path(tmpdir) / "constraints.txt"
+            project.write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        "dependencies = ['demo>=1']",
+                        "[project.optional-dependencies]",
+                        "security = ['cryptography>=42']",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            constraint.write_text("demo<3\n", encoding="utf-8")
+            resolver = FakeResolver()
+            targets = _load_scan_targets_from_toml(
+                project,
+                object(),  # type: ignore[arg-type]
+                resolver=resolver,  # type: ignore[arg-type]
+                constraints=[constraint],
+                extras=["security"],
+                target_environment=TargetEnvironment(python_version="3.12"),
+                offline=True,
+            )
+
+        self.assertEqual([(item.project, item.version) for item in targets], [("demo", "2.0")])
+        requirements, kwargs = resolver.calls[0]
+        self.assertEqual(requirements, ["demo>=1", "cryptography>=42"])
+        self.assertEqual(kwargs["constraints"], [constraint])
+        self.assertIs(kwargs["offline"], True)
+
+    def test_environment_command_audits_discovered_exact_versions(self) -> None:
+        resolution = Resolution(
+            distributions=[
+                ResolvedDistribution("alpha", "1.0", requested=True),
+                ResolvedDistribution("beta", "2.0", requested=True),
+            ]
+        )
+        reports = {
+            "alpha": make_report(),
+            "beta": make_report(),
+        }
+        reports["alpha"].project = "alpha"
+        reports["alpha"].version = "1.0"
+        reports["beta"].project = "beta"
+        reports["beta"].version = "2.0"
+        inspected: list[tuple[str, str | None, bool]] = []
+
+        def fake_inspect(project: str, **kwargs):
+            inspected.append(
+                (
+                    project,
+                    kwargs["version"],
+                    kwargs["complete_locked_versions"],
+                )
+            )
+            return reports[project]
+
+        stdout = io.StringIO()
+        with (
+            patch(
+                "trustcheck.cli.discover_installed_distributions",
+                return_value=resolution,
+            ),
+            patch("trustcheck.cli.inspect_package", side_effect=fake_inspect),
+            redirect_stdout(stdout),
+            redirect_stderr(io.StringIO()),
+        ):
+            exit_code = main(["environment", "--format", "json"])
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertEqual(
+            inspected,
+            [("alpha", "1.0", True), ("beta", "2.0", True)],
+        )
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(len(payload["resolved"]), 2)
+
+    def test_environment_command_reports_discovery_errors(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch(
+                "trustcheck.cli.discover_installed_distributions",
+                side_effect=ResolutionError("site-packages path not found"),
+            ),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(stderr),
+        ):
+            exit_code = main(["environment", "--path", "missing"])
+        self.assertEqual(exit_code, EXIT_DATA_ERROR)
+        self.assertIn("site-packages path not found", stderr.getvalue())
+
+    def test_environment_command_records_invalid_package_responses(self) -> None:
+        resolution = Resolution(
+            distributions=[ResolvedDistribution("broken", "1.0", requested=True)]
+        )
+        stdout = io.StringIO()
+        with (
+            patch(
+                "trustcheck.cli.discover_installed_distributions",
+                return_value=resolution,
+            ),
+            patch(
+                "trustcheck.cli.inspect_package",
+                side_effect=ValueError("invalid metadata"),
+            ),
+            redirect_stdout(stdout),
+            redirect_stderr(io.StringIO()),
+        ):
+            exit_code = main(["environment", "--format", "json"])
+        self.assertEqual(exit_code, EXIT_DATA_ERROR)
+        payload = json.loads(stdout.getvalue())
+        self.assertIn("invalid metadata", payload["failures"][0]["message"])
+
     def test_merge_exit_codes_prefers_more_severe_outcomes(self) -> None:
         self.assertEqual(_merge_exit_codes(EXIT_OK, EXIT_POLICY_FAILURE), EXIT_POLICY_FAILURE)
         self.assertEqual(
@@ -157,6 +756,16 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(
             _merge_exit_codes(EXIT_UPSTREAM_FAILURE, EXIT_DATA_ERROR),
             EXIT_DATA_ERROR,
+        )
+        self.assertIn(
+            "dependency resolver",
+            _format_upstream_error(
+                PypiClientError(
+                    "failed",
+                    code="dependency",
+                    subcode="resolution_failed",
+                )
+            ),
         )
 
     def test_clean_requirement_line_strips_comments(self) -> None:
@@ -196,6 +805,37 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(
             _poetry_dependency_to_requirement("pytest", {"version": "~8.1"}),
             "pytest>=8.1,<8.2",
+        )
+        self.assertEqual(
+            _poetry_dependency_to_requirement(
+                "demo",
+                {
+                    "git": "https://github.com/example/demo.git",
+                    "rev": "abc123",
+                    "extras": ["speed"],
+                    "markers": "python_version >= '3.11'",
+                },
+            ),
+            "demo[speed] @ git+https://github.com/example/demo.git@abc123; "
+            "python_version >= '3.11'",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertEqual(
+                _poetry_dependency_to_requirement(
+                    "local-demo",
+                    {"path": "../demo", "markers": "sys_platform == 'linux'"},
+                    base_path=Path(tmpdir),
+                ),
+                "local-demo @ "
+                f"{(Path(tmpdir) / '..' / 'demo').resolve().as_uri()}; "
+                "sys_platform == 'linux'",
+            )
+        self.assertEqual(
+            _poetry_dependency_to_requirement(
+                "archive",
+                {"url": "https://example.com/archive.whl"},
+            ),
+            "archive @ https://example.com/archive.whl",
         )
         self.assertIsNone(_poetry_dependency_to_requirement("demo", ["bad"]))  # type: ignore[list-item]
         self.assertEqual(_translate_poetry_version_specifier("^2.1"), ">=2.1,<3")
@@ -616,6 +1256,118 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(
             [(target.project, target.version) for target in targets],
             [("direct-dep", "1.4.0"), ("transitive-dep", "2.5.0")],
+        )
+
+    def test_load_scan_targets_supports_pylock_and_preserves_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_file = Path(tmpdir) / "pylock.toml"
+            lock_file.write_text(
+                "\n".join(
+                    [
+                        'lock-version = "1.0"',
+                        'created-by = "locker"',
+                        "[[packages]]",
+                        'name = "demo"',
+                        'version = "1.0"',
+                        'index = "https://user:secret@private.example/simple"',
+                        "[[packages.wheels]]",
+                        'name = "demo-1.0-py3-none-any.whl"',
+                        'url = "https://private.example/files/demo.whl"',
+                        f'hashes = {{sha256 = "{"a" * 64}"}}',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            targets = _load_scan_targets(
+                str(lock_file),
+                object(),  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].project, "demo")
+        self.assertEqual(targets[0].artifacts[0].hashes, (("sha256", "a" * 64),))
+        self.assertIn("secret", targets[0].index_url or "")
+        rendered = _render_scan_json(
+            str(lock_file),
+            [],
+            failures=[],
+            cve_only=False,
+            targets=targets,
+        )
+        resolved = rendered["resolved"]
+        assert isinstance(resolved, list)
+        self.assertNotIn("secret", json.dumps(resolved))
+        self.assertIn("sha256", json.dumps(resolved))
+
+    def test_load_scan_targets_supports_pipfile_lock(self) -> None:
+        payload = {
+            "_meta": {
+                "sources": [
+                    {
+                        "name": "private",
+                        "url": "https://private.example/simple",
+                    }
+                ]
+            },
+            "default": {
+                "demo": {
+                    "version": "==1.0",
+                    "hashes": [f"sha256:{'a' * 64}"],
+                    "index": "private",
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_file = Path(tmpdir) / "Pipfile.lock"
+            lock_file.write_text(json.dumps(payload), encoding="utf-8")
+            targets = _load_scan_targets(
+                str(lock_file),
+                object(),  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(targets[0].version, "1.0")
+        self.assertEqual(targets[0].index_url, "https://private.example/simple")
+        self.assertEqual(targets[0].artifacts[0].kind, "lock-hash")
+
+    def test_pip_tools_hashes_override_selected_report_hash_only(self) -> None:
+        class FakeResolver:
+            def resolve_requirements_file(self, path, **kwargs):
+                del path, kwargs
+                return Resolution(
+                    distributions=[
+                        ResolvedDistribution(
+                            name="demo",
+                            version="1.0",
+                            requested=True,
+                            artifacts=(
+                                ArtifactReference(
+                                    filename="demo.whl",
+                                    url="https://example.com/demo.whl",
+                                    hashes=(("sha256", "a" * 64),),
+                                ),
+                            ),
+                        )
+                    ]
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            requirements = Path(tmpdir) / "requirements.txt"
+            requirements.write_text(
+                "demo==1.0 \\\n"
+                f"  --hash=sha256:{'a' * 64} \\\n"
+                f"  --hash=sha256:{'b' * 64}\n",
+                encoding="utf-8",
+            )
+            targets = _load_scan_targets(
+                str(requirements),
+                object(),  # type: ignore[arg-type]
+                resolver=FakeResolver(),  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(len(targets[0].artifacts), 2)
+        self.assertEqual(
+            {artifact.hashes[0][1] for artifact in targets[0].artifacts},
+            {"a" * 64, "b" * 64},
         )
 
     def test_lockfile_loader_rejects_invalid_and_ambiguous_data(self) -> None:

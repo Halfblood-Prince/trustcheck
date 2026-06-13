@@ -17,7 +17,8 @@ For a selected package version, `trustcheck` can:
 - flag publisher repository and workflow drift against the previous release
 - surface PyPI vulnerability records and optional OSV/GitHub advisory intelligence
 - inspect declared runtime dependencies and summarize the worst-risk dependency in the set
-- scan requirements files, project TOML, and `uv.lock`, `poetry.lock`, or `pdm.lock`
+- scan requirements files, project TOML, PEP 751 `pylock.toml`,
+  `Pipfile.lock`, and `uv.lock`, `poetry.lock`, or `pdm.lock`
 - statically inspect wheel and sdist contents without importing package code
 - emit a concise human-readable report or structured JSON
 

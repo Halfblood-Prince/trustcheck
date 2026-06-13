@@ -20,6 +20,13 @@ from trustcheck.models import (
 )
 from trustcheck.policy import advisory_evaluation_for
 from trustcheck.pypi import PypiClientError
+from trustcheck.resolver import (
+    ArtifactReference,
+    Resolution,
+    ResolutionError,
+    ResolvedDistribution,
+    TargetEnvironment,
+)
 from trustcheck.service import (
     DiagnosticsCollector,
     _build_dependency_summary,
@@ -389,6 +396,7 @@ class ServiceBranchTests(unittest.TestCase):
                 ),
             ),
             include_dependencies=True,
+            locked_versions={"gridoptim": "2.2.0"},
         )
 
         self.assertEqual(report.dependencies[0].recommendation, "high-risk")
@@ -422,6 +430,270 @@ class ServiceBranchTests(unittest.TestCase):
 
 
 class InspectPackageTests(unittest.TestCase):
+    def test_dependency_inspection_uses_complete_resolver_result(self) -> None:
+        class FakeResolver:
+            def __init__(self) -> None:
+                self.calls: list[tuple[list[str], TargetEnvironment | None, bool]] = []
+
+            def resolve_requirements(
+                self,
+                requirements,
+                *,
+                target=None,
+                offline=False,
+            ):
+                self.calls.append((list(requirements), target, offline))
+                return Resolution(
+                    distributions=[
+                        ResolvedDistribution("gridoptim", "2.2.0", requested=True),
+                        ResolvedDistribution("depalpha", "1.4.0"),
+                        ResolvedDistribution("depbeta", "2.5.0"),
+                    ]
+                )
+
+        root_payload = make_project_payload(
+            requires_dist=["depalpha>=1", "excluded>=1"],
+        )
+        client = FakeClient(
+            project_payload=root_payload,
+            release_payload=root_payload,
+            release_payloads={
+                "depalpha": make_project_payload(
+                    version="1.4.0",
+                    requires_dist=["depbeta>=2"],
+                    urls=[],
+                ),
+                "depbeta": make_project_payload(version="2.5.0", urls=[]),
+            },
+        )
+        resolver = FakeResolver()
+        target = TargetEnvironment(python_version="3.12")
+
+        report = inspect_package(
+            "gridoptim",
+            client=cast(Any, client),
+            include_transitive_dependencies=True,
+            resolver=cast(Any, resolver),
+            target_environment=target,
+        )
+
+        self.assertEqual(
+            [(item.project, item.version) for item in report.dependencies],
+            [("depalpha", "1.4.0"), ("depbeta", "2.5.0")],
+        )
+        self.assertEqual(resolver.calls, [(["gridoptim"], target, False)])
+
+    def test_dependency_resolver_failures_are_reported_as_dependency_errors(self) -> None:
+        class FailingResolver:
+            def resolve_requirements(self, requirements, **kwargs):
+                del requirements, kwargs
+                raise ResolutionError("conflicting requirements")
+
+        with self.assertRaisesRegex(PypiClientError, "conflicting requirements") as caught:
+            inspect_package(
+                "gridoptim",
+                client=cast(Any, FakeClient()),
+                include_dependencies=True,
+                resolver=cast(Any, FailingResolver()),
+            )
+        self.assertEqual(caught.exception.code, "dependency")
+        self.assertEqual(caught.exception.subcode, "resolution_failed")
+
+        class MissingRootResolver:
+            def resolve_requirements(self, requirements, **kwargs):
+                del requirements, kwargs
+                return Resolution(
+                    distributions=[ResolvedDistribution("dependency", "1.0")]
+                )
+
+        with self.assertRaisesRegex(PypiClientError, "root package") as caught:
+            inspect_package(
+                "gridoptim",
+                client=cast(Any, FakeClient()),
+                include_dependencies=True,
+                resolver=cast(Any, MissingRootResolver()),
+            )
+        self.assertEqual(caught.exception.subcode, "root_missing")
+
+    def test_complete_resolution_skips_absent_and_duplicate_dependencies(self) -> None:
+        root_payload = make_project_payload(
+            requires_dist=[
+                "depalpha>=1",
+                "depalpha>=1",
+                "excluded>=1",
+            ],
+            urls=[],
+        )
+        client = FakeClient(
+            project_payload=root_payload,
+            release_payload=root_payload,
+            release_payloads={
+                "depalpha": make_project_payload(version="1.4.0", urls=[]),
+            },
+        )
+        report = inspect_package(
+            "gridoptim",
+            version="2.2.0",
+            client=cast(Any, client),
+            include_dependencies=True,
+            locked_versions={"depalpha": "1.4.0"},
+            complete_locked_versions=True,
+        )
+        self.assertEqual(
+            [(item.project, item.version) for item in report.dependencies],
+            [("depalpha", "1.4.0")],
+        )
+
+    def test_legacy_partial_versions_still_apply_inactive_markers(self) -> None:
+        root_payload = make_project_payload(
+            requires_dist=["skipme>=1; python_version < '3.0'"],
+            urls=[],
+        )
+        report = inspect_package(
+            "gridoptim",
+            client=cast(
+                Any,
+                FakeClient(
+                    project_payload=root_payload,
+                    release_payload=root_payload,
+                ),
+            ),
+            include_dependencies=True,
+            locked_versions={"gridoptim": "2.2.0"},
+        )
+        self.assertEqual(report.dependencies, [])
+
+    def test_dependency_progress_tracks_resolved_artifacts(self) -> None:
+        class DependencyArtifactClient(FakeClient):
+            def get_provenance(
+                self,
+                project: str,
+                version: str,
+                filename: str,
+            ) -> dict[str, object]:
+                del project, version, filename
+                return self.provenance_payload
+
+        root_payload = make_project_payload(
+            requires_dist=["depalpha>=1"],
+            urls=[],
+        )
+        dependency_payload = make_project_payload(
+            version="1.4.0",
+            urls=[
+                {
+                    "filename": "depalpha-1.4.0-py3-none-any.whl",
+                    "url": "https://files.example/depalpha.whl",
+                    "digests": {"sha256": "abc123"},
+                }
+            ],
+        )
+        client = DependencyArtifactClient(
+            project_payload=root_payload,
+            release_payload=root_payload,
+            release_payloads={"depalpha": dependency_payload},
+            download_map={"https://files.example/depalpha.whl": b"dependency"},
+        )
+        progress_events: list[tuple[str, int, int, bool]] = []
+        with (
+            patch("trustcheck.service.Provenance") as provenance_model,
+            patch("trustcheck.service.hashlib.sha256") as sha256,
+        ):
+            provenance_model.model_validate.return_value = make_provenance()
+            sha256.return_value.hexdigest.return_value = "abc123"
+            inspect_package(
+                "gridoptim",
+                client=cast(Any, client),
+                include_dependencies=True,
+                locked_versions={"depalpha": "1.4.0"},
+                complete_locked_versions=True,
+                dependency_progress_callback=lambda *event: progress_events.append(
+                    cast(tuple[str, int, int, bool], event)
+                ),
+            )
+        self.assertEqual(
+            progress_events,
+            [
+                ("depalpha", 1, 0, False),
+                ("depalpha", 1, 100, True),
+            ],
+        )
+
+    def test_artifact_diagnostics_cover_invalid_archives_and_sdist_downloads(self) -> None:
+        invalid_archive_client = FakeClient(
+            download_map={
+                "https://files.pythonhosted.org/packages/gridoptim.whl": b"not-a-zip"
+            }
+        )
+        report = inspect_package(
+            "gridoptim",
+            client=cast(Any, invalid_archive_client),
+            inspect_artifacts=True,
+        )
+        self.assertIn(
+            "artifact-inspection",
+            {item.stage for item in report.diagnostics.artifact_failures},
+        )
+
+        class DownloadFailingClient(FakeClient):
+            def download_distribution(self, url: str) -> bytes:
+                del url
+                raise PypiClientError("download failed")
+
+        sdist_payload = make_project_payload(
+            urls=[
+                {
+                    "filename": "gridoptim-2.2.0.tar.gz",
+                    "url": "https://files.example/gridoptim.tar.gz",
+                    "digests": {"sha256": "abc123"},
+                }
+            ]
+        )
+        report = inspect_package(
+            "gridoptim",
+            client=cast(
+                Any,
+                DownloadFailingClient(
+                    project_payload=sdist_payload,
+                ),
+            ),
+            inspect_artifacts=True,
+        )
+        self.assertEqual(report.files[0].artifact.kind, "sdist")
+
+    def test_empty_attestation_bundle_is_a_verification_failure(self) -> None:
+        provenance = SimpleNamespace(
+            attestation_bundles=[
+                SimpleNamespace(
+                    publisher=make_publisher(),
+                    attestations=[],
+                )
+            ]
+        )
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = provenance
+            report = inspect_package(
+                "gridoptim",
+                client=cast(
+                    Any,
+                    FakeClient(
+                        project_payload=make_project_payload(
+                            urls=[
+                                {
+                                    "filename": "gridoptim-2.2.0-py3-none-any.whl",
+                                    "url": (
+                                        "https://files.pythonhosted.org/packages/"
+                                        "gridoptim.whl"
+                                    ),
+                                    "digests": {},
+                                }
+                            ]
+                        )
+                    ),
+                ),
+            )
+        self.assertIn("no attestations", report.files[0].error or "")
+
     def test_inspect_package_happy_path(self) -> None:
         provenance = make_provenance()
         client = FakeClient()
@@ -1255,7 +1527,13 @@ class InspectPackageTests(unittest.TestCase):
             },
         )
 
-        report = inspect_package("gridoptim", client=cast(Any, client), include_dependencies=True)
+        report = inspect_package(
+            "gridoptim",
+            client=cast(Any, client),
+            include_dependencies=True,
+            locked_versions={"depalpha": "1.4.0", "depbeta": "2.5.0"},
+            complete_locked_versions=True,
+        )
 
         self.assertEqual(
             report.declared_dependencies,
@@ -1310,6 +1588,8 @@ class InspectPackageTests(unittest.TestCase):
             "gridoptim",
             client=cast(Any, client),
             include_transitive_dependencies=True,
+            locked_versions={"depalpha": "1.4.0", "depbeta": "2.5.0"},
+            complete_locked_versions=True,
         )
 
         self.assertEqual(
@@ -1422,6 +1702,8 @@ class InspectPackageTests(unittest.TestCase):
             "gridoptim",
             client=cast(Any, client),
             include_dependencies=True,
+            locked_versions={"depalpha": "1.4.0"},
+            complete_locked_versions=True,
             dependency_progress_callback=(
                 lambda project, depth, percent, done: progress_events.append(
                     (project, depth, percent, done)
@@ -1448,7 +1730,12 @@ class InspectPackageTests(unittest.TestCase):
             },
         )
 
-        report = inspect_package("gridoptim", client=cast(Any, client), include_dependencies=True)
+        report = inspect_package(
+            "gridoptim",
+            client=cast(Any, client),
+            include_dependencies=True,
+            locked_versions={"gridoptim": "2.2.0"},
+        )
 
         self.assertEqual(report.dependencies[0].project, "broken")
         self.assertEqual(report.dependencies[0].recommendation, "high-risk")
@@ -1562,3 +1849,116 @@ class InspectPackageTests(unittest.TestCase):
         self.assertFalse(report.files[0].verified)
         assert report.files[0].error is not None
         self.assertIn("Trusted Publisher", report.files[0].error)
+
+    def test_locked_artifact_hashes_are_verified_before_provenance(self) -> None:
+        artifact_bytes = b"locked-wheel"
+        sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+        sha512 = hashlib.sha512(artifact_bytes).hexdigest()
+        url = "https://files.pythonhosted.org/packages/gridoptim.whl"
+        client = FakeClient(download_map={url: artifact_bytes})
+        expected = (
+            ArtifactReference(
+                filename="gridoptim-2.2.0-py3-none-any.whl",
+                url=url,
+                hashes=(("sha256", sha256), ("sha512", sha512)),
+                size=len(artifact_bytes),
+                kind="wheel",
+            ),
+        )
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = make_provenance(
+                attestations=[]
+            )
+            report = inspect_package(
+                "gridoptim",
+                client=cast(Any, client),
+                expected_artifacts=expected,
+            )
+
+        self.assertEqual(report.files[0].observed_sha256, sha256)
+        self.assertFalse(
+            any(
+                failure.stage == "lockfile-hash"
+                for failure in report.diagnostics.artifact_failures
+            )
+        )
+
+    def test_locked_artifact_hash_mismatch_is_high_risk(self) -> None:
+        url = "https://files.pythonhosted.org/packages/gridoptim.whl"
+        client = FakeClient(download_map={url: b"tampered"})
+        expected = (
+            ArtifactReference(
+                filename="gridoptim-2.2.0-py3-none-any.whl",
+                hashes=(("sha256", "0" * 64),),
+                kind="wheel",
+            ),
+        )
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = make_provenance(
+                attestations=[]
+            )
+            report = inspect_package(
+                "gridoptim",
+                client=cast(Any, client),
+                expected_artifacts=expected,
+            )
+
+        self.assertEqual(report.files[0].sha256, "0" * 64)
+        self.assertIn("digest mismatch", report.files[0].error or "")
+        self.assertTrue(
+            any(
+                flag.code == "lockfile_hash_mismatch"
+                and flag.severity == "high"
+                for flag in report.risk_flags
+            )
+        )
+
+    def test_locked_artifact_size_and_algorithm_failures_are_reported(self) -> None:
+        url = "https://files.pythonhosted.org/packages/gridoptim.whl"
+        cases = [
+            (
+                ArtifactReference(
+                    filename="gridoptim-2.2.0-py3-none-any.whl",
+                    hashes=(("sha256", hashlib.sha256(b"bytes").hexdigest()),),
+                    size=99,
+                ),
+                "size mismatch",
+            ),
+            (
+                ArtifactReference(
+                    filename="gridoptim-2.2.0-py3-none-any.whl",
+                    hashes=(("not-a-hash", "a"),),
+                ),
+                "unsupported hash algorithm",
+            ),
+        ]
+        for artifact, message in cases:
+            with self.subTest(message=message):
+                client = FakeClient(download_map={url: b"bytes"})
+                with patch("trustcheck.service.Provenance") as provenance_model:
+                    provenance_model.model_validate.return_value = make_provenance(
+                        attestations=[]
+                    )
+                    report = inspect_package(
+                        "gridoptim",
+                        client=cast(Any, client),
+                        expected_artifacts=(artifact,),
+                    )
+                self.assertIn(message, report.files[0].error or "")
+
+    def test_locked_artifact_must_match_release_metadata(self) -> None:
+        client = FakeClient()
+        expected = (
+            ArtifactReference(
+                filename="different.whl",
+                hashes=(("sha256", "a" * 64),),
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "none of the release artifacts"):
+            inspect_package(
+                "gridoptim",
+                client=cast(Any, client),
+                expected_artifacts=expected,
+            )

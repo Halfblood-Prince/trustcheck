@@ -45,6 +45,10 @@ class GitHubActionTests(unittest.TestCase):
                 with_osv=True,
                 with_transitive_deps=True,
                 inspect_artifacts=True,
+                index_url="https://packages.example/simple",
+                extra_index_urls=("https://pypi.org/simple",),
+                keyring_provider="subprocess",
+                allow_dependency_confusion=True,
             )
 
             arguments = build_cli_arguments(settings, workspace=workspace)
@@ -56,12 +60,22 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("--with-osv", arguments)
         self.assertIn("--with-transitive-deps", arguments)
         self.assertIn("--inspect-artifacts", arguments)
+        self.assertIn("--index-url", arguments)
+        self.assertIn("https://packages.example/simple", arguments)
+        self.assertIn("--extra-index-url", arguments)
+        self.assertIn("https://pypi.org/simple", arguments)
+        self.assertIn("--keyring-provider", arguments)
+        self.assertIn("subprocess", arguments)
+        self.assertIn("--allow-dependency-confusion", arguments)
         self.assertEqual(arguments[-2:], ["--format", "json"])
 
     def test_all_documented_dependency_files_use_scan_command(self) -> None:
         for filename in (
             "requirements.txt",
             "pyproject.toml",
+            "pylock.toml",
+            "pylock.production.toml",
+            "Pipfile.lock",
             "uv.lock",
             "poetry.lock",
             "pdm.lock",
@@ -109,6 +123,13 @@ class GitHubActionTests(unittest.TestCase):
                 (
                     ActionSettings(target="sampleproject", output_format="sarif"),
                     "format",
+                ),
+                (
+                    ActionSettings(
+                        target="sampleproject",
+                        keyring_provider="unknown",
+                    ),
+                    "keyring-provider",
                 ),
                 (
                     ActionSettings(target="missing.lock"),
@@ -348,10 +369,26 @@ class GitHubActionTests(unittest.TestCase):
             {
                 "TRUSTCHECK_ACTION_TARGET": "sampleproject",
                 "TRUSTCHECK_ACTION_WITH_OSV": "TRUE",
+                "TRUSTCHECK_ACTION_INDEX_URL": "https://packages.example/simple",
+                "TRUSTCHECK_ACTION_EXTRA_INDEX_URLS": (
+                    "https://mirror-one.example/simple\n"
+                    "https://mirror-two.example/simple"
+                ),
+                "TRUSTCHECK_ACTION_KEYRING_PROVIDER": "subprocess",
+                "TRUSTCHECK_ACTION_ALLOW_DEPENDENCY_CONFUSION": "true",
             }
         )
 
         self.assertTrue(settings.with_osv)
+        self.assertEqual(
+            settings.extra_index_urls,
+            (
+                "https://mirror-one.example/simple",
+                "https://mirror-two.example/simple",
+            ),
+        )
+        self.assertEqual(settings.keyring_provider, "subprocess")
+        self.assertTrue(settings.allow_dependency_confusion)
 
     def test_missing_target_is_reported_by_main(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -40,6 +40,9 @@ dependencies = [
   "urllib3>=2.7,<3",
 ]
 
+[project.optional-dependencies]
+keyring = ["keyring>=25,<27"]
+
 [project.scripts]
 trustcheck = "trustcheck.cli:main"
 
@@ -91,6 +94,6 @@ branch = true
 source = ["trustcheck"]
 
 [tool.coverage.report]
-fail_under = 97
+fail_under = 98
 show_missing = true
 skip_covered = true

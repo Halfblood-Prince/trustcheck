@@ -8,7 +8,7 @@ branding:
 
 inputs:
   target:
-    description: Package name or path to requirements.txt, pyproject.toml, uv.lock, poetry.lock, or pdm.lock.
+    description: Package name or path to requirements.txt, pyproject.toml, pylock.toml, Pipfile.lock, uv.lock, poetry.lock, or pdm.lock.
     required: true
   policy:
     description: Built-in policy (default or strict) or path to a custom JSON policy file.
@@ -32,6 +32,22 @@ inputs:
     default: "false"
   inspect-artifacts:
     description: Statically inspect downloaded wheel and sdist contents.
+    required: false
+    default: "false"
+  index-url:
+    description: Primary PEP 503/691 Simple Repository index URL.
+    required: false
+    default: ""
+  extra-index-urls:
+    description: Whitespace- or newline-separated additional Simple Repository index URLs.
+    required: false
+    default: ""
+  keyring-provider:
+    description: Keyring authentication mode (auto, disabled, import, or subprocess).
+    required: false
+    default: auto
+  allow-dependency-confusion:
+    description: Continue after reporting a project-name collision across configured indexes.
     required: false
     default: "false"
   format:
@@ -86,6 +102,10 @@ runs:
         TRUSTCHECK_ACTION_WITH_DEPS: ${{ inputs['with-deps'] }}
         TRUSTCHECK_ACTION_WITH_TRANSITIVE_DEPS: ${{ inputs['with-transitive-deps'] }}
         TRUSTCHECK_ACTION_INSPECT_ARTIFACTS: ${{ inputs['inspect-artifacts'] }}
+        TRUSTCHECK_ACTION_INDEX_URL: ${{ inputs['index-url'] }}
+        TRUSTCHECK_ACTION_EXTRA_INDEX_URLS: ${{ inputs['extra-index-urls'] }}
+        TRUSTCHECK_ACTION_KEYRING_PROVIDER: ${{ inputs['keyring-provider'] }}
+        TRUSTCHECK_ACTION_ALLOW_DEPENDENCY_CONFUSION: ${{ inputs['allow-dependency-confusion'] }}
         TRUSTCHECK_ACTION_FORMAT: ${{ inputs.format }}
         TRUSTCHECK_ACTION_REPORT_PATH: ${{ inputs['report-path'] }}
       run: python -m trustcheck.github_action

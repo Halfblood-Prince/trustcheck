@@ -7,11 +7,13 @@ import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib import error
 
 import trustcheck
 from trustcheck import pypi as pypi_module
+from trustcheck.resolver import ArtifactReference
 
 
 class FakeResponse:
@@ -432,3 +434,179 @@ class PypiClientTests(unittest.TestCase):
             )
 
         self.assertEqual(ctx.exception.subcode, "project_shape_invalid")
+
+    def test_index_backed_client_builds_release_from_locked_artifacts(self) -> None:
+        artifact = ArtifactReference(
+            filename="demo-1.0-py3-none-any.whl",
+            url="https://private.example/files/demo.whl",
+            hashes=(("sha256", "a" * 64),),
+        )
+        repository = SimpleNamespace(download=lambda url, index_url=None: b"wheel")
+        client = pypi_module.IndexBackedPackageClient(
+            base_client=pypi_module.PypiClient(),
+            project="demo",
+            version="1.0",
+            index_url="https://user:secret@private.example/simple",
+            artifacts=(artifact,),
+            requires_dist=("dep>=1",),
+            repository_client=repository,
+        )
+
+        release = client.get_release("Demo", "1.0")
+        project = client.get_project("demo")
+
+        self.assertEqual(release["info"]["requires_dist"], ["dep>=1"])
+        self.assertEqual(release["urls"][0]["digests"]["sha256"], "a" * 64)
+        self.assertIn("1.0", project["releases"])
+        self.assertEqual(
+            client.download_distribution(artifact.url or ""),
+            b"wheel",
+        )
+        self.assertNotIn("secret", client.package_url("demo", "1.0"))
+        self.assertEqual(
+            client.get_provenance("demo", "1.0", "demo.whl"),
+            {"version": 1, "attestation_bundles": []},
+        )
+
+    def test_index_backed_client_discovers_hash_locked_artifacts(self) -> None:
+        from trustcheck.indexes import IndexFile, IndexProject
+
+        digest = "a" * 64
+        repository = SimpleNamespace(
+            get_project=lambda index, project: IndexProject(
+                name=project,
+                index_url=index,
+                files=(
+                    IndexFile(
+                        filename="demo-1.0-py3-none-any.whl",
+                        url="https://private.example/files/demo.whl",
+                        hashes=(("sha256", digest),),
+                    ),
+                    IndexFile(
+                        filename="demo-2.0-py3-none-any.whl",
+                        url="https://private.example/files/demo2.whl",
+                        hashes=(("sha256", "b" * 64),),
+                    ),
+                ),
+            )
+        )
+        client = pypi_module.IndexBackedPackageClient(
+            base_client=pypi_module.PypiClient(),
+            project="demo",
+            version="1.0",
+            index_url="https://private.example/simple",
+            artifacts=(
+                ArtifactReference(hashes=(("sha256", digest),)),
+            ),
+            repository_client=repository,
+        )
+
+        release = client.get_release("demo", "1.0")
+
+        self.assertEqual(len(release["urls"]), 1)
+        self.assertEqual(
+            release["urls"][0]["filename"],
+            "demo-1.0-py3-none-any.whl",
+        )
+
+    def test_index_backed_client_reads_local_artifacts_and_validates_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_path = Path(tmpdir) / "demo.whl"
+            artifact_path.write_bytes(b"local")
+            client = pypi_module.IndexBackedPackageClient(
+                base_client=pypi_module.PypiClient(),
+                project="demo",
+                version="1.0",
+                index_url="https://private.example/simple",
+                artifacts=(
+                    ArtifactReference(
+                        filename="demo.whl",
+                        url=artifact_path.as_uri(),
+                    ),
+                ),
+                repository_client=SimpleNamespace(),
+            )
+            self.assertEqual(
+                client.download_distribution(artifact_path.as_uri()),
+                b"local",
+            )
+
+        with self.assertRaisesRegex(pypi_module.PypiClientError, "scoped"):
+            client.get_project("other")
+        with self.assertRaisesRegex(pypi_module.PypiClientError, "locked version"):
+            client.get_release("demo", "2.0")
+        with self.assertRaisesRegex(pypi_module.PypiClientError, "locked version"):
+            client.get_provenance("demo", "2.0", "demo.whl")
+
+    def test_index_backed_client_reports_missing_and_failed_artifacts(self) -> None:
+        repository = SimpleNamespace(
+            get_project=lambda index, project: None,
+            download=lambda url, index_url=None: (_ for _ in ()).throw(
+                RuntimeError("denied")
+            ),
+        )
+        client = pypi_module.IndexBackedPackageClient(
+            base_client=pypi_module.PypiClient(),
+            project="demo",
+            version="1.0",
+            index_url="https://private.example/simple",
+            artifacts=(ArtifactReference(hashes=(("sha256", "a" * 64),)),),
+            repository_client=repository,
+        )
+        with self.assertRaisesRegex(pypi_module.PypiClientError, "not found"):
+            client.get_release("demo", "1.0")
+        with self.assertRaisesRegex(pypi_module.PypiClientError, "denied"):
+            client.download_distribution("https://private.example/demo.whl")
+
+    def test_index_backed_client_default_repository_and_local_read_failure(self) -> None:
+        client = pypi_module.IndexBackedPackageClient(
+            base_client=pypi_module.PypiClient(timeout=3.0),
+            project="demo",
+            version="1.0",
+            index_url="https://private.example/simple",
+        )
+        self.assertEqual(client.timeout, 3.0)
+        self.assertIsNotNone(client.repository_client)
+        with self.assertRaisesRegex(pypi_module.PypiClientError, "unable to read"):
+            client.download_distribution("file:///definitely/missing/demo.whl")
+
+    def test_index_backed_client_rejects_nonmatching_index_artifacts(self) -> None:
+        from trustcheck.indexes import IndexFile, IndexProject
+
+        repository = SimpleNamespace(
+            get_project=lambda index, project: IndexProject(
+                name=project,
+                index_url=index,
+                files=(
+                    IndexFile(
+                        filename="demo-1.0-py3-none-any.whl",
+                        url="https://private.example/files/demo.whl",
+                        hashes=(("sha256", "b" * 64),),
+                    ),
+                ),
+            )
+        )
+        client = pypi_module.IndexBackedPackageClient(
+            base_client=pypi_module.PypiClient(),
+            project="demo",
+            version="1.0",
+            index_url="https://private.example/simple",
+            artifacts=(
+                ArtifactReference(hashes=(("sha256", "a" * 64),)),
+            ),
+            repository_client=repository,
+        )
+        with self.assertRaisesRegex(pypi_module.PypiClientError, "no locked artifacts"):
+            client.get_release("demo", "1.0")
+
+        release = pypi_module.IndexBackedPackageClient(
+            base_client=pypi_module.PypiClient(),
+            project="demo",
+            version="1.0",
+            index_url="https://private.example/simple",
+            artifacts=(
+                ArtifactReference(url="https://private.example/files/demo.whl"),
+            ),
+            repository_client=repository,
+        ).get_release("demo", "1.0")
+        self.assertEqual(release["urls"][0]["filename"], "demo.whl")

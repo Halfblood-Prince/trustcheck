@@ -71,15 +71,23 @@ Dependency inspection currently works by:
 - reading `requires_dist` metadata from the selected release
 - evaluating environment markers before inspection
 - using exact versions supplied by a supported lockfile or `locked_versions` mapping when available
-- otherwise resolving a compatible dependency release from the versions visible on PyPI
+- otherwise resolving a complete compatible dependency set through pip
 - inspecting either direct dependencies only or the full transitive tree, depending on the selected mode
 - summarizing the highest-risk dependency outcome in the top-level report
 
 The dependency view is flattened in the report for operator readability and automation. The `depth`, `parent_project`, and `parent_version` fields preserve traversal context.
 
 `trustcheck scan` ingests exact versions from hashed requirements files,
-`uv.lock`, `poetry.lock`, and `pdm.lock`. When dependency traversal is enabled,
-those locked versions are retained for direct and transitive packages.
+PEP 751 `pylock.toml`, `Pipfile.lock`, pip-tools output, `uv.lock`,
+`poetry.lock`, and `pdm.lock`. When dependency traversal is enabled, those
+locked versions are retained for direct and transitive packages. Recorded
+artifact hashes are verified before provenance evaluation.
+
+When multiple indexes are configured, every resolved normalized project name
+is queried separately on each index. A name present on both a private and
+public index is treated as a dependency-confusion risk and blocks the scan
+unless the operator explicitly allows it. Allowing the collision does not
+remove it from combined JSON.
 
 ## Artifact content inspection
 
@@ -111,9 +119,13 @@ review rather than being treated as automatically high-risk.
 - PyPI metadata quality varies by project
 - some projects do not publish provenance at all
 - repository matching currently supports canonical GitHub and GitLab URLs only
-- lockfile scanning consumes existing resolutions but does not run a dependency solver
-- local, editable, path, and VCS-only lockfile entries are skipped because they cannot be inspected as PyPI releases
-- dependency inspection without a lockfile or `locked_versions` mapping resolves compatible releases from current PyPI metadata
+- lockfile scans consume the recorded resolution; requirements and project
+  inputs run pip's complete resolver
+- versionless source trees cannot be represented as package-release audits and
+  are reported as unsupported
+- private Simple Repository indexes do not necessarily publish Warehouse
+  provenance or vulnerability metadata, so those evidence fields may remain
+  unavailable even when source and hash checks succeed
 - artifact inspection is static and cannot prove that arbitrary source code is safe
 - native binaries are detected but are not disassembled or dynamically analyzed
 - provenance verification may depend on local environment support required by underlying tooling
