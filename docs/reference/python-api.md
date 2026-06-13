@@ -16,8 +16,81 @@
 - `trustcheck.JSON_SCHEMA_VERSION`
 - `trustcheck.JSON_SCHEMA_ID`
 - `trustcheck.get_json_schema()`
+- `trustcheck.ExportPackage`
+- `trustcheck.SourceLocation`
+- `trustcheck.render_export`
+- `trustcheck.package_purl`
+- `trustcheck.OUTPUT_FORMATS`
+- `trustcheck.INDUSTRY_OUTPUT_FORMATS`
+- `trustcheck.OsvClient`
+- `trustcheck.OsvProvider`
+- `trustcheck.CisaKevClient`
+- `trustcheck.EpssClient`
+- `trustcheck.VulnerabilityIntelligenceClient`
+- `trustcheck.VulnerabilitySuppression`
 
 Everything else under `trustcheck.*` should be treated as internal implementation detail and may change between minor releases.
+
+## Vulnerability intelligence
+
+```python
+from trustcheck import (
+    CisaKevClient,
+    EpssClient,
+    OsvClient,
+    OsvProvider,
+    VulnerabilityIntelligenceClient,
+    inspect_package,
+)
+
+intelligence = VulnerabilityIntelligenceClient(
+    providers=(
+        OsvProvider("OSV", OsvClient()),
+        OsvProvider(
+            "Private OSV",
+            OsvClient(base_url="https://advisories.example.com"),
+        ),
+    ),
+    kev_client=CisaKevClient(),
+    epss_client=EpssClient(),
+)
+report = inspect_package(
+    "jinja2",
+    version="2.10.0",
+    vulnerability_client=intelligence,
+)
+```
+
+Configured providers are queried concurrently. Results merge by identifiers
+and aliases, then receive normalized CVSS, CWE, withdrawal, fix-version, KEV,
+and EPSS fields.
+
+## Industry exports
+
+```python
+from trustcheck import (
+    ExportPackage,
+    SourceLocation,
+    inspect_package,
+    render_export,
+)
+
+report = inspect_package("sampleproject", version="4.0.0")
+sarif = render_export(
+    "sarif",
+    [
+        ExportPackage(
+            report=report,
+            source=SourceLocation("requirements.txt", 12),
+        )
+    ],
+    source_name="requirements.txt",
+)
+```
+
+`render_export` accepts `sarif`, `cyclonedx-json`, `cyclonedx-xml`,
+`spdx-json`, `openvex`, or `markdown`. `ExportPackage.artifacts` can carry
+lockfile `ArtifactReference` records so multi-algorithm hashes are retained.
 
 ## Dependency resolution
 
@@ -151,7 +224,13 @@ print(json.dumps(payload, indent=2))
 
 ## `inspect_package`
 
-Use `inspect_package(project, version=None, expected_repository=None, client=None, progress_callback=None, include_dependencies=False, include_transitive_dependencies=False, include_osv=False, inspect_artifacts=False, osv_client=None, locked_versions=None, resolver=None, target_environment=None, complete_locked_versions=False, expected_artifacts=())` to collect evidence and build a `TrustReport`.
+Use `inspect_package(project, version=None, expected_repository=None, client=None,
+progress_callback=None, include_dependencies=False,
+include_transitive_dependencies=False, include_osv=False,
+inspect_artifacts=False, osv_client=None, vulnerability_client=None,
+locked_versions=None, resolver=None, target_environment=None,
+complete_locked_versions=False, expected_artifacts=())` to collect evidence
+and build a `TrustReport`.
 
 In most applications, you only need to provide:
 
@@ -161,6 +240,8 @@ In most applications, you only need to provide:
 - optionally `include_dependencies=True` when you want direct dependency inspection
 - optionally `include_transitive_dependencies=True` when you want recursive dependency inspection
 - optionally `include_osv=True` to query OSV for the exact selected versions
+- optionally `vulnerability_client=VulnerabilityIntelligenceClient(...)` to
+  merge multiple advisory and enrichment providers
 - optionally `inspect_artifacts=True` to statically inspect downloaded wheels and sdists
 - optionally `locked_versions={"dependency-name": "1.2.3"}` to retain resolved direct and transitive versions
 - optionally `target_environment=TargetEnvironment(...)` for resolver target controls

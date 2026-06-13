@@ -12,6 +12,12 @@ from typing import Callable, Mapping, Sequence
 from .cli import EXIT_DATA_ERROR, EXIT_OK, EXIT_USAGE
 from .cli import main as cli_main
 from .contract import JSON_SCHEMA_VERSION
+from .exports import (
+    INDUSTRY_OUTPUT_FORMATS,
+    OUTPUT_FORMATS,
+    recommended_extension,
+    render_payload_export,
+)
 
 SUPPORTED_SCAN_FILENAMES = {
     "pipfile.lock",
@@ -42,6 +48,10 @@ class ActionSettings:
     policy: str = "default"
     expected_repo: str = ""
     with_osv: bool = False
+    osv_urls: tuple[str, ...] = ()
+    with_ecosystems: bool = False
+    with_kev: bool = False
+    with_epss: bool = False
     with_deps: bool = False
     with_transitive_deps: bool = False
     inspect_artifacts: bool = False
@@ -57,6 +67,17 @@ class ActionSettings:
         target = environment.get("TRUSTCHECK_ACTION_TARGET", "").strip()
         if not target:
             raise ActionInputError("the action input 'target' is required")
+        output_format = (
+            environment.get("TRUSTCHECK_ACTION_FORMAT", "text").strip()
+            or "text"
+        )
+        if output_format not in OUTPUT_FORMATS:
+            raise ActionInputError(
+                "'format' must be one of: " + ", ".join(OUTPUT_FORMATS)
+            )
+        report_path = environment.get(
+            "TRUSTCHECK_ACTION_REPORT_PATH", ""
+        ).strip() or _default_report_path(output_format)
         return cls(
             target=target,
             policy=environment.get("TRUSTCHECK_ACTION_POLICY", "default").strip()
@@ -67,6 +88,24 @@ class ActionSettings:
             with_osv=_parse_bool(
                 environment.get("TRUSTCHECK_ACTION_WITH_OSV", "false"),
                 name="with-osv",
+            ),
+            osv_urls=_parse_multi_value(
+                environment.get("TRUSTCHECK_ACTION_OSV_URLS", "")
+            ),
+            with_ecosystems=_parse_bool(
+                environment.get(
+                    "TRUSTCHECK_ACTION_WITH_ECOSYSTEMS",
+                    "false",
+                ),
+                name="with-ecosystems",
+            ),
+            with_kev=_parse_bool(
+                environment.get("TRUSTCHECK_ACTION_WITH_KEV", "false"),
+                name="with-kev",
+            ),
+            with_epss=_parse_bool(
+                environment.get("TRUSTCHECK_ACTION_WITH_EPSS", "false"),
+                name="with-epss",
             ),
             with_deps=_parse_bool(
                 environment.get("TRUSTCHECK_ACTION_WITH_DEPS", "false"),
@@ -94,14 +133,8 @@ class ActionSettings:
                 ),
                 name="allow-dependency-confusion",
             ),
-            output_format=environment.get(
-                "TRUSTCHECK_ACTION_FORMAT", "text"
-            ).strip()
-            or "text",
-            report_path=environment.get(
-                "TRUSTCHECK_ACTION_REPORT_PATH", "trustcheck-report.json"
-            ).strip()
-            or "trustcheck-report.json",
+            output_format=output_format,
+            report_path=report_path,
         )
 
 
@@ -120,9 +153,9 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
         raise ActionInputError(
             "'with-deps' and 'with-transitive-deps' are mutually exclusive"
         )
-    if settings.output_format not in {"text", "json"}:
+    if settings.output_format not in OUTPUT_FORMATS:
         raise ActionInputError(
-            "'format' must be 'text' or 'json'; SARIF output is not available yet"
+            "'format' must be one of: " + ", ".join(OUTPUT_FORMATS)
         )
     if settings.keyring_provider not in {
         "auto",
@@ -162,6 +195,14 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
 
     if settings.with_osv:
         arguments.append("--with-osv")
+    for url in settings.osv_urls:
+        arguments.extend(["--osv-url", url])
+    if settings.with_ecosystems:
+        arguments.append("--with-ecosystems")
+    if settings.with_kev:
+        arguments.append("--with-kev")
+    if settings.with_epss:
+        arguments.append("--with-epss")
     if settings.with_deps:
         arguments.append("--with-deps")
     if settings.with_transitive_deps:
@@ -218,8 +259,22 @@ def run_action(
             message=message,
         )
 
+    try:
+        rendered_report = (
+            render_payload_export(settings.output_format, payload)
+            if settings.output_format in INDUSTRY_OUTPUT_FORMATS
+            else json.dumps(payload, indent=2, sort_keys=True)
+        )
+    except ValueError as exc:
+        return _write_error_result(
+            settings,
+            report_path=report_path,
+            exit_code=EXIT_DATA_ERROR,
+            message=f"unable to render {settings.output_format} report: {exc}",
+        )
     report_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        rendered_report
+        + ("" if rendered_report.endswith("\n") else "\n"),
         encoding="utf-8",
     )
     recommendation, policy_passed = summarize_payload(payload, exit_code=exit_code)
@@ -404,6 +459,11 @@ def _looks_like_scan_file(target: str) -> bool:
 
 def _parse_multi_value(value: str) -> tuple[str, ...]:
     return tuple(item for line in value.splitlines() for item in line.split())
+
+
+def _default_report_path(output_format: str) -> str:
+    format_for_file = "json" if output_format == "text" else output_format
+    return "trustcheck-report" + recommended_extension(format_for_file)
 
 
 def _parse_bool(value: str, *, name: str) -> bool:

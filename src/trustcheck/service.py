@@ -14,7 +14,13 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-from .advisories import OsvClient, merge_vulnerabilities, parse_osv_vulnerabilities
+from .advisories import (
+    OSV_SOURCE,
+    OsvClient,
+    OsvProvider,
+    VulnerabilityIntelligenceClient,
+    parse_pypi_vulnerabilities,
+)
 from .artifacts import compare_artifact_metadata, inspect_artifact
 from .attestations import Distribution as AttestedDistribution
 from .attestations import Provenance, VerificationError
@@ -189,6 +195,7 @@ def inspect_package(
     include_osv: bool = False,
     inspect_artifacts: bool = False,
     osv_client: OsvClient | None = None,
+    vulnerability_client: VulnerabilityIntelligenceClient | None = None,
     locked_versions: Mapping[str, str] | None = None,
     resolver: PipResolver | None = None,
     target_environment: TargetEnvironment | None = None,
@@ -239,23 +246,34 @@ def inspect_package(
         selected_version = payload.get("info", {}).get("version") or version or "unknown"
         declared_dependencies = _extract_declared_dependencies(info.get("requires_dist"))
         declared_repository_urls = _extract_repository_urls(info.get("project_urls") or {})
-        vulnerabilities = _parse_vulnerabilities(payload.get("vulnerabilities") or [])
-        if include_osv:
+        vulnerabilities = _parse_vulnerabilities(
+            payload.get("vulnerabilities") or []
+        )
+        if include_osv and vulnerability_client is None:
             osv_client = osv_client or OsvClient(
                 timeout=float(getattr(client, "timeout", 10.0)),
                 max_retries=int(getattr(client, "max_retries", 2)),
                 backoff_factor=float(getattr(client, "backoff_factor", 0.25)),
                 offline=bool(getattr(client, "offline", False)),
             )
-            with _instrument_client(osv_client, diagnostics.on_request_event):
-                osv_vulnerabilities = parse_osv_vulnerabilities(
-                    osv_client.query(project, selected_version),
-                    project=project,
+            vulnerability_client = VulnerabilityIntelligenceClient(
+                providers=(
+                    OsvProvider(
+                        name=OSV_SOURCE,
+                        client=osv_client,
+                    ),
                 )
-            vulnerabilities = merge_vulnerabilities(
-                vulnerabilities,
-                osv_vulnerabilities,
             )
+        if vulnerability_client is not None:
+            with _instrument_client(
+                vulnerability_client,
+                diagnostics.on_request_event,
+            ):
+                vulnerabilities = vulnerability_client.query(
+                    project,
+                    selected_version,
+                    vulnerabilities,
+                )
         ownership = info.get("ownership") or {}
         files = _collect_files(
             project,
@@ -308,6 +326,7 @@ def inspect_package(
                 include_osv=include_osv,
                 inspect_artifacts=inspect_artifacts,
                 osv_client=osv_client,
+                vulnerability_client=vulnerability_client,
                 locked_versions=normalized_locked_versions,
                 complete_locked_versions=complete_locked_versions,
             )
@@ -627,20 +646,7 @@ def _instrument_client(
 
 
 def _parse_vulnerabilities(items: list[dict[str, Any]]) -> list[VulnerabilityRecord]:
-    vulnerabilities: list[VulnerabilityRecord] = []
-    for item in items:
-        vulnerabilities.append(
-            VulnerabilityRecord(
-                id=item.get("id") or "unknown",
-                summary=item.get("summary") or item.get("details") or "No summary provided.",
-                aliases=list(item.get("aliases") or []),
-                source=item.get("source") or "PyPI",
-                severity=item.get("severity"),
-                fixed_in=list(item.get("fixed_in") or []),
-                link=item.get("link"),
-            )
-        )
-    return vulnerabilities
+    return parse_pypi_vulnerabilities(items)
 
 
 def _extract_declared_dependencies(requires_dist: object) -> list[str]:
@@ -659,6 +665,7 @@ def _inspect_dependencies(
     include_osv: bool,
     inspect_artifacts: bool,
     osv_client: OsvClient | None,
+    vulnerability_client: VulnerabilityIntelligenceClient | None,
     locked_versions: Mapping[str, str],
     complete_locked_versions: bool,
 ) -> list[DependencyInspection]:
@@ -685,6 +692,7 @@ def _inspect_dependencies(
             include_osv=include_osv,
             inspect_artifacts=inspect_artifacts,
             osv_client=osv_client,
+            vulnerability_client=vulnerability_client,
             locked_versions=locked_versions,
             complete_locked_versions=complete_locked_versions,
         )
@@ -715,6 +723,7 @@ def _inspect_dependency_requirement(
     include_osv: bool,
     inspect_artifacts: bool,
     osv_client: OsvClient | None,
+    vulnerability_client: VulnerabilityIntelligenceClient | None,
     locked_versions: Mapping[str, str],
     complete_locked_versions: bool,
 ) -> tuple[DependencyInspection | None, list[str]]:
@@ -785,6 +794,7 @@ def _inspect_dependency_requirement(
             include_osv=include_osv,
             inspect_artifacts=inspect_artifacts,
             osv_client=osv_client,
+            vulnerability_client=vulnerability_client,
             _dependency_context=dependency_context,
             locked_versions=locked_versions,
             complete_locked_versions=complete_locked_versions,
@@ -1130,22 +1140,27 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
             )
         )
 
-    if report.vulnerabilities:
+    active_vulnerabilities = [
+        vulnerability
+        for vulnerability in report.vulnerabilities
+        if not vulnerability.withdrawn
+    ]
+    if active_vulnerabilities:
         flags.append(
             RiskFlag(
                 code="known_vulnerabilities",
                 severity="high",
                 message=(
-                    f"Advisory sources report {len(report.vulnerabilities)} known "
+                    f"Advisory sources report {len(active_vulnerabilities)} active "
                     "vulnerability record(s) for this release."
                 ),
                 why=[
                     "Configured advisory sources returned "
-                    f"{len(report.vulnerabilities)} vulnerability record(s) "
+                    f"{len(active_vulnerabilities)} active vulnerability record(s) "
                     "for this version.",
                     *[
                         f"{vuln.id}: {vuln.summary}"
-                        for vuln in report.vulnerabilities[:3]
+                        for vuln in active_vulnerabilities[:3]
                     ],
                 ],
                 remediation=[

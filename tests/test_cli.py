@@ -18,6 +18,7 @@ from trustcheck.cli import (
     ScanTarget,
     _build_debug_request_hook,
     _build_scan_targets,
+    _build_vulnerability_client,
     _clean_requirement_line,
     _client_for_target,
     _collect_requirement_strings,
@@ -35,6 +36,7 @@ from trustcheck.cli import (
     _parse_version_release_parts,
     _poetry_dependency_to_requirement,
     _read_requirements_file,
+    _render_cve_json,
     _render_cve_report,
     _render_scan_json,
     _render_scan_text,
@@ -70,6 +72,7 @@ from trustcheck.models import (
     RiskFlag,
     TrustReport,
     VulnerabilityRecord,
+    VulnerabilitySuppression,
 )
 from trustcheck.pypi import IndexBackedPackageClient, PypiClient, PypiClientError
 from trustcheck.resolver import (
@@ -216,6 +219,18 @@ class CliBehaviorTests(unittest.TestCase):
             ["environment", "--path", "one", "--path", "two"]
         )
         self.assertEqual(environment_args.path, ["one", "two"])
+        export_args = parser.parse_args(
+            [
+                "inspect",
+                "demo",
+                "--format",
+                "sarif",
+                "--output-file",
+                "report.sarif",
+            ]
+        )
+        self.assertEqual(export_args.format, "sarif")
+        self.assertEqual(export_args.output_file, "report.sarif")
 
     def test_index_and_target_helpers_cover_private_source_variants(self) -> None:
         parser = build_parser()
@@ -1139,6 +1154,11 @@ class CliBehaviorTests(unittest.TestCase):
             {"direct-dep": "1.4.0", "transitive-dep": "2.5.0"},
         )
         self.assertIs(targets[0].locked_versions, targets[1].locked_versions)
+        self.assertEqual(targets[0].source_line, 2)
+        self.assertEqual(targets[1].source_line, 5)
+        self.assertTrue(
+            (targets[0].source_file or "").endswith("requirements.txt")
+        )
 
     def test_load_scan_targets_supports_uv_lock(self) -> None:
         class NoNetworkClient:
@@ -1298,6 +1318,8 @@ class CliBehaviorTests(unittest.TestCase):
         assert isinstance(resolved, list)
         self.assertNotIn("secret", json.dumps(resolved))
         self.assertIn("sha256", json.dumps(resolved))
+        self.assertIn("source_file", json.dumps(resolved))
+        self.assertIn("source_line", json.dumps(resolved))
 
     def test_load_scan_targets_supports_pipfile_lock(self) -> None:
         payload = {
@@ -1682,7 +1704,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         def fake_inspect_package(*args, **kwargs):
             self.assertTrue(kwargs["include_osv"])
-            self.assertIsNotNone(kwargs["osv_client"])
+            self.assertIsNotNone(kwargs["vulnerability_client"])
             return make_report()
 
         with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
@@ -1818,6 +1840,166 @@ class CliBehaviorTests(unittest.TestCase):
             stdout.getvalue(),
         )
 
+    def test_vulnerability_client_builder_supports_all_sources_and_config(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "inspect",
+                "gridoptim",
+                "--with-osv",
+                "--osv-url",
+                "https://private.example/api/",
+                "--osv-url",
+                "https://api.osv.dev/",
+                "--osv-url",
+                "",
+                "--osv-url",
+                "not-a-url",
+                "--with-ecosystems",
+                "--with-kev",
+                "--with-epss",
+            ]
+        )
+        def hook(event: str, payload: dict[str, object]) -> None:
+            return None
+
+        pypi = PypiClient(
+            timeout=3.0,
+            max_retries=4,
+            backoff_factor=0.5,
+            offline=True,
+            request_hook=hook,
+        )
+
+        client = _build_vulnerability_client(
+            args,
+            pypi,
+            config_payload={
+                "advisories": {
+                    "osv": True,
+                    "osv_urls": ["https://config.example/osv"],
+                    "ecosystems": True,
+                    "kev": True,
+                    "kev_url": "https://feeds.example/kev.json",
+                    "epss": True,
+                    "epss_url": "https://scores.example/epss",
+                }
+            },
+        )
+
+        self.assertIsNotNone(client)
+        assert client is not None
+        self.assertEqual(
+            [provider.name for provider in client.providers],
+            [
+                "OSV",
+                "OSV:private.example",
+                "OSV:not-a-url",
+                "OSV:config.example",
+                "Ecosyste.ms",
+            ],
+        )
+        self.assertTrue(all(
+            provider.client.request_hook is None
+            for provider in client.providers
+        ))
+        self.assertEqual(client.kev_client.url, "https://feeds.example/kev.json")
+        self.assertEqual(client.epss_client.base_url, "https://scores.example/epss")
+        self.assertEqual(client.kev_client.timeout, 3.0)
+        self.assertTrue(client.kev_client.offline)
+        self.assertIs(client.request_hook, hook)
+
+        no_sources = parser.parse_args(["inspect", "gridoptim"])
+        self.assertIsNone(
+            _build_vulnerability_client(
+                no_sources,
+                pypi,
+                config_payload={},
+            )
+        )
+
+    def test_vulnerability_client_builder_rejects_invalid_config(self) -> None:
+        args = build_parser().parse_args(["inspect", "gridoptim"])
+        cases = [
+            ({"advisories": []}, "must be an object"),
+            ({"advisories": {"unknown": True}}, "unknown advisories"),
+            ({"advisories": {"osv": "yes"}}, "advisories.osv"),
+            ({"advisories": {"osv_urls": "url"}}, "list of URLs"),
+            ({"advisories": {"osv_urls": [""]}}, "list of URLs"),
+            (
+                {"advisories": {"kev": True, "kev_url": 123}},
+                "advisories.kev_url",
+            ),
+            (
+                {"advisories": {"epss": True, "epss_url": ""}},
+                "advisories.epss_url",
+            ),
+        ]
+        for config, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    _build_vulnerability_client(
+                        args,
+                        PypiClient(),
+                        config_payload=config,
+                    )
+
+    def test_cve_renderers_include_normalized_enrichment_and_suppression(self) -> None:
+        report = make_report()
+        report.vulnerabilities = [
+            VulnerabilityRecord(
+                id="CVE-2026-1234",
+                summary="Rich advisory",
+                aliases=["GHSA-demo"],
+                source="PyPI, OSV",
+                severity="CRITICAL",
+                cvss_score=9.8,
+                cvss_vector=(
+                    "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+                ),
+                cvss_version="3.1",
+                cwes=["CWE-79"],
+                fixed_in=["2.2.1"],
+                link="https://example.com/CVE-2026-1234",
+                withdrawn=True,
+                withdrawn_at="2026-06-01T00:00:00Z",
+                kev=True,
+                kev_due_date="2026-06-30",
+                epss_score=0.91,
+                epss_percentile=0.99,
+                suppression=VulnerabilitySuppression(
+                    vulnerability_id="CVE-2026-1234",
+                    owner="security@example.com",
+                    justification="Upgrade scheduled.",
+                    expires="2026-06-30",
+                    status="active",
+                ),
+            )
+        ]
+
+        payload = _render_cve_json(report)
+        rendered = _render_cve_report(report)
+
+        vulnerability = payload["vulnerabilities"][0]
+        self.assertEqual(vulnerability["cvss_score"], 9.8)
+        self.assertTrue(vulnerability["kev"])
+        self.assertEqual(vulnerability["suppression"]["status"], "active")
+        self.assertIn("aliases: GHSA-demo", rendered)
+        self.assertIn("cvss: 9.8 (CVSS:3.1/", rendered)
+        self.assertIn("cwes: CWE-79", rendered)
+        self.assertIn("withdrawn: 2026-06-01", rendered)
+        self.assertIn("CISA KEV: yes (due 2026-06-30)", rendered)
+        self.assertIn("EPSS: 0.9100 (percentile 0.9900)", rendered)
+        self.assertIn("owner=security@example.com", rendered)
+
+        report.vulnerabilities[0].cvss_vector = None
+        report.vulnerabilities[0].kev_due_date = None
+        report.vulnerabilities[0].epss_percentile = None
+        rendered_without_optional_details = _render_cve_report(report)
+        self.assertIn("cvss: 9.8", rendered_without_optional_details)
+        self.assertIn("CISA KEV: yes", rendered_without_optional_details)
+        self.assertIn("EPSS: 0.9100", rendered_without_optional_details)
+
     def test_osv_failure_names_advisory_service(self) -> None:
         error = PypiClientError(
             "OSV unavailable",
@@ -1871,6 +2053,30 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("trustcheck report for gridoptim 2.2.0", stdout.getvalue())
         self.assertIn("scan failures:", stdout.getvalue())
         self.assertIn("broken: error: unable to inspect package from PyPI", stdout.getvalue())
+
+    def test_cli_writes_industry_formats_to_output_file(self) -> None:
+        report = make_report()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "reports" / "trustcheck.sarif"
+            stdout = io.StringIO()
+            with patch("trustcheck.cli.inspect_package", return_value=report):
+                with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                    exit_code = main(
+                        [
+                            "inspect",
+                            "gridoptim",
+                            "--format",
+                            "sarif",
+                            "--output-file",
+                            str(output_path),
+                        ]
+                    )
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(payload["version"], "2.1.0")
+        self.assertIn("runs", payload)
 
     def test_cli_scan_reports_target_resolution_failures_and_continues(self) -> None:
         stdout = io.StringIO()

@@ -45,7 +45,8 @@ For a selected package version, `trustcheck` can:
 - block dependency-confusion collisions across public and private indexes
 - preserve and verify lockfile artifact hashes before trusting downloaded bytes
 - optionally inspect wheel and sdist contents without importing or executing package code
-- emit concise text output or structured JSON for automation
+- emit text, JSON, SARIF 2.1.0, CycloneDX 1.6 JSON/XML, SPDX 2.3 JSON,
+  OpenVEX 0.2.0, or Markdown
 
 Every push also builds standalone Windows and Linux executables. The Windows
 artifact is scanned with Microsoft Defender's `MpCmdRun.exe`; the Linux
@@ -94,7 +95,7 @@ PyPI installation requirements:
 - Python `>=3.11`
 - Network access to PyPI
 
-Machine-readable reports currently use JSON schema `1.5.0`. Package and report
+Machine-readable reports currently use JSON schema `1.6.0`. Package and report
 schema versions are independent so documentation-only package releases do not
 force contract churn.
 
@@ -118,6 +119,21 @@ evaluation fails. `target` also accepts a PyPI package name, `pyproject.toml`,
 `pylock.toml`, `Pipfile.lock`, `uv.lock`, `poetry.lock`, or `pdm.lock`.
 Each stable release publishes an immutable full version tag and updates the
 compatible major action tag used above.
+
+Produce SARIF for GitHub code scanning without repeating the audit:
+
+```yaml
+- uses: Halfblood-Prince/trustcheck@v1
+  id: trustcheck
+  with:
+    target: requirements.txt
+    format: sarif
+
+- uses: github/codeql-action/upload-sarif@v4
+  if: always()
+  with:
+    sarif_file: ${{ steps.trustcheck.outputs.report-path }}
+```
 
 See the [CI integration guide](https://halfblood-prince.github.io/trustcheck/guides/ci-integration/)
 for custom policies, OSV, dependency traversal, outputs, and report naming.
@@ -147,6 +163,29 @@ Enrich vulnerability intelligence with OSV and GitHub Advisory Database data:
 ```bash
 trustcheck inspect jinja2 --version 2.10.0 --with-osv --cve
 ```
+
+Merge OSV, Ecosyste.ms, a private OSV-compatible service, CISA KEV, and FIRST
+EPSS intelligence:
+
+```bash
+trustcheck inspect jinja2 \
+  --version 2.10.0 \
+  --with-osv \
+  --with-ecosystems \
+  --osv-url https://advisories.example.com \
+  --with-kev \
+  --with-epss \
+  --cve
+```
+
+Gate only critical, known-exploited, or fixable vulnerabilities:
+
+```bash
+trustcheck scan pylock.toml --fail-on-vulnerability kev
+```
+
+Custom policy files can suppress a specific advisory temporarily, but every
+suppression must name an owner, justification, and ISO expiration date.
 
 Inspect a package and its direct dependencies:
 
@@ -268,6 +307,23 @@ Emit combined JSON for a requirements-style, TOML, or lockfile scan:
 ```bash
 trustcheck scan requirements.txt --format json
 ```
+
+Write SARIF, SBOM, VEX, or Markdown output directly to a file:
+
+```bash
+trustcheck scan requirements.txt \
+  --format sarif \
+  --output-file reports/trustcheck.sarif
+
+trustcheck scan pylock.toml \
+  --format cyclonedx-json \
+  --output-file reports/trustcheck.cdx.json
+```
+
+Supported industry formats are `sarif`, `cyclonedx-json`, `cyclonedx-xml`,
+`spdx-json`, `openvex`, and `markdown`. SBOM exports retain package purls,
+vulnerabilities, provenance coverage, artifact hashes, recommendations, and
+policy violations.
 
 Emit only vulnerability records as JSON:
 

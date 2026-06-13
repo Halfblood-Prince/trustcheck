@@ -32,6 +32,31 @@ trustcheck inspect sampleproject --version 4.0.0
 trustcheck inspect sampleproject --version 4.0.0 --cve
 ```
 
+## Merge and enrich vulnerability intelligence
+
+```bash
+trustcheck inspect jinja2 \
+  --version 2.10.0 \
+  --with-osv \
+  --with-ecosystems \
+  --osv-url https://advisories.example.com \
+  --with-kev \
+  --with-epss \
+  --cve
+```
+
+Configured OSV-compatible providers run concurrently. Records are merged by
+advisory identifiers and aliases, then normalized with CVSS, CWE, fix-version,
+withdrawal, KEV, and EPSS fields.
+
+Block a selected vulnerability class:
+
+```bash
+trustcheck scan requirements.txt --fail-on-vulnerability critical
+trustcheck scan requirements.txt --fail-on-vulnerability kev
+trustcheck scan requirements.txt --fail-on-vulnerability fixable
+```
+
 ## Require a known source repository
 
 ```bash
@@ -147,6 +172,20 @@ To emit combined JSON for every package in a requirements-style or TOML dependen
 ```bash
 trustcheck scan requirements.txt --format json
 ```
+
+## Write SARIF or an SBOM
+
+```bash
+trustcheck scan requirements.txt \
+  --format sarif \
+  --output-file reports/trustcheck.sarif
+
+trustcheck scan pylock.toml \
+  --format cyclonedx-json \
+  --output-file reports/trustcheck.cdx.json
+```
+
+Other formats are `cyclonedx-xml`, `spdx-json`, `openvex`, and `markdown`.
 
 To emit only the known vulnerability records in JSON:
 

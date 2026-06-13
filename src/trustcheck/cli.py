@@ -18,8 +18,24 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 from . import __version__
-from .advisories import OsvClient
+from .advisories import (
+    CISA_KEV_URL,
+    ECOSYSTEMS_OSV_BASE_URL,
+    EPSS_BASE_URL,
+    OSV_BASE_URL,
+    CisaKevClient,
+    EpssClient,
+    OsvClient,
+    OsvProvider,
+    VulnerabilityIntelligenceClient,
+)
 from .contract import JSON_SCHEMA_VERSION
+from .exports import (
+    OUTPUT_FORMATS,
+    ExportPackage,
+    SourceLocation,
+    render_export,
+)
 from .indexes import (
     DEFAULT_INDEX_URL,
     IndexConfiguration,
@@ -73,6 +89,8 @@ class ScanTarget:
     index_url: str | None = None
     requires_dist: tuple[str, ...] = ()
     dependency_confusion: tuple[str, ...] = ()
+    source_file: str | None = None
+    source_line: int | None = None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -114,9 +132,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inspect_parser.add_argument(
         "--format",
-        choices=("text", "json"),
+        choices=OUTPUT_FORMATS,
         default="text",
         help="Output format.",
+    )
+    inspect_parser.add_argument(
+        "--output-file",
+        help="Write the rendered report to this file instead of standard output.",
     )
     inspect_parser.add_argument(
         "--verbose",
@@ -138,6 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Query OSV for additional vulnerability records and GitHub advisories.",
     )
+    _add_advisory_arguments(inspect_parser)
     dependency_group = inspect_parser.add_mutually_exclusive_group()
     dependency_group.add_argument(
         "--with-deps",
@@ -193,7 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inspect_parser.add_argument(
         "--fail-on-vulnerability",
-        choices=("ignore", "any"),
+        choices=("ignore", "any", "critical", "kev", "fixable"),
         help="Override vulnerability handling for policy evaluation.",
     )
     inspect_parser.add_argument(
@@ -245,9 +268,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan_parser.add_argument(
         "--format",
-        choices=("text", "json"),
+        choices=OUTPUT_FORMATS,
         default="text",
         help="Output format.",
+    )
+    scan_parser.add_argument(
+        "--output-file",
+        help="Write the rendered report to this file instead of standard output.",
     )
     scan_parser.add_argument(
         "--verbose",
@@ -269,6 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Query OSV for each resolved package version.",
     )
+    _add_advisory_arguments(scan_parser)
     scan_dependency_group = scan_parser.add_mutually_exclusive_group()
     scan_dependency_group.add_argument(
         "--with-deps",
@@ -318,7 +346,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan_parser.add_argument(
         "--fail-on-vulnerability",
-        choices=("ignore", "any"),
+        choices=("ignore", "any", "critical", "kev", "fixable"),
         help="Override vulnerability handling for policy evaluation.",
     )
     scan_parser.add_argument(
@@ -391,9 +419,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     environment_parser.add_argument(
         "--format",
-        choices=("text", "json"),
+        choices=OUTPUT_FORMATS,
         default="text",
         help="Output format.",
+    )
+    environment_parser.add_argument(
+        "--output-file",
+        help="Write the rendered report to this file instead of standard output.",
     )
     environment_parser.add_argument(
         "--verbose",
@@ -415,6 +447,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Query OSV for each installed distribution.",
     )
+    _add_advisory_arguments(environment_parser)
     environment_dependency_group = environment_parser.add_mutually_exclusive_group()
     environment_dependency_group.add_argument(
         "--with-deps",
@@ -461,7 +494,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     environment_parser.add_argument(
         "--fail-on-vulnerability",
-        choices=("ignore", "any"),
+        choices=("ignore", "any", "critical", "kev", "fixable"),
         help="Override vulnerability handling for policy evaluation.",
     )
     environment_parser.add_argument(
@@ -544,6 +577,33 @@ def _add_index_arguments(parser: argparse.ArgumentParser) -> None:
             "index; unsafe unless the source has been independently verified."
         ),
     )
+
+
+def _add_advisory_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--osv-url",
+        action="append",
+        default=[],
+        metavar="URL",
+        help="Additional OSV-compatible API base URL; repeatable.",
+    )
+    parser.add_argument(
+        "--with-ecosystems",
+        action="store_true",
+        help="Query the Ecosyste.ms OSV-compatible advisory service.",
+    )
+    parser.add_argument(
+        "--with-kev",
+        action="store_true",
+        help="Enrich CVE aliases with the CISA Known Exploited Vulnerabilities catalog.",
+    )
+    parser.add_argument(
+        "--with-epss",
+        action="store_true",
+        help="Enrich CVE aliases with FIRST EPSS probability and percentile scores.",
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -564,7 +624,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     log_format=args.log_format,
                 ),
             )
-            osv_client = _build_osv_client(client) if args.with_osv else None
+            vulnerability_client = _build_vulnerability_client(
+                args,
+                client,
+                config_payload=config_payload,
+            )
             resolver = _resolver_from_args(args)
             inspection_client: PypiClient | IndexBackedPackageClient = client
             expected_artifacts: tuple[ArtifactReference, ...] = ()
@@ -618,7 +682,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 include_transitive_dependencies=args.with_transitive_deps,
                 include_osv=args.with_osv,
                 inspect_artifacts=args.inspect_artifacts,
-                osv_client=osv_client,
+                vulnerability_client=vulnerability_client,
                 resolver=resolver,
                 target_environment=_target_environment_from_args(args),
                 expected_artifacts=expected_artifacts,
@@ -638,13 +702,49 @@ def main(argv: Sequence[str] | None = None) -> int:
             evaluation = evaluate_policy(report, policy)
             if args.cve:
                 if args.format == "json":
-                    print(json.dumps(_render_cve_json(report), indent=2, sort_keys=True))
+                    rendered = json.dumps(
+                        _render_cve_json(report),
+                        indent=2,
+                        sort_keys=True,
+                    )
+                elif args.format == "text":
+                    rendered = _render_cve_report(report)
                 else:
-                    print(_render_cve_report(report))
+                    rendered = render_export(
+                        args.format,
+                        [
+                            ExportPackage(
+                                report=report,
+                                source=SourceLocation(report.package_url),
+                                artifacts=expected_artifacts,
+                            )
+                        ],
+                        source_name=f"{report.project} {report.version}",
+                    )
             elif args.format == "json":
-                print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+                rendered = json.dumps(
+                    report.to_dict(),
+                    indent=2,
+                    sort_keys=True,
+                )
+            elif args.format == "text":
+                rendered = _render_text_report(
+                    report,
+                    verbose=args.verbose,
+                )
             else:
-                print(_render_text_report(report, verbose=args.verbose))
+                rendered = render_export(
+                    args.format,
+                    [
+                        ExportPackage(
+                            report=report,
+                            source=SourceLocation(report.package_url),
+                            artifacts=expected_artifacts,
+                        )
+                    ],
+                    source_name=f"{report.project} {report.version}",
+                )
+            _emit_output(rendered, args.output_file)
             if not evaluation.passed:
                 return EXIT_POLICY_FAILURE
             return EXIT_OK
@@ -663,7 +763,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     log_format=args.log_format,
                 ),
             )
-            osv_client = _build_osv_client(client) if args.with_osv else None
+            vulnerability_client = _build_vulnerability_client(
+                args,
+                client,
+                config_payload=config_payload,
+            )
             policy_name = "strict" if args.strict else args.policy
             policy = resolve_policy(
                 builtin_name=policy_name,
@@ -690,7 +794,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 targets,
                 args=args,
                 client=client,
-                osv_client=osv_client,
+                vulnerability_client=vulnerability_client,
                 policy=policy,
                 progress_callback=progress_callback,
                 dependency_progress_callback=dependency_progress_callback,
@@ -710,7 +814,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     log_format=args.log_format,
                 ),
             )
-            osv_client = _build_osv_client(client) if args.with_osv else None
+            vulnerability_client = _build_vulnerability_client(
+                args,
+                client,
+                config_payload=config_payload,
+            )
             policy_name = "strict" if args.strict else args.policy
             policy = resolve_policy(
                 builtin_name=policy_name,
@@ -736,7 +844,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 targets,
                 args=args,
                 client=client,
-                osv_client=osv_client,
+                vulnerability_client=vulnerability_client,
                 policy=policy,
                 progress_callback=progress_callback,
                 dependency_progress_callback=dependency_progress_callback,
@@ -776,12 +884,13 @@ def _run_scan_targets(
     *,
     args: argparse.Namespace,
     client: PypiClient,
-    osv_client: OsvClient | None,
+    vulnerability_client: VulnerabilityIntelligenceClient | None,
     policy: PolicySettings,
     progress_callback: ProgressCallback | None,
     dependency_progress_callback: DependencyProgressCallback | None,
 ) -> int:
     reports: list[TrustReport] = []
+    report_targets: list[ScanTarget] = []
     failures: list[dict[str, str]] = []
     overall_exit_code = EXIT_OK
     for target in targets:
@@ -811,15 +920,16 @@ def _run_scan_targets(
                 dependency_progress_callback=dependency_progress_callback,
                 include_dependencies=args.with_deps,
                 include_transitive_dependencies=args.with_transitive_deps,
-                include_osv=args.with_osv,
+                include_osv=vulnerability_client is not None,
                 inspect_artifacts=args.inspect_artifacts,
-                osv_client=osv_client,
+                vulnerability_client=vulnerability_client,
                 locked_versions=target.locked_versions,
                 complete_locked_versions=target.complete_locked_versions,
                 expected_artifacts=target.artifacts,
             )
             evaluation = evaluate_policy(report, policy)
             reports.append(report)
+            report_targets.append(target)
             if not evaluation.passed and overall_exit_code == EXIT_OK:
                 overall_exit_code = EXIT_POLICY_FAILURE
         except PypiClientError as exc:
@@ -848,30 +958,60 @@ def _run_scan_targets(
                 EXIT_DATA_ERROR,
             )
     if args.format == "json":
-        print(
-            json.dumps(
-                _render_scan_json(
-                    source_label,
-                    reports,
-                    failures=failures,
-                    cve_only=args.cve,
-                    targets=targets,
-                ),
-                indent=2,
-                sort_keys=True,
-            )
-        )
-    else:
-        print(
-            _render_scan_text(
+        rendered = json.dumps(
+            _render_scan_json(
                 source_label,
                 reports,
                 failures=failures,
-                verbose=args.verbose,
                 cve_only=args.cve,
-            )
+                targets=targets,
+            ),
+            indent=2,
+            sort_keys=True,
         )
+    elif args.format == "text":
+        rendered = _render_scan_text(
+            source_label,
+            reports,
+            failures=failures,
+            verbose=args.verbose,
+            cve_only=args.cve,
+        )
+    else:
+        rendered = render_export(
+            args.format,
+            [
+                ExportPackage(
+                    report=report,
+                    source=SourceLocation(
+                        target.source_file or source_label,
+                        target.source_line,
+                    ),
+                    artifacts=target.artifacts,
+                )
+                for report, target in zip(
+                    reports,
+                    report_targets,
+                    strict=True,
+                )
+            ],
+            source_name=source_label,
+            failures=failures,
+        )
+    _emit_output(rendered, args.output_file)
     return overall_exit_code
+
+
+def _emit_output(rendered: str, output_file: str | None) -> None:
+    if output_file is None:
+        print(rendered)
+        return
+    path = Path(output_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        rendered + ("" if rendered.endswith("\n") else "\n"),
+        encoding="utf-8",
+    )
 
 
 def _handle_error(message: str, exit_code: int, *, debug: bool) -> int:
@@ -1069,14 +1209,150 @@ def _build_client(
     )
 
 
-def _build_osv_client(client: PypiClient) -> OsvClient:
+def _build_osv_client(
+    client: PypiClient,
+    *,
+    base_url: str = OSV_BASE_URL,
+) -> OsvClient:
     return OsvClient(
+        base_url=base_url.rstrip("/"),
         timeout=client.timeout,
         max_retries=client.max_retries,
         backoff_factor=client.backoff_factor,
         offline=client.offline,
         request_hook=client.request_hook,
     )
+
+
+def _build_vulnerability_client(
+    args: argparse.Namespace,
+    client: PypiClient,
+    *,
+    config_payload: dict[str, object],
+) -> VulnerabilityIntelligenceClient | None:
+    raw_config = config_payload.get("advisories")
+    if raw_config is not None and not isinstance(raw_config, dict):
+        raise ValueError("config file field 'advisories' must be an object")
+    advisory_config = raw_config or {}
+    allowed = {
+        "osv",
+        "osv_urls",
+        "ecosystems",
+        "kev",
+        "kev_url",
+        "epss",
+        "epss_url",
+    }
+    unknown = sorted(set(advisory_config) - allowed)
+    if unknown:
+        raise ValueError(
+            "unknown advisories config setting(s): " + ", ".join(unknown)
+        )
+
+    providers: list[OsvProvider] = []
+    seen_urls: set[str] = set()
+
+    def add_provider(name: str, base_url: str) -> None:
+        normalized = base_url.strip().rstrip("/")
+        if not normalized or normalized in seen_urls:
+            return
+        seen_urls.add(normalized)
+        provider_client = _build_osv_client(client, base_url=normalized)
+        provider_client.request_hook = None
+        providers.append(
+            OsvProvider(
+                name=name,
+                client=provider_client,
+            )
+        )
+
+    if args.with_osv or _config_bool(advisory_config, "osv"):
+        add_provider("OSV", OSV_BASE_URL)
+
+    custom_urls = [
+        *getattr(args, "osv_url", []),
+        *_config_string_list(advisory_config, "osv_urls"),
+    ]
+    for base_url in custom_urls:
+        hostname = parse.urlsplit(base_url).hostname or base_url
+        add_provider(f"OSV:{hostname}", base_url)
+
+    if args.with_ecosystems or _config_bool(advisory_config, "ecosystems"):
+        add_provider("Ecosyste.ms", ECOSYSTEMS_OSV_BASE_URL)
+
+    kev_enabled = args.with_kev or _config_bool(advisory_config, "kev")
+    epss_enabled = args.with_epss or _config_bool(advisory_config, "epss")
+    if not providers and not kev_enabled and not epss_enabled:
+        return None
+
+    kev_url = _config_string(
+        advisory_config,
+        "kev_url",
+        default=CISA_KEV_URL,
+    )
+    epss_url = _config_string(
+        advisory_config,
+        "epss_url",
+        default=EPSS_BASE_URL,
+    )
+    return VulnerabilityIntelligenceClient(
+        providers=tuple(providers),
+        kev_client=(
+            CisaKevClient(
+                url=kev_url,
+                timeout=client.timeout,
+                max_retries=client.max_retries,
+                backoff_factor=client.backoff_factor,
+                offline=client.offline,
+            )
+            if kev_enabled
+            else None
+        ),
+        epss_client=(
+            EpssClient(
+                base_url=epss_url,
+                timeout=client.timeout,
+                max_retries=client.max_retries,
+                backoff_factor=client.backoff_factor,
+                offline=client.offline,
+            )
+            if epss_enabled
+            else None
+        ),
+        request_hook=client.request_hook,
+    )
+
+
+def _config_bool(config: dict[str, object], name: str) -> bool:
+    value = config.get(name, False)
+    if not isinstance(value, bool):
+        raise ValueError(f"advisories.{name} must be a boolean")
+    return value
+
+
+def _config_string_list(
+    config: dict[str, object],
+    name: str,
+) -> list[str]:
+    value = config.get(name, [])
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and item.strip()
+        for item in value
+    ):
+        raise ValueError(f"advisories.{name} must be a list of URLs")
+    return [item.strip() for item in value]
+
+
+def _config_string(
+    config: dict[str, object],
+    name: str,
+    *,
+    default: str,
+) -> str:
+    value = config.get(name, default)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"advisories.{name} must be a URL")
+    return value.strip()
 
 
 def _load_config_file(path: str | None) -> dict[str, object]:
@@ -1223,21 +1499,27 @@ def _load_scan_targets(
             groups=groups,
             environment=_target_marker_environment(target_environment),
         )
-        return _scan_targets_from_lockfile(
-            lockfile_resolution,
-            resolver=resolver,
+        return _attach_source_locations(
+            _scan_targets_from_lockfile(
+                lockfile_resolution,
+                resolver=resolver,
+            ),
+            file_path,
         )
 
     if file_path.suffix.lower() == ".toml":
-        return _load_scan_targets_from_toml(
+        return _attach_source_locations(
+            _load_scan_targets_from_toml(
+                file_path,
+                client,
+                resolver=resolver,
+                constraints=constraints,
+                extras=extras,
+                groups=groups,
+                target_environment=target_environment,
+                offline=offline,
+            ),
             file_path,
-            client,
-            resolver=resolver,
-            constraints=constraints,
-            extras=extras,
-            groups=groups,
-            target_environment=target_environment,
-            offline=offline,
         )
 
     if resolver is not None:
@@ -1248,9 +1530,12 @@ def _load_scan_targets(
             offline=offline,
         )
         pip_tools_resolution = load_pip_tools_lock(file_path)
-        return _scan_targets_from_resolution(
-            pip_resolution,
-            lockfile_resolution=pip_tools_resolution,
+        return _attach_source_locations(
+            _scan_targets_from_resolution(
+                pip_resolution,
+                lockfile_resolution=pip_tools_resolution,
+            ),
+            file_path,
         )
 
     requirement_lines = _read_requirements_file(file_path)
@@ -1258,12 +1543,47 @@ def _load_scan_targets(
         requirement_lines,
         source_path=file_path,
     )
-    return _build_scan_targets(
-        requirement_lines,
-        client,
-        source_path=file_path,
-        locked_versions=locked_versions,
+    return _attach_source_locations(
+        _build_scan_targets(
+            requirement_lines,
+            client,
+            source_path=file_path,
+            locked_versions=locked_versions,
+        ),
+        file_path,
     )
+
+
+def _attach_source_locations(
+    targets: list[ScanTarget],
+    source_path: Path,
+) -> list[ScanTarget]:
+    resolved_path = source_path.resolve()
+    lines = resolved_path.read_text(
+        encoding="utf-8",
+        errors="replace",
+    ).splitlines()
+    for target in targets:
+        target.source_file = str(resolved_path)
+        target.source_line = _source_line_for_project(lines, target.project)
+    return targets
+
+
+def _source_line_for_project(
+    lines: Sequence[str],
+    project: str,
+) -> int | None:
+    normalized = canonicalize_name(project)
+    project_pattern = re.escape(normalized).replace(r"\-", "[-_.]+")
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9]){project_pattern}"
+        r"(?![A-Za-z0-9])",
+        re.IGNORECASE,
+    )
+    for line_number, line in enumerate(lines, 1):
+        if pattern.search(line):
+            return line_number
+    return None
 
 
 def _load_scan_targets_from_toml(
@@ -2031,8 +2351,33 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
                 f"source={vuln.source or 'unknown'}",
                 f"severity={vuln.severity or 'unknown'}",
             ]
+            if vuln.cvss_score is not None:
+                details.append(f"cvss={vuln.cvss_score:.1f}")
+            if vuln.cwes:
+                details.append(f"cwes={','.join(vuln.cwes)}")
             if vuln.fixed_in:
                 details.append(f"fixed_in={','.join(vuln.fixed_in)}")
+            if vuln.withdrawn:
+                details.append(
+                    f"withdrawn={vuln.withdrawn_at or 'yes'}"
+                )
+            if vuln.kev:
+                details.append("kev=yes")
+                if vuln.kev_due_date:
+                    details.append(f"kev_due={vuln.kev_due_date}")
+            if vuln.epss_score is not None:
+                details.append(f"epss={vuln.epss_score:.4f}")
+            if vuln.epss_percentile is not None:
+                details.append(
+                    f"epss_percentile={vuln.epss_percentile:.4f}"
+                )
+            if vuln.suppression is not None:
+                details.append(
+                    "suppression="
+                    f"{vuln.suppression.status}:"
+                    f"{vuln.suppression.owner}:"
+                    f"{vuln.suppression.expires}"
+                )
             if vuln.link:
                 details.append(f"advisory={vuln.link}")
             lines.append(f"    {' '.join(details)}")
@@ -2184,6 +2529,8 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
         f"expected_repo={report.policy.require_expected_repository_match} "
         f"metadata_only={report.policy.allow_metadata_only} "
         f"vulnerabilities={report.policy.vulnerability_mode} "
+        f"suppressions={report.policy.suppressions_applied}/"
+        f"{report.policy.suppressions_expired} "
         f"risk_severity={report.policy.fail_on_severity}"
     )
     if report.policy.violations:
@@ -2234,8 +2581,37 @@ def _render_cve_json(report: TrustReport) -> dict[str, object]:
                 "aliases": vuln.aliases,
                 "source": vuln.source,
                 "severity": vuln.severity,
+                "cvss_score": vuln.cvss_score,
+                "cvss_vector": vuln.cvss_vector,
+                "cvss_version": vuln.cvss_version,
+                "cwes": vuln.cwes,
                 "fixed_in": vuln.fixed_in,
                 "link": vuln.link,
+                "withdrawn": vuln.withdrawn,
+                "withdrawn_at": vuln.withdrawn_at,
+                "kev": vuln.kev,
+                "kev_date_added": vuln.kev_date_added,
+                "kev_due_date": vuln.kev_due_date,
+                "kev_required_action": vuln.kev_required_action,
+                "kev_known_ransomware_campaign_use": (
+                    vuln.kev_known_ransomware_campaign_use
+                ),
+                "epss_score": vuln.epss_score,
+                "epss_percentile": vuln.epss_percentile,
+                "epss_date": vuln.epss_date,
+                "suppression": (
+                    {
+                        "vulnerability_id": (
+                            vuln.suppression.vulnerability_id
+                        ),
+                        "owner": vuln.suppression.owner,
+                        "justification": vuln.suppression.justification,
+                        "expires": vuln.suppression.expires,
+                        "status": vuln.suppression.status,
+                    }
+                    if vuln.suppression is not None
+                    else None
+                ),
             }
             for vuln in report.vulnerabilities
         ],
@@ -2261,8 +2637,43 @@ def _render_cve_report(report: TrustReport) -> str:
             lines.append(f"  aliases: {', '.join(vuln.aliases)}")
         lines.append(f"  source: {vuln.source or 'unknown'}")
         lines.append(f"  severity: {vuln.severity or 'unknown'}")
+        if vuln.cvss_score is not None:
+            cvss = f"{vuln.cvss_score:.1f}"
+            if vuln.cvss_vector:
+                cvss += f" ({vuln.cvss_vector})"
+            lines.append(f"  cvss: {cvss}")
+        if vuln.cwes:
+            lines.append(f"  cwes: {', '.join(vuln.cwes)}")
         if vuln.fixed_in:
             lines.append(f"  fixed in: {', '.join(vuln.fixed_in)}")
+        if vuln.withdrawn:
+            lines.append(f"  withdrawn: {vuln.withdrawn_at or 'yes'}")
+        if vuln.kev:
+            lines.append(
+                "  CISA KEV: yes"
+                + (
+                    f" (due {vuln.kev_due_date})"
+                    if vuln.kev_due_date
+                    else ""
+                )
+            )
+        if vuln.epss_score is not None:
+            lines.append(
+                f"  EPSS: {vuln.epss_score:.4f}"
+                + (
+                    f" (percentile {vuln.epss_percentile:.4f})"
+                    if vuln.epss_percentile is not None
+                    else ""
+                )
+            )
+        if vuln.suppression is not None:
+            lines.append(
+                "  suppression: "
+                f"{vuln.suppression.status}; "
+                f"owner={vuln.suppression.owner}; "
+                f"expires={vuln.suppression.expires}; "
+                f"justification={vuln.suppression.justification}"
+            )
         if vuln.link:
             lines.append(f"  link: {vuln.link}")
     return "\n".join(lines)
@@ -2330,6 +2741,8 @@ def _render_scan_json(
                     artifact.to_dict() for artifact in target.artifacts
                 ],
                 "dependency_confusion": list(target.dependency_confusion),
+                "source_file": target.source_file,
+                "source_line": target.source_line,
             }
             for target in targets
         ],

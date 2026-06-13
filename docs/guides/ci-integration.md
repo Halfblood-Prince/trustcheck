@@ -60,7 +60,7 @@ File targets use `trustcheck scan`. Package names use `trustcheck inspect`.
 A single expected repository is not meaningful for a multi-package dependency
 file, so the action rejects `expected-repo` when `target` is a file.
 
-## Dependencies, OSV, and artifacts
+## Dependencies, vulnerability intelligence, and artifacts
 
 ```yaml
 - uses: Halfblood-Prince/trustcheck@v1
@@ -68,6 +68,9 @@ file, so the action rejects `expected-repo` when `target` is a file.
     target: uv.lock
     policy: strict
     with-osv: "true"
+    with-ecosystems: "true"
+    with-kev: "true"
+    with-epss: "true"
     with-transitive-deps: "true"
     inspect-artifacts: "true"
 ```
@@ -96,6 +99,10 @@ The file uses the same schema as CLI `--policy-file`.
 | `policy` | `default` | `default`, `strict`, or a custom JSON policy path. |
 | `expected-repo` | empty | Expected repository for a package target. |
 | `with-osv` | `false` | Query OSV and GitHub advisory data. |
+| `osv-urls` | empty | Whitespace- or newline-separated custom OSV-compatible API base URLs. |
+| `with-ecosystems` | `false` | Query the Ecosyste.ms OSV-compatible advisory service. |
+| `with-kev` | `false` | Enrich CVEs with the CISA KEV catalog. |
+| `with-epss` | `false` | Enrich CVEs with FIRST EPSS scores and percentiles. |
 | `with-deps` | `false` | Inspect direct runtime dependencies. |
 | `with-transitive-deps` | `false` | Inspect the complete runtime dependency tree. |
 | `inspect-artifacts` | `false` | Statically inspect wheel and sdist contents. |
@@ -103,8 +110,8 @@ The file uses the same schema as CLI `--policy-file`.
 | `extra-index-urls` | empty | Whitespace- or newline-separated additional indexes. |
 | `keyring-provider` | `auto` | `auto`, `disabled`, `import`, or `subprocess`. |
 | `allow-dependency-confusion` | `false` | Continue after reporting a cross-index project-name collision. |
-| `format` | `text` | Action log format: `text` or `json`. SARIF is reserved for a later release. |
-| `report-path` | `trustcheck-report.json` | JSON report location in the caller workspace. |
+| `format` | `text` | `text`, `json`, `sarif`, `cyclonedx-json`, `cyclonedx-xml`, `spdx-json`, `openvex`, or `markdown`. |
+| `report-path` | derived | Report location; the default extension follows `format`. |
 | `artifact-name` | `trustcheck-report` | Uploaded workflow artifact name. |
 | `python-version` | `3.12` | Python version used by the action. |
 
@@ -119,7 +126,7 @@ closed unless `allow-dependency-confusion` is explicitly enabled.
 | --- | --- |
 | `recommendation` | Overall recommendation such as `verified`, `review-required`, or `high-risk`. |
 | `policy-passed` | `true` only when policy passes and the scan has no operational failures. |
-| `report-path` | Absolute path to the generated JSON report. |
+| `report-path` | Absolute path to the generated report. |
 
 Use outputs in later workflow steps:
 
@@ -145,6 +152,27 @@ Use distinct artifact names when invoking the action more than once in a job:
     report-path: reports/trustcheck-poetry.json
     artifact-name: trustcheck-poetry
 ```
+
+## Upload SARIF to code scanning
+
+The action always audits once. It derives SARIF from the same canonical JSON
+result used for the recommendation and policy outputs.
+
+```yaml
+- uses: Halfblood-Prince/trustcheck@v1
+  id: trustcheck
+  with:
+    target: requirements.txt
+    format: sarif
+
+- uses: github/codeql-action/upload-sarif@v4
+  if: always()
+  with:
+    sarif_file: ${{ steps.trustcheck.outputs.report-path }}
+```
+
+SARIF findings use stable fingerprints and point to the dependency manifest
+and declaration line when available.
 
 ## CLI fallback
 

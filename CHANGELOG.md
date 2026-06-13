@@ -8,6 +8,27 @@ The project follows Semantic Versioning for the supported public API described i
 
 ### Added
 
+- Added concurrent vulnerability intelligence aggregation across PyPI, OSV,
+  repeatable custom OSV-compatible endpoints, and Ecosyste.ms.
+- Added normalized CVSS scores, vectors, versions, CWE identifiers, aliases,
+  fix versions, and withdrawn-advisory state across advisory providers.
+- Added optional CISA Known Exploited Vulnerabilities and FIRST EPSS
+  enrichment, including KEV remediation metadata and EPSS percentiles.
+- Added `critical`, `kev`, and `fixable` vulnerability policy modes alongside
+  the existing advisory and block-any modes.
+- Added auditable vulnerability suppressions with required owner,
+  justification, ISO expiration, and active or expired report status.
+- Extended native JSON and industry exports with vulnerability intelligence
+  and suppression evidence, and advanced the schema to `1.6.0`.
+- Added SARIF 2.1.0 output with stable `trustcheck/v1` fingerprints, manifest
+  source locations, rule metadata, vulnerabilities, policy violations, risk
+  flags, provenance gaps, artifact diagnostics, and scan failures.
+- Added CycloneDX 1.6 JSON and XML, SPDX 2.3 JSON, OpenVEX 0.2.0, and Markdown
+  exporters with canonical PyPI purls and deterministic document identities.
+- Added SBOM trust properties for vulnerabilities, provenance coverage,
+  artifact hashes, recommendations, and policy violations.
+- Added `--output-file` to `inspect`, `scan`, and `environment`, and enabled
+  every industry format in the TrustCheck Package Scanner GitHub Action.
 - Added standard PEP 751 `pylock.toml` and named `pylock.<name>.toml` inputs,
   including environment, extras, dependency-group, source, index, and artifact
   validation.
@@ -52,7 +73,7 @@ The project follows Semantic Versioning for the supported public API described i
 - Added wheel `RECORD` hash and size validation, console-script listing, native extension detection, and unexpected top-level file reporting.
 - Added sdist checks for suspicious scripts, oversized or unusual files, and wheel/sdist metadata differences.
 - Added `wheel_record_invalid`, `artifact_contains_native_code`, `metadata_mismatch`, and `suspicious_entry_point` risk flags.
-- Extended the machine-readable per-file report with artifact findings and advanced the schema to `1.5.0`.
+- Extended the machine-readable per-file report with artifact findings.
 
 ### Changed
 

@@ -4,7 +4,8 @@ You can provide network settings through a JSON config file and optionally combi
 
 ## Config file shape
 
-`--config-file` expects a JSON object. The `network` field, when present, must also be an object.
+`--config-file` expects a JSON object. The `network` and `advisories` fields,
+when present, must also be objects.
 
 Example:
 
@@ -15,9 +16,31 @@ Example:
     "retries": 4,
     "backoff_factor": 0.5,
     "cache_dir": ".trustcheck-cache"
+  },
+  "advisories": {
+    "osv": true,
+    "osv_urls": ["https://advisories.example.com"],
+    "ecosystems": true,
+    "kev": true,
+    "kev_url": "https://www.cisa.gov/example/known_exploited.json",
+    "epss": true,
+    "epss_url": "https://api.first.org/data/v1/epss"
   }
 }
 ```
+
+Advisory settings:
+
+- `osv`: enable the public OSV provider
+- `osv_urls`: additional OSV-compatible API base URLs
+- `ecosystems`: enable the Ecosyste.ms OSV-compatible provider
+- `kev`: enable CISA Known Exploited Vulnerabilities enrichment
+- `kev_url`: override the KEV JSON feed URL
+- `epss`: enable FIRST EPSS enrichment
+- `epss_url`: override the EPSS API base URL
+
+CLI provider flags are additive with config-file providers. Duplicate base URLs
+are queried once.
 
 ## Environment variables
 
@@ -51,4 +74,7 @@ trustcheck inspect sampleproject \
   --offline
 ```
 
-Offline mode is useful in hermetic CI or for repeated local analysis after an initial cached run.
+Offline mode is useful in hermetic CI or for repeated local analysis after an
+initial cached run. PyPI's persistent cache remains available offline.
+OSV-compatible, KEV, and EPSS clients use per-process caches and fail closed
+when required advisory data is not already present.

@@ -15,10 +15,14 @@ For a selected package version, `trustcheck` can:
 - extract Trusted Publisher identity details such as repository and workflow
 - compare expected repository input against declared and attested repository signals
 - flag publisher repository and workflow drift against the previous release
-- surface PyPI vulnerability records and optional OSV/GitHub advisory intelligence
+- merge PyPI, OSV, custom OSV-compatible, and Ecosyste.ms advisory intelligence
+- normalize CVSS, CWE, aliases, fix versions, and withdrawn status
+- enrich CVEs with optional CISA KEV and FIRST EPSS intelligence
 - inspect declared runtime dependencies and summarize the worst-risk dependency in the set
 - scan requirements files, project TOML, PEP 751 `pylock.toml`,
   `Pipfile.lock`, and `uv.lock`, `poetry.lock`, or `pdm.lock`
+- export SARIF 2.1.0, CycloneDX 1.6 JSON/XML, SPDX 2.3 JSON,
+  OpenVEX 0.2.0, Markdown, or native JSON
 - statically inspect wheel and sdist contents without importing package code
 - emit a concise human-readable report or structured JSON
 
@@ -124,7 +128,7 @@ print(report.to_dict()["report"]["coverage"]["status"])
 print(report.dependency_summary.highest_risk_recommendation)
 ```
 
-Machine-readable reports currently use JSON schema `1.5.0`. The package release
+Machine-readable reports currently use JSON schema `1.6.0`. The package release
 and report schema are versioned independently.
 
 <script

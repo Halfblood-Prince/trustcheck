@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from .models import PolicyEvaluation, PolicyViolation, RiskFlag, TrustReport
+from .models import (
+    PolicyEvaluation,
+    PolicyViolation,
+    RiskFlag,
+    TrustReport,
+    VulnerabilityRecord,
+    VulnerabilitySuppression,
+)
 
 SeverityLevel = Literal["none", "medium", "high"]
 ProvenanceRequirement = Literal["none", "all"]
-VulnerabilityMode = Literal["ignore", "any"]
+VulnerabilityMode = Literal["ignore", "any", "critical", "kev", "fixable"]
 
 _SEVERITY_ORDER = {"medium": 1, "high": 2}
 
@@ -22,6 +30,7 @@ class PolicySettings:
     require_expected_repository_match: bool = False
     vulnerability_mode: VulnerabilityMode = "ignore"
     fail_on_severity: SeverityLevel = "none"
+    suppressions: list[VulnerabilitySuppression] = field(default_factory=list)
 
 
 BUILTIN_POLICIES: dict[str, PolicySettings] = {
@@ -65,13 +74,25 @@ def advisory_evaluation_for(report: TrustReport) -> PolicyEvaluation:
         require_expected_repository_match=False,
         allow_metadata_only=True,
         vulnerability_mode="ignore",
+        suppressions_applied=0,
+        suppressions_expired=0,
         violations=violations,
     )
     return report.policy
 
 
-def evaluate_policy(report: TrustReport, settings: PolicySettings) -> PolicyEvaluation:
+def evaluate_policy(
+    report: TrustReport,
+    settings: PolicySettings,
+    *,
+    now: datetime | None = None,
+) -> PolicyEvaluation:
     violations: list[PolicyViolation] = []
+    suppressions_applied, suppressions_expired = _apply_suppressions(
+        report.vulnerabilities,
+        settings.suppressions,
+        now=now,
+    )
 
     if settings.require_verified_provenance == "all":
         if not report.files:
@@ -120,15 +141,34 @@ def evaluate_policy(report: TrustReport, settings: PolicySettings) -> PolicyEval
                 if flag.code in matching_codes
             )
 
-    if settings.vulnerability_mode == "any" and report.vulnerabilities:
+    blocked_vulnerabilities = [
+        vulnerability
+        for vulnerability in report.vulnerabilities
+        if _vulnerability_is_blocked(
+            vulnerability,
+            mode=settings.vulnerability_mode,
+        )
+    ]
+    if blocked_vulnerabilities:
+        codes = {
+            "any": "vulnerabilities_blocked",
+            "critical": "critical_vulnerabilities_blocked",
+            "kev": "kev_vulnerabilities_blocked",
+            "fixable": "fixable_vulnerabilities_blocked",
+        }
         violations.append(
             PolicyViolation(
-                code="vulnerabilities_blocked",
+                code=codes[settings.vulnerability_mode],
                 severity="high",
                 message=(
-                    "Policy blocks releases with any known vulnerabilities; "
-                    "configured advisory sources reported "
-                    f"{len(report.vulnerabilities)} vulnerability record(s)."
+                    f"Policy vulnerability mode {settings.vulnerability_mode!r} "
+                    f"blocks {len(blocked_vulnerabilities)} active, unsuppressed "
+                    "vulnerability record(s): "
+                    + ", ".join(
+                        vulnerability.id
+                        for vulnerability in blocked_vulnerabilities[:5]
+                    )
+                    + ("." if len(blocked_vulnerabilities) <= 5 else ", ...")
                 ),
             )
         )
@@ -136,7 +176,11 @@ def evaluate_policy(report: TrustReport, settings: PolicySettings) -> PolicyEval
     if settings.fail_on_severity != "none":
         violations.extend(
             _violations_from_flags(
-                report.risk_flags,
+                [
+                    flag
+                    for flag in report.risk_flags
+                    if flag.code != "known_vulnerabilities"
+                ],
                 minimum=settings.fail_on_severity,
             )
         )
@@ -159,6 +203,8 @@ def evaluate_policy(report: TrustReport, settings: PolicySettings) -> PolicyEval
         require_expected_repository_match=settings.require_expected_repository_match,
         allow_metadata_only=settings.allow_metadata_only,
         vulnerability_mode=settings.vulnerability_mode,
+        suppressions_applied=suppressions_applied,
+        suppressions_expired=suppressions_expired,
         violations=_dedupe_violations(violations),
     )
     report.policy = evaluation
@@ -179,6 +225,9 @@ def policy_from_mapping(mapping: dict[str, Any], *, profile: str | None = None) 
         raise ValueError(f"unknown policy setting(s): {', '.join(unknown)}")
 
     data = dict(mapping)
+    raw_suppressions = data.get("suppressions")
+    if raw_suppressions is not None:
+        data["suppressions"] = _parse_suppressions(raw_suppressions)
     if profile is not None:
         data["profile"] = profile
 
@@ -215,10 +264,171 @@ def _policy_data(settings: PolicySettings) -> dict[str, Any]:
 def _validate_policy_settings(settings: PolicySettings) -> None:
     if settings.require_verified_provenance not in {"none", "all"}:
         raise ValueError("require_verified_provenance must be 'none' or 'all'")
-    if settings.vulnerability_mode not in {"ignore", "any"}:
-        raise ValueError("vulnerability_mode must be 'ignore' or 'any'")
+    if settings.vulnerability_mode not in {
+        "ignore",
+        "any",
+        "critical",
+        "kev",
+        "fixable",
+    }:
+        raise ValueError(
+            "vulnerability_mode must be 'ignore', 'any', 'critical', "
+            "'kev', or 'fixable'"
+        )
     if settings.fail_on_severity not in {"none", "medium", "high"}:
         raise ValueError("fail_on_severity must be 'none', 'medium', or 'high'")
+    _validate_suppressions(settings.suppressions)
+
+
+def _parse_suppressions(value: object) -> list[VulnerabilitySuppression]:
+    if not isinstance(value, list):
+        raise ValueError("suppressions must be a list")
+    suppressions: list[VulnerabilitySuppression] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError(f"suppressions[{index}] must be an object")
+        allowed = {"id", "vulnerability_id", "owner", "justification", "expires"}
+        unknown = sorted(set(item) - allowed)
+        if unknown:
+            raise ValueError(
+                f"unknown suppression setting(s) at index {index}: "
+                + ", ".join(unknown)
+            )
+        vulnerability_id = item.get("vulnerability_id") or item.get("id")
+        suppressions.append(
+            VulnerabilitySuppression(
+                vulnerability_id=str(vulnerability_id or ""),
+                owner=str(item.get("owner") or ""),
+                justification=str(item.get("justification") or ""),
+                expires=str(item.get("expires") or ""),
+            )
+        )
+    return suppressions
+
+
+def _validate_suppressions(
+    suppressions: list[VulnerabilitySuppression],
+) -> None:
+    seen: set[str] = set()
+    for index, suppression in enumerate(suppressions):
+        identifier = suppression.vulnerability_id.strip().upper()
+        if not identifier:
+            raise ValueError(f"suppressions[{index}].id is required")
+        if identifier in seen:
+            raise ValueError(f"duplicate suppression identifier: {identifier}")
+        seen.add(identifier)
+        if not suppression.owner.strip():
+            raise ValueError(f"suppressions[{index}].owner is required")
+        if not suppression.justification.strip():
+            raise ValueError(
+                f"suppressions[{index}].justification is required"
+            )
+        if not suppression.expires.strip():
+            raise ValueError(f"suppressions[{index}].expires is required")
+        _suppression_expiry(suppression.expires)
+
+
+def _apply_suppressions(
+    vulnerabilities: list[VulnerabilityRecord],
+    suppressions: list[VulnerabilitySuppression],
+    *,
+    now: datetime | None,
+) -> tuple[int, int]:
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
+    applied = 0
+    expired = 0
+    for vulnerability in vulnerabilities:
+        vulnerability.suppression = None
+        identifiers = {
+            identifier.strip().upper()
+            for identifier in [vulnerability.id, *vulnerability.aliases]
+            if identifier.strip()
+        }
+        matching = [
+            suppression
+            for suppression in suppressions
+            if suppression.vulnerability_id.strip().upper() in identifiers
+        ]
+        if not matching:
+            continue
+        active = [
+            suppression
+            for suppression in matching
+            if current < _suppression_expiry(suppression.expires)
+        ]
+        if active:
+            selected = min(active, key=lambda item: _suppression_expiry(item.expires))
+            vulnerability.suppression = replace(selected, status="active")
+            applied += 1
+            continue
+        selected = max(
+            matching,
+            key=lambda item: _suppression_expiry(item.expires),
+        )
+        vulnerability.suppression = replace(selected, status="expired")
+        expired += 1
+    return applied, expired
+
+
+def _suppression_expiry(value: str) -> datetime:
+    normalized = value.strip()
+    if "T" not in normalized and " " not in normalized:
+        try:
+            parsed_date = date.fromisoformat(normalized)
+        except ValueError as exc:
+            raise ValueError(
+                f"suppression expiration must be an ISO date or datetime: {value!r}"
+            ) from exc
+        return datetime.combine(
+            parsed_date + timedelta(days=1),
+            time.min,
+            tzinfo=timezone.utc,
+        )
+    try:
+        parsed_datetime = datetime.fromisoformat(
+            normalized.replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"suppression expiration must be an ISO date or datetime: {value!r}"
+        ) from exc
+    if parsed_datetime.tzinfo is None:
+        parsed_datetime = parsed_datetime.replace(tzinfo=timezone.utc)
+    return parsed_datetime.astimezone(timezone.utc)
+
+
+def _vulnerability_is_blocked(
+    vulnerability: VulnerabilityRecord,
+    *,
+    mode: VulnerabilityMode,
+) -> bool:
+    if (
+        mode == "ignore"
+        or vulnerability.withdrawn
+        or (
+            vulnerability.suppression is not None
+            and vulnerability.suppression.status == "active"
+        )
+    ):
+        return False
+    if mode == "any":
+        return True
+    if mode == "critical":
+        return (
+            (vulnerability.severity or "").upper() == "CRITICAL"
+            or (
+                vulnerability.cvss_score is not None
+                and vulnerability.cvss_score >= 9.0
+            )
+        )
+    if mode == "kev":
+        return vulnerability.kev
+    if mode == "fixable":
+        return bool(vulnerability.fixed_in)
+    return False
 
 
 def _violations_from_flags(

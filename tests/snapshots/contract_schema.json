@@ -597,6 +597,16 @@
           "title": "Require Verified Provenance",
           "type": "string"
         },
+        "suppressions_applied": {
+          "default": 0,
+          "title": "Suppressions Applied",
+          "type": "integer"
+        },
+        "suppressions_expired": {
+          "default": 0,
+          "title": "Suppressions Expired",
+          "type": "integer"
+        },
         "violations": {
           "items": {
             "$ref": "#/$defs/PolicyViolationPayload"
@@ -1123,6 +1133,85 @@
           "title": "Aliases",
           "type": "array"
         },
+        "cvss_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cvss Score"
+        },
+        "cvss_vector": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cvss Vector"
+        },
+        "cvss_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cvss Version"
+        },
+        "cwes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Cwes",
+          "type": "array"
+        },
+        "epss_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Epss Date"
+        },
+        "epss_percentile": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Epss Percentile"
+        },
+        "epss_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Epss Score"
+        },
         "fixed_in": {
           "items": {
             "type": "string"
@@ -1133,6 +1222,59 @@
         "id": {
           "title": "Id",
           "type": "string"
+        },
+        "kev": {
+          "default": false,
+          "title": "Kev",
+          "type": "boolean"
+        },
+        "kev_date_added": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kev Date Added"
+        },
+        "kev_due_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kev Due Date"
+        },
+        "kev_known_ransomware_campaign_use": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kev Known Ransomware Campaign Use"
+        },
+        "kev_required_action": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kev Required Action"
         },
         "link": {
           "anyOf": [
@@ -1173,6 +1315,34 @@
         "summary": {
           "title": "Summary",
           "type": "string"
+        },
+        "suppression": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VulnerabilitySuppressionPayload"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "withdrawn": {
+          "default": false,
+          "title": "Withdrawn",
+          "type": "boolean"
+        },
+        "withdrawn_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Withdrawn At"
         }
       },
       "required": [
@@ -1181,9 +1351,43 @@
       ],
       "title": "VulnerabilityRecordPayload",
       "type": "object"
+    },
+    "VulnerabilitySuppressionPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "expires": {
+          "title": "Expires",
+          "type": "string"
+        },
+        "justification": {
+          "title": "Justification",
+          "type": "string"
+        },
+        "owner": {
+          "title": "Owner",
+          "type": "string"
+        },
+        "status": {
+          "default": "configured",
+          "title": "Status",
+          "type": "string"
+        },
+        "vulnerability_id": {
+          "title": "Vulnerability Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vulnerability_id",
+        "owner",
+        "justification",
+        "expires"
+      ],
+      "title": "VulnerabilitySuppressionPayload",
+      "type": "object"
     }
   },
-  "$id": "urn:trustcheck:report:1.5.0",
+  "$id": "urn:trustcheck:report:1.6.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -1191,8 +1395,8 @@
       "$ref": "#/$defs/TrustReportPayload"
     },
     "schema_version": {
-      "const": "1.5.0",
-      "default": "1.5.0",
+      "const": "1.6.0",
+      "default": "1.6.0",
       "title": "Schema Version",
       "type": "string"
     }

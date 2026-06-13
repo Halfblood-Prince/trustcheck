@@ -49,6 +49,8 @@
       "profile": "default",
       "require_expected_repository_match": false,
       "require_verified_provenance": "none",
+      "suppressions_applied": 0,
+      "suppressions_expired": 0,
       "violations": [],
       "vulnerability_mode": "ignore"
     },
@@ -81,5 +83,5 @@
     "version": "0.0.1",
     "vulnerabilities": []
   },
-  "schema_version": "1.5.0"
+  "schema_version": "1.6.0"
 }

@@ -24,10 +24,27 @@ from trustcheck.github_action import (
 
 def report_payload(*, recommendation: str = "verified", policy_passed: bool = True):
     return {
-        "schema_version": "1.5.0",
+        "schema_version": "1.6.0",
         "report": {
             "policy": {"passed": policy_passed},
             "recommendation": recommendation,
+        },
+    }
+
+
+def complete_report_payload(
+    *,
+    recommendation: str = "verified",
+    policy_passed: bool = True,
+):
+    return {
+        "schema_version": "1.6.0",
+        "report": {
+            "project": "sampleproject",
+            "version": "4.0.0",
+            "package_url": "https://pypi.org/project/sampleproject/4.0.0/",
+            "recommendation": recommendation,
+            "policy": {"passed": policy_passed},
         },
     }
 
@@ -43,6 +60,10 @@ class GitHubActionTests(unittest.TestCase):
                 policy="policy.json",
                 expected_repo="https://github.com/pypa/sampleproject",
                 with_osv=True,
+                osv_urls=("https://osv.internal.example",),
+                with_ecosystems=True,
+                with_kev=True,
+                with_epss=True,
                 with_transitive_deps=True,
                 inspect_artifacts=True,
                 index_url="https://packages.example/simple",
@@ -58,6 +79,11 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("https://github.com/pypa/sampleproject", arguments)
         self.assertIn("--policy-file", arguments)
         self.assertIn("--with-osv", arguments)
+        self.assertIn("--osv-url", arguments)
+        self.assertIn("https://osv.internal.example", arguments)
+        self.assertIn("--with-ecosystems", arguments)
+        self.assertIn("--with-kev", arguments)
+        self.assertIn("--with-epss", arguments)
         self.assertIn("--with-transitive-deps", arguments)
         self.assertIn("--inspect-artifacts", arguments)
         self.assertIn("--index-url", arguments)
@@ -121,10 +147,6 @@ class GitHubActionTests(unittest.TestCase):
 
             cases = [
                 (
-                    ActionSettings(target="sampleproject", output_format="sarif"),
-                    "format",
-                ),
-                (
                     ActionSettings(
                         target="sampleproject",
                         keyring_provider="unknown",
@@ -145,6 +167,10 @@ class GitHubActionTests(unittest.TestCase):
                 (
                     ActionSettings(target="sampleproject", policy="missing.json"),
                     "policy",
+                ),
+                (
+                    ActionSettings(target="sampleproject", output_format="unknown"),
+                    "format",
                 ),
             ]
             for settings, message in cases:
@@ -314,9 +340,61 @@ class GitHubActionTests(unittest.TestCase):
             report_payload(),
         )
 
+    def test_action_writes_sarif_without_repeating_the_audit(self) -> None:
+        calls = 0
+
+        def passing_runner(arguments):
+            nonlocal calls
+            calls += 1
+            self.assertEqual(arguments[-2:], ["--format", "json"])
+            print(json.dumps(complete_report_payload()))
+            return EXIT_OK
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            result = run_action(
+                ActionSettings(
+                    target="sampleproject",
+                    output_format="sarif",
+                    report_path="reports/trustcheck.sarif",
+                ),
+                workspace=workspace,
+                runner=passing_runner,
+            )
+            sarif = json.loads(result.report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(sarif["version"], "2.1.0")
+        self.assertIn("runs", sarif)
+        self.assertEqual(result.recommendation, "verified")
+
+    def test_action_reports_openvex_conversion_without_vulnerabilities(self) -> None:
+        def passing_runner(arguments):
+            print(json.dumps(complete_report_payload()))
+            return EXIT_OK
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            result = run_action(
+                ActionSettings(
+                    target="sampleproject",
+                    output_format="openvex",
+                    report_path="reports/trustcheck.openvex.json",
+                ),
+                workspace=workspace,
+                runner=passing_runner,
+            )
+            payload = json.loads(
+                result.report_path.read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(result.exit_code, EXIT_DATA_ERROR)
+        self.assertEqual(result.recommendation, "error")
+        self.assertIn("requires at least one", payload["action_error"]["message"])
+
     def test_action_metadata_uploads_before_enforcing_cli_exit_code(self) -> None:
         action = Path("action.yml").read_text(encoding="utf-8")
-        upload_position = action.index("- name: Upload trustcheck JSON report")
+        upload_position = action.index("- name: Upload trustcheck report")
         enforcement_position = action.index("- name: Enforce trustcheck result")
 
         self.assertTrue(action.startswith("name: TrustCheck Package Scanner\n"))
@@ -369,6 +447,12 @@ class GitHubActionTests(unittest.TestCase):
             {
                 "TRUSTCHECK_ACTION_TARGET": "sampleproject",
                 "TRUSTCHECK_ACTION_WITH_OSV": "TRUE",
+                "TRUSTCHECK_ACTION_OSV_URLS": (
+                    "https://osv-one.example\nhttps://osv-two.example"
+                ),
+                "TRUSTCHECK_ACTION_WITH_ECOSYSTEMS": "true",
+                "TRUSTCHECK_ACTION_WITH_KEV": "true",
+                "TRUSTCHECK_ACTION_WITH_EPSS": "true",
                 "TRUSTCHECK_ACTION_INDEX_URL": "https://packages.example/simple",
                 "TRUSTCHECK_ACTION_EXTRA_INDEX_URLS": (
                     "https://mirror-one.example/simple\n"
@@ -381,6 +465,13 @@ class GitHubActionTests(unittest.TestCase):
 
         self.assertTrue(settings.with_osv)
         self.assertEqual(
+            settings.osv_urls,
+            ("https://osv-one.example", "https://osv-two.example"),
+        )
+        self.assertTrue(settings.with_ecosystems)
+        self.assertTrue(settings.with_kev)
+        self.assertTrue(settings.with_epss)
+        self.assertEqual(
             settings.extra_index_urls,
             (
                 "https://mirror-one.example/simple",
@@ -389,6 +480,23 @@ class GitHubActionTests(unittest.TestCase):
         )
         self.assertEqual(settings.keyring_provider, "subprocess")
         self.assertTrue(settings.allow_dependency_confusion)
+
+    def test_environment_derives_report_extension_from_format(self) -> None:
+        settings = ActionSettings.from_environment(
+            {
+                "TRUSTCHECK_ACTION_TARGET": "sampleproject",
+                "TRUSTCHECK_ACTION_FORMAT": "cyclonedx-xml",
+            }
+        )
+
+        self.assertEqual(settings.report_path, "trustcheck-report.cdx.xml")
+        with self.assertRaisesRegex(ActionInputError, "format"):
+            ActionSettings.from_environment(
+                {
+                    "TRUSTCHECK_ACTION_TARGET": "sampleproject",
+                    "TRUSTCHECK_ACTION_FORMAT": "unknown",
+                }
+            )
 
     def test_missing_target_is_reported_by_main(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

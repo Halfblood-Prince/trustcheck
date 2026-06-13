@@ -14,14 +14,38 @@ class RiskFlag:
 
 
 @dataclass(slots=True)
+class VulnerabilitySuppression:
+    vulnerability_id: str
+    owner: str
+    justification: str
+    expires: str
+    status: str = "configured"
+
+
+@dataclass(slots=True)
 class VulnerabilityRecord:
     id: str
     summary: str
     aliases: list[str] = field(default_factory=list)
     source: str | None = None
     severity: str | None = None
+    cvss_score: float | None = None
+    cvss_vector: str | None = None
+    cvss_version: str | None = None
+    cwes: list[str] = field(default_factory=list)
     fixed_in: list[str] = field(default_factory=list)
     link: str | None = None
+    withdrawn: bool = False
+    withdrawn_at: str | None = None
+    kev: bool = False
+    kev_date_added: str | None = None
+    kev_due_date: str | None = None
+    kev_required_action: str | None = None
+    kev_known_ransomware_campaign_use: str | None = None
+    epss_score: float | None = None
+    epss_percentile: float | None = None
+    epss_date: str | None = None
+    suppression: VulnerabilitySuppression | None = None
 
 
 @dataclass(slots=True)
@@ -156,6 +180,8 @@ class PolicyEvaluation:
     require_expected_repository_match: bool = False
     allow_metadata_only: bool = True
     vulnerability_mode: str = "ignore"
+    suppressions_applied: int = 0
+    suppressions_expired: int = 0
     violations: list[PolicyViolation] = field(default_factory=list)
 
 

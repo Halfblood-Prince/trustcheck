@@ -16,6 +16,7 @@ from trustcheck.models import (
     ReleaseDriftSummary,
     RiskFlag,
     VulnerabilityRecord,
+    VulnerabilitySuppression,
 )
 
 SNAPSHOT_DIR = Path(__file__).parent / "snapshots"
@@ -59,8 +60,29 @@ class ContractTests(unittest.TestCase):
                     aliases=["CVE-2026-0001"],
                     source="PyPI",
                     severity="HIGH",
+                    cvss_score=8.8,
+                    cvss_vector=(
+                        "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+                    ),
+                    cvss_version="3.1",
+                    cwes=["CWE-79", "CWE-89"],
                     fixed_in=["1.2.4"],
                     link="https://example.com/advisory",
+                    kev=True,
+                    kev_date_added="2026-05-01",
+                    kev_due_date="2026-05-22",
+                    kev_required_action="Apply the vendor update.",
+                    kev_known_ransomware_campaign_use="Known",
+                    epss_score=0.8123,
+                    epss_percentile=0.9812,
+                    epss_date="2026-06-12",
+                    suppression=VulnerabilitySuppression(
+                        vulnerability_id="CVE-2026-0001",
+                        owner="security@example.com",
+                        justification="Upgrade is scheduled for the next release.",
+                        expires="2026-06-30",
+                        status="active",
+                    ),
                 )
             ],
             files=[

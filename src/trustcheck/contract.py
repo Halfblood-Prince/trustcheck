@@ -1,16 +1,36 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any, Final, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .models import TrustReport
+from .models import (
+    ArtifactDiagnostic,
+    ArtifactInspection,
+    CoverageSummary,
+    DependencyInspection,
+    DependencySummary,
+    FileProvenance,
+    PolicyEvaluation,
+    PolicyViolation,
+    ProvenanceConsistency,
+    PublisherIdentity,
+    PublisherTrustSummary,
+    ReleaseDriftSummary,
+    ReportDiagnostics,
+    RequestFailureDiagnostic,
+    RiskFlag,
+    TrustReport,
+    VulnerabilityRecord,
+    VulnerabilitySuppression,
+)
 
-JSON_SCHEMA_VERSION: Final = "1.5.0"
+JSON_SCHEMA_VERSION: Final = "1.6.0"
 JSON_SCHEMA_ID = f"urn:trustcheck:report:{JSON_SCHEMA_VERSION}"
-SchemaVersion: TypeAlias = Literal["1.5.0"]
-DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.5.0"
+SchemaVersion: TypeAlias = Literal["1.6.0"]
+DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.6.0"
 
 
 class RiskFlagPayload(BaseModel):
@@ -23,6 +43,16 @@ class RiskFlagPayload(BaseModel):
     remediation: list[str] = Field(default_factory=list)
 
 
+class VulnerabilitySuppressionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    vulnerability_id: str
+    owner: str
+    justification: str
+    expires: str
+    status: str = "configured"
+
+
 class VulnerabilityRecordPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -31,8 +61,23 @@ class VulnerabilityRecordPayload(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     source: str | None = None
     severity: str | None = None
+    cvss_score: float | None = None
+    cvss_vector: str | None = None
+    cvss_version: str | None = None
+    cwes: list[str] = Field(default_factory=list)
     fixed_in: list[str] = Field(default_factory=list)
     link: str | None = None
+    withdrawn: bool = False
+    withdrawn_at: str | None = None
+    kev: bool = False
+    kev_date_added: str | None = None
+    kev_due_date: str | None = None
+    kev_required_action: str | None = None
+    kev_known_ransomware_campaign_use: str | None = None
+    epss_score: float | None = None
+    epss_percentile: float | None = None
+    epss_date: str | None = None
+    suppression: VulnerabilitySuppressionPayload | None = None
 
 
 class PublisherIdentityPayload(BaseModel):
@@ -178,6 +223,8 @@ class PolicyEvaluationPayload(BaseModel):
     require_expected_repository_match: bool = False
     allow_metadata_only: bool = True
     vulnerability_mode: str = "ignore"
+    suppressions_applied: int = 0
+    suppressions_expired: int = 0
     violations: list[PolicyViolationPayload] = Field(default_factory=list)
 
 
@@ -275,6 +322,92 @@ def serialize_report(report: TrustReport) -> dict[str, Any]:
         "report": asdict(report),
     }
     return TrustReportEnvelopePayload.model_validate(payload).model_dump(mode="json")
+
+
+def deserialize_report(payload: Mapping[str, object]) -> TrustReport:
+    data = TrustReportPayload.model_validate(payload).model_dump(mode="python")
+    vulnerabilities_data = data.pop("vulnerabilities")
+    files = [
+        FileProvenance(
+            **{
+                **item,
+                "publisher_identities": [
+                    PublisherIdentity(**identity)
+                    for identity in item["publisher_identities"]
+                ],
+                "artifact": ArtifactInspection(**item["artifact"]),
+            }
+        )
+        for item in data.pop("files")
+    ]
+    coverage_data = data.pop("coverage")
+    publisher_trust_data = data.pop("publisher_trust")
+    consistency_data = data.pop("provenance_consistency")
+    release_drift_data = data.pop("release_drift")
+    dependencies = [
+        DependencyInspection(
+            **{
+                **item,
+                "risk_flags": [
+                    RiskFlag(**risk_flag)
+                    for risk_flag in item["risk_flags"]
+                ],
+            }
+        )
+        for item in data.pop("dependencies")
+    ]
+    dependency_summary_data = data.pop("dependency_summary")
+    risk_flags_data = data.pop("risk_flags")
+    policy_data = data.pop("policy")
+    diagnostics_data = data.pop("diagnostics")
+    return TrustReport(
+        **data,
+        vulnerabilities=[
+            VulnerabilityRecord(
+                **{
+                    **item,
+                    "suppression": (
+                        VulnerabilitySuppression(**item["suppression"])
+                        if item["suppression"] is not None
+                        else None
+                    ),
+                }
+            )
+            for item in vulnerabilities_data
+        ],
+        files=files,
+        coverage=CoverageSummary(**coverage_data),
+        publisher_trust=PublisherTrustSummary(**publisher_trust_data),
+        provenance_consistency=ProvenanceConsistency(**consistency_data),
+        release_drift=ReleaseDriftSummary(**release_drift_data),
+        dependencies=dependencies,
+        dependency_summary=DependencySummary(**dependency_summary_data),
+        risk_flags=[
+            RiskFlag(**item) for item in risk_flags_data
+        ],
+        policy=PolicyEvaluation(
+            **{
+                **policy_data,
+                "violations": [
+                    PolicyViolation(**item)
+                    for item in policy_data["violations"]
+                ],
+            }
+        ),
+        diagnostics=ReportDiagnostics(
+            **{
+                **diagnostics_data,
+                "request_failures": [
+                    RequestFailureDiagnostic(**item)
+                    for item in diagnostics_data["request_failures"]
+                ],
+                "artifact_failures": [
+                    ArtifactDiagnostic(**item)
+                    for item in diagnostics_data["artifact_failures"]
+                ],
+            }
+        ),
+    )
 
 
 def get_json_schema() -> dict[str, Any]:

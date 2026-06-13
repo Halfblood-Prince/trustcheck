@@ -22,6 +22,22 @@ inputs:
     description: Query OSV for additional vulnerability records.
     required: false
     default: "false"
+  osv-urls:
+    description: Whitespace- or newline-separated custom OSV-compatible API base URLs.
+    required: false
+    default: ""
+  with-ecosystems:
+    description: Query the Ecosyste.ms OSV-compatible advisory service.
+    required: false
+    default: "false"
+  with-kev:
+    description: Enrich CVEs with the CISA Known Exploited Vulnerabilities catalog.
+    required: false
+    default: "false"
+  with-epss:
+    description: Enrich CVEs with FIRST EPSS scores and percentiles.
+    required: false
+    default: "false"
   with-deps:
     description: Inspect direct runtime dependencies.
     required: false
@@ -51,13 +67,13 @@ inputs:
     required: false
     default: "false"
   format:
-    description: Log output format (text or json; SARIF is reserved for a later release).
+    description: Report format (text, json, sarif, cyclonedx-json, cyclonedx-xml, spdx-json, openvex, or markdown).
     required: false
     default: text
   report-path:
-    description: JSON report path, relative to the caller workspace unless absolute.
+    description: Report path relative to the caller workspace; defaults to an extension appropriate for the selected format.
     required: false
-    default: trustcheck-report.json
+    default: ""
   artifact-name:
     description: Name of the uploaded workflow artifact.
     required: false
@@ -75,7 +91,7 @@ outputs:
     description: Whether the configured trustcheck policy passed.
     value: ${{ steps.trustcheck.outputs['policy-passed'] }}
   report-path:
-    description: Absolute path to the generated JSON report.
+    description: Absolute path to the generated report.
     value: ${{ steps.trustcheck.outputs['report-path'] }}
 
 runs:
@@ -99,6 +115,10 @@ runs:
         TRUSTCHECK_ACTION_POLICY: ${{ inputs.policy }}
         TRUSTCHECK_ACTION_EXPECTED_REPO: ${{ inputs['expected-repo'] }}
         TRUSTCHECK_ACTION_WITH_OSV: ${{ inputs['with-osv'] }}
+        TRUSTCHECK_ACTION_OSV_URLS: ${{ inputs['osv-urls'] }}
+        TRUSTCHECK_ACTION_WITH_ECOSYSTEMS: ${{ inputs['with-ecosystems'] }}
+        TRUSTCHECK_ACTION_WITH_KEV: ${{ inputs['with-kev'] }}
+        TRUSTCHECK_ACTION_WITH_EPSS: ${{ inputs['with-epss'] }}
         TRUSTCHECK_ACTION_WITH_DEPS: ${{ inputs['with-deps'] }}
         TRUSTCHECK_ACTION_WITH_TRANSITIVE_DEPS: ${{ inputs['with-transitive-deps'] }}
         TRUSTCHECK_ACTION_INSPECT_ARTIFACTS: ${{ inputs['inspect-artifacts'] }}
@@ -110,7 +130,7 @@ runs:
         TRUSTCHECK_ACTION_REPORT_PATH: ${{ inputs['report-path'] }}
       run: python -m trustcheck.github_action
 
-    - name: Upload trustcheck JSON report
+    - name: Upload trustcheck report
       if: always() && steps.trustcheck.outputs['report-path'] != ''
       uses: actions/upload-artifact@v7
       with:

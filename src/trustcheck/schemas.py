@@ -28,8 +28,13 @@ class VulnerabilityPayload(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     source: str | None = None
     severity: str | None = None
+    cvss_score: float | None = None
+    cvss_vector: str | None = None
+    cwes: list[str] = Field(default_factory=list)
     fixed_in: list[str] = Field(default_factory=list)
     link: str | None = None
+    withdrawn: bool = False
+    withdrawn_at: str | None = None
 
 
 class RolePayload(BaseModel):

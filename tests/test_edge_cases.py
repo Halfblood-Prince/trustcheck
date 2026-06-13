@@ -9,6 +9,7 @@ import types
 import unittest
 from argparse import Namespace
 from contextlib import redirect_stderr
+from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import patch
@@ -38,6 +39,8 @@ from trustcheck.models import (
 )
 from trustcheck.policy import (
     PolicySettings,
+    _suppression_expiry,
+    _vulnerability_is_blocked,
     evaluate_policy,
     load_policy_file,
     policy_from_mapping,
@@ -345,7 +348,7 @@ class PolicyCoverageTests(unittest.TestCase):
             policy_from_mapping({"require_verified_provenance": "sometimes"})
 
         with self.assertRaisesRegex(ValueError, "vulnerability_mode"):
-            policy_from_mapping({"vulnerability_mode": "critical"})
+            policy_from_mapping({"vulnerability_mode": "sometimes"})
 
         with self.assertRaisesRegex(ValueError, "fail_on_severity"):
             policy_from_mapping({"fail_on_severity": "low"})
@@ -387,6 +390,340 @@ class PolicyCoverageTests(unittest.TestCase):
             [item.code for item in evaluation.violations],
             ["vulnerabilities_blocked", "publisher_repository_drift"],
         )
+
+    def test_vulnerability_modes_and_expiring_suppressions(self) -> None:
+        vulnerability = VulnerabilityRecord(
+            id="GHSA-demo",
+            summary="Critical exploited vulnerability",
+            aliases=["CVE-2026-1000"],
+            severity="CRITICAL",
+            cvss_score=9.8,
+            fixed_in=["2.2.1"],
+            kev=True,
+        )
+        report = TrustReport(
+            project="gridoptim",
+            version="2.2.0",
+            summary=None,
+            package_url="https://pypi.org/project/gridoptim/2.2.0/",
+            vulnerabilities=[vulnerability],
+        )
+        settings = policy_from_mapping({
+            "vulnerability_mode": "kev",
+            "suppressions": [
+                {
+                    "id": "CVE-2026-1000",
+                    "owner": "security@example.com",
+                    "justification": "Compensating control is deployed.",
+                    "expires": "2026-06-30",
+                }
+            ],
+        })
+
+        active = evaluate_policy(
+            report,
+            settings,
+            now=datetime(2026, 6, 13, tzinfo=timezone.utc),
+        )
+        self.assertTrue(active.passed)
+        self.assertEqual(active.suppressions_applied, 1)
+        self.assertEqual(vulnerability.suppression.status, "active")
+
+        expired = evaluate_policy(
+            report,
+            settings,
+            now=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        )
+        self.assertFalse(expired.passed)
+        self.assertEqual(expired.suppressions_expired, 1)
+        self.assertEqual(
+            expired.violations[0].code,
+            "kev_vulnerabilities_blocked",
+        )
+        self.assertEqual(vulnerability.suppression.status, "expired")
+
+        for mode, code in (
+            ("critical", "critical_vulnerabilities_blocked"),
+            ("fixable", "fixable_vulnerabilities_blocked"),
+        ):
+            with self.subTest(mode=mode):
+                evaluation = evaluate_policy(
+                    report,
+                    PolicySettings(vulnerability_mode=mode),
+                )
+                self.assertEqual(evaluation.violations[0].code, code)
+
+    def test_suppression_validation_requires_accountability_and_expiry(self) -> None:
+        cases = [
+            ({}, "id is required"),
+            ({"id": "CVE-1"}, "owner is required"),
+            (
+                {"id": "CVE-1", "owner": "team"},
+                "justification is required",
+            ),
+            (
+                {
+                    "id": "CVE-1",
+                    "owner": "team",
+                    "justification": "temporary",
+                },
+                "expires is required",
+            ),
+            (
+                {
+                    "id": "CVE-1",
+                    "owner": "team",
+                    "justification": "temporary",
+                    "expires": "forever",
+                },
+                "ISO date",
+            ),
+        ]
+        for suppression, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    policy_from_mapping({"suppressions": [suppression]})
+
+    def test_suppression_structure_duplicates_and_datetime_expiry(self) -> None:
+        invalid = [
+            ("not-a-list", "must be a list"),
+            ([1], "must be an object"),
+            (
+                [
+                    {
+                        "id": "CVE-1",
+                        "owner": "team",
+                        "justification": "temporary",
+                        "expires": "2026-07-01",
+                        "unknown": True,
+                    }
+                ],
+                "unknown suppression",
+            ),
+            (
+                [
+                    {
+                        "id": "CVE-1",
+                        "owner": "team",
+                        "justification": "temporary",
+                        "expires": "2026-07-01",
+                    },
+                    {
+                        "vulnerability_id": "cve-1",
+                        "owner": "team",
+                        "justification": "duplicate",
+                        "expires": "2026-08-01",
+                    },
+                ],
+                "duplicate suppression",
+            ),
+            (
+                [
+                    {
+                        "id": "CVE-1",
+                        "owner": "team",
+                        "justification": "temporary",
+                        "expires": "2026-06-31T12:00:00Z",
+                    }
+                ],
+                "ISO date",
+            ),
+        ]
+        for suppressions, message in invalid:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    policy_from_mapping({"suppressions": suppressions})
+
+        self.assertEqual(
+            _suppression_expiry("2026-06-30T12:00:00"),
+            datetime(2026, 6, 30, 12, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            _suppression_expiry("2026-06-30 14:00:00+02:00"),
+            datetime(2026, 6, 30, 12, tzinfo=timezone.utc),
+        )
+
+    def test_policy_repository_matching_naive_time_and_nonblocking_modes(self) -> None:
+        report = TrustReport(
+            project="gridoptim",
+            version="2.2.0",
+            summary=None,
+            package_url="https://pypi.org/project/gridoptim/2.2.0/",
+            expected_repository="https://github.com/example/gridoptim",
+            vulnerabilities=[
+                VulnerabilityRecord(
+                    id="CVE-2026-1",
+                    summary="withdrawn",
+                    withdrawn=True,
+                ),
+                VulnerabilityRecord(
+                    id="CVE-2026-2",
+                    summary="low",
+                    severity="LOW",
+                ),
+            ],
+            risk_flags=[
+                RiskFlag(
+                    code="expected_repository_mismatch",
+                    severity="high",
+                    message="Repository mismatch.",
+                )
+            ],
+        )
+        settings = policy_from_mapping(
+            {
+                "require_expected_repository_match": True,
+                "vulnerability_mode": "critical",
+                "suppressions": [
+                    {
+                        "id": "CVE-2026-2",
+                        "owner": "security",
+                        "justification": "temporary",
+                        "expires": "2026-07-01T00:00:00Z",
+                    }
+                ],
+            }
+        )
+
+        evaluation = evaluate_policy(
+            report,
+            settings,
+            now=datetime(2026, 6, 13),
+        )
+
+        self.assertEqual(
+            [violation.code for violation in evaluation.violations],
+            ["expected_repository_mismatch"],
+        )
+        self.assertEqual(evaluation.suppressions_applied, 1)
+        self.assertFalse(
+            _vulnerability_is_blocked(
+                report.vulnerabilities[0],
+                mode="any",
+            )
+        )
+        self.assertFalse(
+            _vulnerability_is_blocked(
+                report.vulnerabilities[1],
+                mode="kev",
+            )
+        )
+        self.assertFalse(
+            _vulnerability_is_blocked(
+                report.vulnerabilities[1],
+                mode="fixable",
+            )
+        )
+        self.assertFalse(
+            _vulnerability_is_blocked(
+                report.vulnerabilities[1],
+                mode="ignore",
+            )
+        )
+        self.assertFalse(
+            _vulnerability_is_blocked(
+                report.vulnerabilities[1],
+                mode="invalid",  # type: ignore[arg-type]
+            )
+        )
+
+    def test_resolve_policy_merges_file_and_cli_overrides(self) -> None:
+        path = SCRATCH_ROOT / "policy_merge.json"
+        self.addCleanup(path.unlink, missing_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "profile": "file-policy",
+                    "vulnerability_mode": "critical",
+                    "allow_metadata_only": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        settings = resolve_policy(
+            builtin_name="default",
+            config_path=str(path),
+            cli_overrides={
+                "vulnerability_mode": "kev",
+                "fail_on_severity": None,
+            },
+        )
+
+        self.assertEqual(settings.profile, "file-policy")
+        self.assertEqual(settings.vulnerability_mode, "kev")
+        self.assertFalse(settings.allow_metadata_only)
+
+        unchanged = resolve_policy(
+            builtin_name="default",
+            cli_overrides={"vulnerability_mode": None},
+        )
+        self.assertEqual(unchanged.vulnerability_mode, "ignore")
+
+    def test_policy_message_truncates_long_vulnerability_lists(self) -> None:
+        report = TrustReport(
+            project="gridoptim",
+            version="2.2.0",
+            summary=None,
+            package_url="https://pypi.org/project/gridoptim/2.2.0/",
+            vulnerabilities=[
+                VulnerabilityRecord(id=f"CVE-2026-{index}", summary="issue")
+                for index in range(6)
+            ],
+        )
+
+        evaluation = evaluate_policy(
+            report,
+            PolicySettings(vulnerability_mode="any"),
+        )
+
+        self.assertIn(", ...", evaluation.violations[0].message)
+
+    def test_suppression_controls_vulnerability_policy_not_legacy_risk_flag(
+        self,
+    ) -> None:
+        vulnerability = VulnerabilityRecord(
+            id="CVE-2026-1000",
+            summary="Known vulnerability",
+            severity="critical",
+        )
+        report = TrustReport(
+            project="gridoptim",
+            version="2.2.0",
+            summary=None,
+            package_url="https://pypi.org/project/gridoptim/2.2.0/",
+            vulnerabilities=[vulnerability],
+            risk_flags=[
+                RiskFlag(
+                    code="known_vulnerabilities",
+                    severity="high",
+                    message="Known vulnerability.",
+                )
+            ],
+        )
+        settings = policy_from_mapping(
+            {
+                "vulnerability_mode": "critical",
+                "fail_on_severity": "high",
+                "suppressions": [
+                    {
+                        "id": "CVE-2026-1000",
+                        "owner": "security",
+                        "justification": "Compensating control.",
+                        "expires": "2026-06-30",
+                    }
+                ],
+            }
+        )
+
+        evaluation = evaluate_policy(
+            report,
+            settings,
+            now=datetime(2026, 6, 13, tzinfo=timezone.utc),
+        )
+
+        self.assertTrue(evaluation.passed)
+        self.assertEqual(evaluation.suppressions_applied, 1)
 
 
 class PypiCoverageTests(unittest.TestCase):

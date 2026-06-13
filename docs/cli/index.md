@@ -28,10 +28,16 @@ trustcheck --version
 
 - `--version`: inspect a specific release instead of the latest project version
 - `--expected-repo`: require repository evidence to match an expected GitHub or GitLab repository
-- `--format text|json`: choose human-readable text or machine-readable JSON
+- `--format FORMAT`: choose `text`, `json`, `sarif`, `cyclonedx-json`,
+  `cyclonedx-xml`, `spdx-json`, `openvex`, or `markdown`
+- `--output-file PATH`: write the rendered report to a file and suppress stdout
 - `--verbose`: include per-file provenance, digest, publisher, and note fields in text output
 - `--cve`: show only the known vulnerability records reported for the selected release
-- `--with-osv`: enrich PyPI vulnerability records with OSV and GitHub Advisory Database data
+- `--with-osv`: query the public OSV API
+- `--osv-url URL`: query an additional OSV-compatible API; repeatable
+- `--with-ecosystems`: query the Ecosyste.ms OSV-compatible API
+- `--with-kev`: enrich CVEs from the CISA Known Exploited Vulnerabilities catalog
+- `--with-epss`: enrich CVEs with FIRST EPSS probability and percentile scores
 - `--with-deps`: inspect direct runtime dependencies and summarize the highest-risk dependency
 - `--with-transitive-deps`: inspect direct and transitive runtime dependencies recursively
 - `--inspect-artifacts`: statically inspect downloaded wheels and sdists
@@ -72,7 +78,7 @@ JSON output.
 - `--allow-metadata-only`
 - `--disallow-metadata-only`
 - `--require-expected-repo-match`
-- `--fail-on-vulnerability ignore|any`
+- `--fail-on-vulnerability ignore|any|critical|kev|fixable`
 - `--fail-on-risk-severity none|medium|high`
 
 ## Network and diagnostics flags
@@ -104,6 +110,38 @@ Query OSV in addition to PyPI and show source, severity, fixes, and advisory lin
 
 ```bash
 trustcheck inspect jinja2 --version 2.10.0 --with-osv --cve
+```
+
+Query all built-in advisory providers and enrich CVE aliases:
+
+```bash
+trustcheck inspect jinja2 \
+  --version 2.10.0 \
+  --with-osv \
+  --with-ecosystems \
+  --with-kev \
+  --with-epss \
+  --cve
+```
+
+The OSV-compatible providers run concurrently and merge deterministically with
+PyPI records. A provider or enrichment failure is an operational failure rather
+than silently returning partial intelligence.
+
+The config file can enable the same services and override enrichment endpoints:
+
+```json
+{
+  "advisories": {
+    "osv": true,
+    "osv_urls": ["https://advisories.example.com"],
+    "ecosystems": true,
+    "kev": true,
+    "kev_url": "https://www.cisa.gov/example/known_exploited.json",
+    "epss": true,
+    "epss_url": "https://api.first.org/data/v1/epss"
+  }
+}
 ```
 
 Run with strict policy:
@@ -202,9 +240,9 @@ trustcheck scan requirements.txt \
   --keyring-provider subprocess
 ```
 
-The `import` provider requires `pip install "trustcheck[keyring]"`. As with
-pip, `auto` does not query keyring while non-interactive resolution uses
-`--no-input`; select `import` or `subprocess` explicitly when required.
+The `import` provider requires `pip install "trustcheck[keyring]"`. `auto`
+tries the installed Python keyring and then the keyring CLI when available;
+select `disabled`, `import`, or `subprocess` for deterministic behavior.
 
 Audit installed distributions:
 
@@ -222,6 +260,32 @@ Scan a requirements-style file and emit JSON:
 ```bash
 trustcheck scan requirements.txt --format json
 ```
+
+Emit SARIF with stable fingerprints and dependency-manifest locations:
+
+```bash
+trustcheck scan requirements.txt \
+  --format sarif \
+  --output-file reports/trustcheck.sarif
+```
+
+Emit SBOM, VEX, or Markdown documents:
+
+```bash
+trustcheck scan pylock.toml --format cyclonedx-json \
+  --output-file reports/trustcheck.cdx.json
+trustcheck environment --format cyclonedx-xml \
+  --output-file reports/environment.cdx.xml
+trustcheck scan requirements.txt --format spdx-json \
+  --output-file reports/trustcheck.spdx.json
+trustcheck scan requirements.txt --format openvex \
+  --output-file reports/trustcheck.openvex.json
+trustcheck scan requirements.txt --format markdown \
+  --output-file reports/trustcheck.md
+```
+
+See [Industry output formats](../reference/industry-formats.md) for versioned
+standards, field mappings, and CI guidance.
 
 Inspect artifact contents for a package:
 
@@ -253,7 +317,8 @@ resolved versions, index origins, artifact candidates, and hashes are retained
 for both direct and transitive inspection.
 
 Package releases and the machine-readable report schema are versioned
-independently. Artifact inspection is represented in report schema `1.5.0`.
+independently. Vulnerability Intelligence 2.0 is represented in report schema
+`1.6.0`.
 
 For top-level package analysis, a complete absence of published provenance is typically surfaced as `review-required`. Stronger negative evidence such as failed verification, inconsistent provenance, or known vulnerabilities still drives `high-risk` outcomes.
 
@@ -269,4 +334,9 @@ Use cached responses only:
 trustcheck inspect sampleproject --version 4.0.0 --cache-dir .trustcheck-cache --offline
 ```
 
-When `--cve` is used, `trustcheck` still collects the same package metadata and evaluates policy settings, but the output is reduced to the vulnerability records only. In JSON mode, the output is a minimal object containing `project`, `version`, `package_url`, and `vulnerabilities`. `--with-osv` is opt-in and queries the exact selected package version. Records sharing a CVE or other advisory alias are merged across PyPI and OSV.
+When `--cve` is used, `trustcheck` still collects the same package metadata and
+evaluates policy settings, but the output is reduced to the vulnerability
+records only. In JSON mode, the output is a minimal object containing
+`project`, `version`, `package_url`, and `vulnerabilities`. Advisory providers
+query the exact selected package version. Records sharing a CVE or another
+alias are merged across providers.

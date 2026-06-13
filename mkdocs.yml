@@ -18,6 +18,7 @@ nav:
   - Reference:
       - Python API: reference/python-api.md
       - JSON contract: reference/json-contract.md
+      - Industry output formats: reference/industry-formats.md
       - Compatibility: reference/compatibility.md
       - Trust model and repository matching: reference/trust-model.md
       - Recommendation model: reference/recommendations.md

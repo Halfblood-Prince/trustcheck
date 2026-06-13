@@ -124,6 +124,8 @@
       "profile": "default",
       "require_expected_repository_match": false,
       "require_verified_provenance": "none",
+      "suppressions_applied": 0,
+      "suppressions_expired": 0,
       "violations": [],
       "vulnerability_mode": "ignore"
     },
@@ -183,16 +185,40 @@
         "aliases": [
           "CVE-2026-0001"
         ],
+        "cvss_score": 8.8,
+        "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+        "cvss_version": "3.1",
+        "cwes": [
+          "CWE-79",
+          "CWE-89"
+        ],
+        "epss_date": "2026-06-12",
+        "epss_percentile": 0.9812,
+        "epss_score": 0.8123,
         "fixed_in": [
           "1.2.4"
         ],
         "id": "PYSEC-2026-1",
+        "kev": true,
+        "kev_date_added": "2026-05-01",
+        "kev_due_date": "2026-05-22",
+        "kev_known_ransomware_campaign_use": "Known",
+        "kev_required_action": "Apply the vendor update.",
         "link": "https://example.com/advisory",
         "severity": "HIGH",
         "source": "PyPI",
-        "summary": "Example vuln"
+        "summary": "Example vuln",
+        "suppression": {
+          "expires": "2026-06-30",
+          "justification": "Upgrade is scheduled for the next release.",
+          "owner": "security@example.com",
+          "status": "active",
+          "vulnerability_id": "CVE-2026-0001"
+        },
+        "withdrawn": false,
+        "withdrawn_at": null
       }
     ]
   },
-  "schema_version": "1.5.0"
+  "schema_version": "1.6.0"
 }

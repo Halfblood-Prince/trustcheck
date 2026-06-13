@@ -12,17 +12,17 @@
 
 ## Current schema identifiers
 
-- `JSON_SCHEMA_VERSION = "1.5.0"`
-- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.5.0"`
+- `JSON_SCHEMA_VERSION = "1.6.0"`
+- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.6.0"`
 
-Package versions and report schema versions are independent. Schema `1.5.0`
-adds per-file artifact inspection findings.
+Package versions and report schema versions are independent. Schema `1.6.0`
+adds normalized vulnerability intelligence and auditable suppression state.
 
 ## Top-level shape
 
 ```json
 {
-  "schema_version": "1.5.0",
+  "schema_version": "1.6.0",
   "report": {
     "project": "demo",
     "version": "1.2.3",
@@ -50,6 +50,8 @@ adds per-file artifact inspection findings.
       "require_expected_repository_match": false,
       "allow_metadata_only": true,
       "vulnerability_mode": "ignore",
+      "suppressions_applied": 0,
+      "suppressions_expired": 0,
       "violations": []
     },
     "declared_repository_urls": ["https://github.com/example/demo"],
@@ -59,7 +61,32 @@ adds per-file artifact inspection findings.
       "organization": "example-org",
       "roles": []
     },
-    "vulnerabilities": [],
+    "vulnerabilities": [
+      {
+        "id": "CVE-2026-1234",
+        "summary": "Example vulnerability",
+        "aliases": ["GHSA-abcd-1234-5678"],
+        "source": "PyPI, OSV",
+        "severity": "HIGH",
+        "cvss_score": 8.8,
+        "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+        "cvss_version": "3.1",
+        "cwes": ["CWE-79"],
+        "fixed_in": ["1.2.4"],
+        "link": "https://osv.dev/vulnerability/CVE-2026-1234",
+        "withdrawn": false,
+        "withdrawn_at": null,
+        "kev": true,
+        "kev_date_added": "2026-05-01",
+        "kev_due_date": "2026-05-22",
+        "kev_required_action": "Apply the vendor update.",
+        "kev_known_ransomware_campaign_use": "Known",
+        "epss_score": 0.8123,
+        "epss_percentile": 0.9812,
+        "epss_date": "2026-06-12",
+        "suppression": null
+      }
+    ],
     "files": [],
     "coverage": {
       "total_files": 0,
@@ -142,6 +169,8 @@ entry records:
 - the redacted source index URL
 - every retained lockfile artifact filename, URL, path, size, kind, and hash
 - configured-index collisions in `dependency_confusion`
+- the dependency manifest path and best-effort declaration line in
+  `source_file` and `source_line`
 
 This scan-level metadata does not change the per-package report schema.
 
@@ -174,3 +203,11 @@ print(JSON_SCHEMA_VERSION)
 print(JSON_SCHEMA_ID)
 schema = get_json_schema()
 ```
+
+## Other machine-readable formats
+
+The JSON contract above remains the lossless trustcheck-native envelope.
+Standard exports are available for SARIF 2.1.0, CycloneDX 1.6 JSON/XML,
+SPDX 2.3 JSON, and OpenVEX 0.2.0. See
+[Industry output formats](industry-formats.md) for their mappings and
+stability guarantees.
