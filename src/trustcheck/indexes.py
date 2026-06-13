@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import netrc
 import os
@@ -11,7 +12,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 from urllib import error, parse, request
 
 from packaging.utils import (
@@ -31,6 +32,10 @@ DEFAULT_INDEX_URL = "https://pypi.org/simple"
 KEYRING_PROVIDERS = {"auto", "disabled", "import", "subprocess"}
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 UrlOpener = Callable[..., Any]
+
+
+class _KeyringModule(Protocol):
+    def get_password(self, service: str, username: str) -> str | None: ...
 
 
 class IndexError(RuntimeError):
@@ -312,7 +317,10 @@ class SimpleRepositoryClient:
             return None
         if provider in {"auto", "import"}:
             try:
-                import keyring
+                keyring = cast(
+                    _KeyringModule,
+                    importlib.import_module("keyring"),
+                )
             except ImportError as exc:
                 if provider == "import":
                     raise IndexError(
