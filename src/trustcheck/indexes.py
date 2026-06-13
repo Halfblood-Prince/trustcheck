@@ -5,7 +5,7 @@ import json
 import netrc
 import os
 import re
-import subprocess
+import subprocess  # nosec B404
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -22,6 +22,7 @@ from packaging.utils import (
     parse_wheel_filename,
 )
 
+# Subprocess calls use fixed argv lists and explicitly disable the shell.
 SIMPLE_JSON_ACCEPT = (
     "application/vnd.pypi.simple.v1+json, "
     "application/vnd.pypi.simple.latest+json;q=0.9, text/html;q=0.1"
@@ -346,12 +347,20 @@ class SimpleRepositoryClient:
     ) -> str | None:
         try:
             completed = self.runner(
-                ["keyring", "get", service, username],
+                [
+                    self.python_executable,
+                    "-m",
+                    "keyring",
+                    "get",
+                    service,
+                    username,
+                ],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
                 check=False,
+                shell=False,
             )
         except OSError as exc:
             if not required:

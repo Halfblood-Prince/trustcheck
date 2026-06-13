@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import subprocess
+import subprocess  # nosec B404
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -22,6 +22,7 @@ from .indexes import (
     redact_url_credentials,
 )
 
+# Pip is invoked with a fixed argv list and the shell explicitly disabled.
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
@@ -260,6 +261,7 @@ class PipResolver:
                 encoding="utf-8",
                 errors="replace",
                 check=False,
+                shell=False,
             )
         except OSError as exc:
             raise ResolutionError(f"unable to start pip dependency resolver: {exc}") from exc
