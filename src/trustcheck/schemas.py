@@ -33,8 +33,17 @@ class VulnerabilityPayload(BaseModel):
     cwes: list[str] = Field(default_factory=list)
     fixed_in: list[str] = Field(default_factory=list)
     link: str | None = None
-    withdrawn: bool = False
+    withdrawn: bool | None = False
     withdrawn_at: str | None = None
+
+    @field_validator("aliases", "cwes", "fixed_in", mode="before")
+    @classmethod
+    def normalize_string_lists(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value if item is not None]
 
 
 class RolePayload(BaseModel):

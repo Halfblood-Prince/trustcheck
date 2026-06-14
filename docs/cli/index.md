@@ -46,6 +46,8 @@ trustcheck --version
 - `--strict`: apply the built-in strict policy
 - `--policy default|strict|internal-metadata`: evaluate a built-in policy profile
 - `--policy-file PATH`: load policy settings from a JSON file
+- `--trusted-publisher-organization [PROVIDER:]ORGANIZATION`: require verified
+  publishers to belong to an approved organization; repeatable
 - `scan <filename>`: read a requirements, project TOML, or supported lockfile and inspect each entry
 - `environment`: inspect exact distributions installed in the active
   interpreter, or in repeatable `--path` locations
@@ -80,6 +82,7 @@ JSON output.
 - `--allow-metadata-only`
 - `--disallow-metadata-only`
 - `--require-expected-repo-match`
+- `--trusted-publisher-organization [PROVIDER:]ORGANIZATION`
 - `--fail-on-vulnerability ignore|any|critical|kev|fixable`
 - `--fail-on-risk-severity none|medium|high`
 
@@ -357,8 +360,8 @@ resolved versions, index origins, artifact candidates, and hashes are retained
 for both direct and transitive inspection.
 
 Package releases and the machine-readable report schema are versioned
-independently. Vulnerability Intelligence 2.0 is represented in report schema
-`1.8.0`.
+independently. Deep provenance analysis is represented in report schema
+`1.9.0`.
 
 For top-level package analysis, a complete absence of published provenance is typically surfaced as `review-required`. Stronger negative evidence such as failed verification, inconsistent provenance, or known vulnerabilities still drives `high-risk` outcomes.
 

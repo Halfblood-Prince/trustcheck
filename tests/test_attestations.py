@@ -15,6 +15,7 @@ from sigstore.models import Bundle
 
 from trustcheck.attestations import (
     PYPI_PUBLISH_V1,
+    SLSA_PROVENANCE_V1,
     Attestation,
     ConversionError,
     Distribution,
@@ -38,6 +39,7 @@ def statement(
     filename: str = "sampleproject-4.0.0-py3-none-any.whl",
     digest: str = "abc123",
     predicate_type: str = PYPI_PUBLISH_V1,
+    predicate: dict[str, object] | None = None,
     subjects: list[dict[str, object]] | None = None,
 ) -> bytes:
     payload = {
@@ -46,7 +48,11 @@ def statement(
         if subjects is not None
         else [{"name": filename, "digest": {"sha256": digest}}],
         "predicateType": predicate_type,
-        "predicate": {"repository": "pypa/sampleproject"},
+        "predicate": (
+            {"repository": "pypa/sampleproject"}
+            if predicate is None
+            else predicate
+        ),
     }
     return json.dumps(payload).encode()
 
@@ -286,6 +292,85 @@ class VerificationTests(unittest.TestCase):
     def test_rejects_unknown_attestation_type(self) -> None:
         with self.assertRaisesRegex(VerificationError, "unknown attestation type"):
             self.verify_payload(statement(predicate_type="https://example.com/unknown"))
+
+    def test_verifies_semantically_valid_slsa_provenance(self) -> None:
+        commit = "c27d339ee6075c1f744c5d4b200f7901aad2c369"
+        predicate = {
+            "buildDefinition": {
+                "buildType": (
+                    "https://slsa-framework.github.io/"
+                    "github-actions-buildtypes/workflow/v1"
+                ),
+                "externalParameters": {
+                    "workflow": {
+                        "ref": "refs/tags/v4.0.0",
+                        "repository": "https://github.com/pypa/sampleproject",
+                        "path": "release.yml",
+                    }
+                },
+                "resolvedDependencies": [
+                    {
+                        "uri": (
+                            "git+https://github.com/pypa/sampleproject"
+                            "@refs/tags/v4.0.0"
+                        ),
+                        "digest": {"gitCommit": commit},
+                    }
+                ],
+            },
+            "runDetails": {
+                "builder": {"id": "https://github.com/actions/runner"},
+            },
+        }
+
+        predicate_type, observed = self.verify_payload(
+            statement(
+                predicate_type=SLSA_PROVENANCE_V1,
+                predicate=predicate,
+            )
+        )
+
+        self.assertEqual(predicate_type, SLSA_PROVENANCE_V1)
+        self.assertEqual(observed, predicate)
+
+    def test_rejects_slsa_provenance_for_a_different_source(self) -> None:
+        predicate = {
+            "buildDefinition": {
+                "buildType": (
+                    "https://slsa-framework.github.io/"
+                    "github-actions-buildtypes/workflow/v1"
+                ),
+                "externalParameters": {
+                    "workflow": {
+                        "ref": "refs/heads/main",
+                        "repository": "https://github.com/example/other",
+                        "path": "release.yml",
+                    }
+                },
+                "resolvedDependencies": [
+                    {
+                        "uri": (
+                            "git+https://github.com/example/other@refs/heads/main"
+                        ),
+                        "digest": {"gitCommit": "a" * 40},
+                    }
+                ],
+            },
+            "runDetails": {
+                "builder": {"id": "https://github.com/actions/runner"},
+            },
+        }
+
+        with self.assertRaisesRegex(
+            VerificationError,
+            "source repository does not match",
+        ):
+            self.verify_payload(
+                statement(
+                    predicate_type=SLSA_PROVENANCE_V1,
+                    predicate=predicate,
+                )
+            )
 
 
 class PublisherPolicyTests(unittest.TestCase):

@@ -68,6 +68,7 @@ from trustcheck.models import (
     NativeBinaryInspection,
     PolicyViolation,
     ProvenanceConsistency,
+    PublisherIdentity,
     PublisherTrustSummary,
     ReleaseDriftSummary,
     ReportDiagnostics,
@@ -2406,6 +2407,32 @@ class CliBehaviorTests(unittest.TestCase):
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertIn("policy: strict (pass)", stdout.getvalue())
+
+    def test_cli_enforces_trusted_publisher_organization(self) -> None:
+        stdout = io.StringIO()
+        report = make_report()
+        report.files[0].publisher_identities = [
+            PublisherIdentity(
+                kind="GitHub",
+                repository="https://github.com/Halfblood-Prince/gridoptim",
+                workflow="release.yml",
+                environment=None,
+            )
+        ]
+
+        with patch("trustcheck.cli.inspect_package", return_value=report):
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                exit_code = main(
+                    [
+                        "inspect",
+                        "gridoptim",
+                        "--trusted-publisher-organization",
+                        "github:other-org",
+                    ]
+                )
+
+        self.assertEqual(exit_code, EXIT_POLICY_FAILURE)
+        self.assertIn("publisher_organization_not_allowed", stdout.getvalue())
 
     def test_cli_builds_client_from_config_file(self) -> None:
         config_path = Path(__file__).parent / "fixtures" / "client_config.json"

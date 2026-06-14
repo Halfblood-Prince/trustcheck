@@ -15,7 +15,10 @@ from trustcheck.models import (
     DependencyInspection,
     FileProvenance,
     PolicyViolation,
+    PublisherIdentity,
+    ReleaseDriftSummary,
     RiskFlag,
+    SlsaProvenance,
     TrustReport,
 )
 from trustcheck.policy import advisory_evaluation_for
@@ -31,6 +34,7 @@ from trustcheck.service import (
     DiagnosticsCollector,
     _build_dependency_summary,
     _build_publisher_trust_summary,
+    _build_risk_flags,
     _instrument_client,
     _load_package_history,
     _normalize_repo_url,
@@ -41,6 +45,7 @@ from trustcheck.service import (
 )
 
 AttestationFn = Callable[[object, object], tuple[str, object | None] | None]
+SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1"
 
 
 def make_project_payload(
@@ -116,6 +121,56 @@ def make_attestation(
         )
     )
     return attestation
+
+
+def make_slsa_predicate(
+    *,
+    repository: str = "Halfblood-Prince/gridoptim",
+    workflow: str = "release.yml",
+    workflow_ref: str = "refs/heads/main",
+    commit: str = "c27d339ee6075c1f744c5d4b200f7901aad2c369",
+    builder: str = "https://github.com/example/builders/actions",
+    build_type: str = (
+        "https://slsa-framework.github.io/"
+        "github-actions-buildtypes/workflow/v1"
+    ),
+    actions: list[str] | None = None,
+) -> dict[str, object]:
+    external_parameters: dict[str, object] = {
+        "workflow": {
+            "ref": workflow_ref,
+            "repository": f"https://github.com/{repository}",
+            "path": workflow,
+        }
+    }
+    if actions is not None:
+        external_parameters["actionReferences"] = actions
+    return {
+        "buildDefinition": {
+            "buildType": build_type,
+            "externalParameters": external_parameters,
+            "resolvedDependencies": [
+                {
+                    "uri": (
+                        f"git+https://github.com/{repository}@{workflow_ref}"
+                    ),
+                    "digest": {"gitCommit": commit},
+                }
+            ],
+        },
+        "runDetails": {
+            "builder": {"id": builder},
+            "metadata": {"invocationId": "https://github.com/actions/runs/1"},
+        },
+    }
+
+
+def make_slsa_attestation(
+    predicate: dict[str, object],
+) -> SimpleNamespace:
+    return make_attestation(
+        lambda identity, dist: (SLSA_PROVENANCE_V1, predicate)
+    )
 
 
 def make_provenance(
@@ -1071,6 +1126,164 @@ class InspectPackageTests(unittest.TestCase):
             ["https://github.com/halfblood-prince/gridoptim"],
         )
 
+    def test_slsa_provenance_is_interpreted_and_flagged(self) -> None:
+        predicate = make_slsa_predicate(
+            actions=["actions/checkout@v4"],
+        )
+        provenance = make_provenance(
+            attestations=[make_slsa_attestation(predicate)]
+        )
+        client = FakeClient()
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.return_value = provenance
+            with patch("trustcheck.service.hashlib.sha256") as sha256:
+                sha256.return_value.hexdigest.return_value = "abc123"
+                report = inspect_package("gridoptim", client=cast(Any, client))
+
+        assessment = report.files[0].slsa_provenance[0]
+        self.assertEqual(
+            assessment.source_repository,
+            "https://github.com/halfblood-prince/gridoptim",
+        )
+        self.assertEqual(
+            assessment.source_commit,
+            "c27d339ee6075c1f744c5d4b200f7901aad2c369",
+        )
+        self.assertEqual(assessment.unpinned_actions, ["actions/checkout@v4"])
+        self.assertIn(
+            "mutable_workflow_reference",
+            {flag.code for flag in report.risk_flags},
+        )
+        self.assertIn(
+            "unpinned_build_actions",
+            {flag.code for flag in report.risk_flags},
+        )
+
+    def test_deep_provenance_risk_flags_cover_build_and_metadata_drift(
+        self,
+    ) -> None:
+        identity = PublisherIdentity(
+            kind="GitHub",
+            repository="https://github.com/example/demo",
+            workflow="release.yml",
+            environment=None,
+        )
+        report = TrustReport(
+            project="demo",
+            version="1.0.0",
+            summary=None,
+            package_url="https://pypi.org/project/demo/1.0.0/",
+            declared_repository_urls=["https://github.com/other/demo"],
+            files=[
+                FileProvenance(
+                    filename="demo-1.0.0-py3-none-any.whl",
+                    url="https://files.example/demo.whl",
+                    sha256="a" * 64,
+                    has_provenance=True,
+                    verified=True,
+                    publisher_identities=[identity],
+                    slsa_provenance=[
+                        SlsaProvenance(
+                            valid=True,
+                            source_repository="https://github.com/example/demo",
+                            source_commit="a" * 40,
+                            builder_id="https://github.com/builders/linux",
+                            build_type="https://example.com/build/v1",
+                            workflow_path="release.yml",
+                        )
+                    ],
+                ),
+                FileProvenance(
+                    filename="demo-1.0.0-cp314-win_amd64.whl",
+                    url="https://files.example/demo-win.whl",
+                    sha256="b" * 64,
+                    has_provenance=True,
+                    verified=True,
+                    publisher_identities=[identity],
+                    slsa_provenance=[
+                        SlsaProvenance(
+                            valid=True,
+                            source_repository="https://github.com/example/demo",
+                            source_commit="a" * 40,
+                            builder_id="https://github.com/builders/windows",
+                            build_type="https://example.com/build/v2",
+                            workflow_path="windows-release.yml",
+                        )
+                    ],
+                ),
+            ],
+            release_drift=ReleaseDriftSummary(build_type_drift=True),
+        )
+
+        codes = {flag.code for flag in _build_risk_flags(report)}
+
+        self.assertIn("release_slsa_build_inconsistency", codes)
+        self.assertIn("slsa_source_repository_mismatch", codes)
+        self.assertIn("provenance_build_type_drift", codes)
+
+    def test_sdist_and_wheel_slsa_source_mismatch_is_flagged(self) -> None:
+        payload = make_project_payload(
+            urls=[
+                {
+                    "filename": "gridoptim-2.2.0-py3-none-any.whl",
+                    "url": "https://files.pythonhosted.org/packages/gridoptim.whl",
+                    "digests": {"sha256": "abc123"},
+                },
+                {
+                    "filename": "gridoptim-2.2.0.tar.gz",
+                    "url": "https://files.pythonhosted.org/packages/gridoptim.tar.gz",
+                    "digests": {"sha256": "def456"},
+                },
+            ]
+        )
+        client = FakeClient(
+            project_payload=payload,
+            download_map={
+                "https://files.pythonhosted.org/packages/gridoptim.whl": b"wheel",
+                "https://files.pythonhosted.org/packages/gridoptim.tar.gz": b"sdist",
+            },
+        )
+        provenance_model_results = [
+            make_provenance(
+                attestations=[
+                    make_slsa_attestation(
+                        make_slsa_predicate(commit="a" * 40)
+                    )
+                ]
+            ),
+            make_provenance(
+                attestations=[
+                    make_slsa_attestation(
+                        make_slsa_predicate(commit="b" * 40)
+                    )
+                ]
+            ),
+        ]
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.side_effect = provenance_model_results
+            with patch("trustcheck.service.hashlib.sha256") as sha256:
+                sha256.side_effect = [
+                    SimpleNamespace(hexdigest=lambda: "abc123"),
+                    SimpleNamespace(hexdigest=lambda: "def456"),
+                ]
+                report = inspect_package("gridoptim", client=cast(Any, client))
+
+        consistency = report.provenance_consistency
+        self.assertFalse(consistency.sdist_wheel_consistent)
+        self.assertFalse(consistency.source_commit_consistent)
+        self.assertTrue(consistency.builder_consistent)
+        self.assertTrue(consistency.build_type_consistent)
+        self.assertIn(
+            "sdist_wheel_provenance_mismatch",
+            {flag.code for flag in report.risk_flags},
+        )
+        self.assertIn(
+            "release_slsa_source_inconsistency",
+            {flag.code for flag in report.risk_flags},
+        )
+
     def test_sdist_and_wheel_provenance_mismatch_is_flagged(self) -> None:
         payload = make_project_payload(
             urls=[
@@ -1169,6 +1382,68 @@ class InspectPackageTests(unittest.TestCase):
         self.assertTrue(report.release_drift.publisher_repository_drift)
         self.assertTrue(report.release_drift.publisher_workflow_drift)
         self.assertIn("publisher_repository_drift", {flag.code for flag in report.risk_flags})
+
+    def test_slsa_release_history_compares_builder_and_source(self) -> None:
+        current_payload = make_project_payload(
+            version="2.2.0",
+            releases={"2.1.0": [], "2.2.0": []},
+        )
+        client = FakeClient(
+            project_payload=current_payload,
+            release_payloads={
+                "2.1.0": make_project_payload(version="2.1.0"),
+                "2.2.0": current_payload,
+            },
+        )
+        current_provenance = make_provenance(
+            attestations=[
+                make_slsa_attestation(
+                    make_slsa_predicate(
+                        commit="b" * 40,
+                        builder="https://github.com/example/builders/v2",
+                    )
+                )
+            ]
+        )
+        previous_provenance = make_provenance(
+            attestations=[
+                make_slsa_attestation(
+                    make_slsa_predicate(
+                        commit="a" * 40,
+                        builder="https://github.com/example/builders/v1",
+                    )
+                )
+            ]
+        )
+
+        with patch("trustcheck.service.Provenance") as provenance_model:
+            provenance_model.model_validate.side_effect = [
+                current_provenance,
+                previous_provenance,
+            ]
+            with patch("trustcheck.service.hashlib.sha256") as sha256:
+                sha256.side_effect = [
+                    SimpleNamespace(hexdigest=lambda: "abc123"),
+                    SimpleNamespace(hexdigest=lambda: "abc123"),
+                ]
+                report = inspect_package(
+                    "gridoptim",
+                    version="2.2.0",
+                    client=cast(Any, client),
+                )
+
+        drift = report.release_drift
+        self.assertTrue(drift.builder_drift)
+        self.assertTrue(drift.source_commit_drift)
+        self.assertFalse(drift.signer_drift)
+        self.assertEqual(
+            drift.previous_builders,
+            ["https://github.com/example/builders/v1"],
+        )
+        self.assertIn(
+            "provenance_builder_drift",
+            {flag.code for flag in report.risk_flags},
+        )
 
     def test_vulnerability_parsing_uses_fallbacks(self) -> None:
         client = FakeClient(

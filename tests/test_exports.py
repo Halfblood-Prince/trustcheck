@@ -29,8 +29,11 @@ from trustcheck.models import (
     MaliciousPackageAssessment,
     PolicyEvaluation,
     PolicyViolation,
+    ProvenanceIssue,
+    ProvenanceMaterial,
     ReportDiagnostics,
     RiskFlag,
+    SlsaProvenance,
     TrustReport,
     VulnerabilityRecord,
     VulnerabilitySuppression,
@@ -328,6 +331,80 @@ class ExportTests(unittest.TestCase):
                 component["bom-ref"]
                 for component in payload["components"]
             },
+        )
+
+    def test_slsa_provenance_is_preserved_in_sbom_properties(self) -> None:
+        report = make_report()
+        report.files[0].slsa_provenance = [
+            SlsaProvenance(
+                valid=True,
+                signer_identity="GitHub:example/demo:release.yml",
+                source_repository="https://github.com/example/demo",
+                source_commit="a" * 40,
+                builder_id="https://github.com/actions/runner",
+                build_type=(
+                    "https://slsa-framework.github.io/"
+                    "github-actions-buildtypes/workflow/v1"
+                ),
+                workflow_path="release.yml",
+                workflow_ref="refs/heads/main",
+                materials=[
+                    ProvenanceMaterial(
+                        uri="git+https://github.com/example/demo@refs/heads/main",
+                        digests={"gitcommit": "a" * 40},
+                        source=True,
+                    )
+                ],
+                issues=[
+                    ProvenanceIssue(
+                        code="mutable_workflow_reference",
+                        severity="medium",
+                        message="The workflow reference is mutable.",
+                    )
+                ],
+            )
+        ]
+        package = replace(make_package(), report=report)
+
+        cyclonedx = json.loads(
+            render_export(
+                "cyclonedx-json",
+                [package],
+                source_name="requirements.txt",
+                generated_at=GENERATED_AT,
+            )
+        )
+        root = next(
+            item for item in cyclonedx["components"]
+            if item["name"] == "Demo_Package"
+        )
+        slsa_property = next(
+            item
+            for item in root["properties"]
+            if item["name"].startswith("trustcheck:provenance:slsa:")
+        )
+        slsa_payload = json.loads(slsa_property["value"])
+        self.assertEqual(slsa_payload["source_commit"], "a" * 40)
+        self.assertEqual(
+            slsa_payload["issues"][0]["code"],
+            "mutable_workflow_reference",
+        )
+
+        spdx = json.loads(
+            render_export(
+                "spdx-json",
+                [package],
+                source_name="requirements.txt",
+                generated_at=GENERATED_AT,
+            )
+        )
+        self.assertIn(
+            "trustcheck:provenance:slsa:",
+            next(
+                annotation["comment"]
+                for annotation in spdx["annotations"]
+                if "trustcheck:provenance:slsa:" in annotation["comment"]
+            ),
         )
 
     def test_malicious_package_heuristics_are_preserved_in_industry_outputs(self) -> None:
@@ -960,15 +1037,15 @@ class ExportTests(unittest.TestCase):
             "0+unknown",
         )
 
-        parent = ElementTree.Element("parent")
+        parent = exports._XmlTree.Element("parent")
         exports._xml_properties(parent, None)
         exports._xml_properties(
             parent,
             [None, {"name": "", "value": ""}],
         )
-        self.assertEqual(len(parent), 1)
+        self.assertEqual(len(parent.children), 1)
         self.assertEqual(
-            parent[0][0].attrib["name"],
+            parent.children[0].children[0].attributes["name"],
             "trustcheck:property",
         )
         self.assertEqual(
@@ -977,6 +1054,26 @@ class ExportTests(unittest.TestCase):
         )
         self.assertEqual(exports._rule_token("***"), "TRUSTCHECK")
         self.assertEqual(exports._property_token("***"), "artifact")
+
+    def test_xml_serializer_escapes_values_and_removes_invalid_characters(
+        self,
+    ) -> None:
+        root = exports._XmlTree.Element(
+            exports._xml_tag("bom"),
+            {"serialNumber": 'urn:test:"<&'},
+        )
+        child = exports._XmlTree.SubElement(
+            root,
+            exports._xml_tag("description"),
+        )
+        child.text = "safe <tag> & value\x00"
+
+        rendered = exports._XmlTree.serialize(root)
+        parsed = ElementTree.fromstring(rendered)
+
+        self.assertEqual(parsed.attrib["serialNumber"], 'urn:test:"<&')
+        self.assertEqual(parsed[0].text, "safe <tag> & value")
+        self.assertNotIn("\x00", rendered)
 
 
 if __name__ == "__main__":

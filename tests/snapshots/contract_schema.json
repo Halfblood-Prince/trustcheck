@@ -505,6 +505,13 @@
           "default": null,
           "title": "Sha256"
         },
+        "slsa_provenance": {
+          "items": {
+            "$ref": "#/$defs/SlsaProvenancePayload"
+          },
+          "title": "Slsa Provenance",
+          "type": "array"
+        },
         "url": {
           "title": "Url",
           "type": "string"
@@ -793,6 +800,13 @@
           "title": "Allow Metadata Only",
           "type": "boolean"
         },
+        "allowed_publisher_organizations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Publisher Organizations",
+          "type": "array"
+        },
         "enforced": {
           "default": false,
           "title": "Enforced",
@@ -876,11 +890,56 @@
     "ProvenanceConsistencyPayload": {
       "additionalProperties": false,
       "properties": {
+        "build_type_consistent": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Build Type Consistent"
+        },
+        "builder_consistent": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Builder Consistent"
+        },
+        "consistent_build_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Consistent Build Types",
+          "type": "array"
+        },
+        "consistent_builders": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Consistent Builders",
+          "type": "array"
+        },
         "consistent_repositories": {
           "items": {
             "type": "string"
           },
           "title": "Consistent Repositories",
+          "type": "array"
+        },
+        "consistent_source_commits": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Consistent Source Commits",
           "type": "array"
         },
         "consistent_workflows": {
@@ -911,9 +970,90 @@
           ],
           "default": null,
           "title": "Sdist Wheel Consistent"
+        },
+        "source_commit_consistent": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Commit Consistent"
         }
       },
       "title": "ProvenanceConsistencyPayload",
+      "type": "object"
+    },
+    "ProvenanceIssuePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
+      "title": "ProvenanceIssuePayload",
+      "type": "object"
+    },
+    "ProvenanceMaterialPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "digests": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Digests",
+          "type": "object"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "source": {
+          "default": false,
+          "title": "Source",
+          "type": "boolean"
+        },
+        "uri": {
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "title": "ProvenanceMaterialPayload",
       "type": "object"
     },
     "PublisherIdentityPayload": {
@@ -1012,6 +1152,30 @@
     "ReleaseDriftSummaryPayload": {
       "additionalProperties": false,
       "properties": {
+        "build_type_drift": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Build Type Drift"
+        },
+        "builder_drift": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Builder Drift"
+        },
         "compared_to_version": {
           "anyOf": [
             {
@@ -1024,11 +1188,39 @@
           "default": null,
           "title": "Compared To Version"
         },
+        "previous_build_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Previous Build Types",
+          "type": "array"
+        },
+        "previous_builders": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Previous Builders",
+          "type": "array"
+        },
         "previous_repositories": {
           "items": {
             "type": "string"
           },
           "title": "Previous Repositories",
+          "type": "array"
+        },
+        "previous_signers": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Previous Signers",
+          "type": "array"
+        },
+        "previous_source_commits": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Previous Source Commits",
           "type": "array"
         },
         "previous_workflows": {
@@ -1061,6 +1253,30 @@
           ],
           "default": null,
           "title": "Publisher Workflow Drift"
+        },
+        "signer_drift": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signer Drift"
+        },
+        "source_commit_drift": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Commit Drift"
         }
       },
       "title": "ReleaseDriftSummaryPayload",
@@ -1272,6 +1488,183 @@
         "message"
       ],
       "title": "RiskFlagPayload",
+      "type": "object"
+    },
+    "SlsaProvenancePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "action_references": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Action References",
+          "type": "array"
+        },
+        "build_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Build Type"
+        },
+        "builder_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Builder Id"
+        },
+        "invocation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Invocation Id"
+        },
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/ProvenanceIssuePayload"
+          },
+          "title": "Issues",
+          "type": "array"
+        },
+        "materials": {
+          "items": {
+            "$ref": "#/$defs/ProvenanceMaterialPayload"
+          },
+          "title": "Materials",
+          "type": "array"
+        },
+        "predicate_type": {
+          "default": "https://slsa.dev/provenance/v1",
+          "title": "Predicate Type",
+          "type": "string"
+        },
+        "signer_identity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signer Identity"
+        },
+        "source_commit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Commit"
+        },
+        "source_repository": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Repository"
+        },
+        "source_uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Uri"
+        },
+        "unpinned_actions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unpinned Actions",
+          "type": "array"
+        },
+        "valid": {
+          "default": false,
+          "title": "Valid",
+          "type": "boolean"
+        },
+        "workflow_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workflow Path"
+        },
+        "workflow_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workflow Ref"
+        },
+        "workflow_ref_immutable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workflow Ref Immutable"
+        },
+        "workflow_uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workflow Uri"
+        }
+      },
+      "title": "SlsaProvenancePayload",
       "type": "object"
     },
     "TrustReportPayload": {
@@ -1670,7 +2063,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:trustcheck:report:1.8.0",
+  "$id": "urn:trustcheck:report:1.9.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -1678,8 +2071,8 @@
       "$ref": "#/$defs/TrustReportPayload"
     },
     "schema_version": {
-      "const": "1.8.0",
-      "default": "1.8.0",
+      "const": "1.9.0",
+      "default": "1.9.0",
       "title": "Schema Version",
       "type": "string"
     }

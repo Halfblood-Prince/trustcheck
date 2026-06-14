@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import sys
+import threading
 import tomllib
 import traceback
-from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
 from urllib import parse
@@ -51,6 +54,7 @@ from .lockfiles import (
     load_pip_tools_lock,
 )
 from .models import RemediationSummary, TrustReport
+from .plugins import PluginError, PluginManager, RepositoryClient
 from .policy import BUILTIN_POLICIES, PolicySettings, evaluate_policy, resolve_policy
 from .pypi import IndexBackedPackageClient, PypiClient, PypiClientError
 from .remediation import (
@@ -73,7 +77,9 @@ from .resolver import (
     TargetEnvironment,
     discover_installed_distributions,
 )
+from .resume import ScanState, ScanStateError, scan_fingerprint, target_key
 from .service import DependencyProgressCallback, ProgressCallback, inspect_package
+from .snapshots import AdvisorySnapshotError, AdvisorySnapshotStore
 
 EXIT_OK = 0
 EXIT_UPSTREAM_FAILURE = 1
@@ -145,7 +151,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inspect_parser.add_argument(
         "--format",
-        choices=OUTPUT_FORMATS,
         default="text",
         help="Output format.",
     )
@@ -228,6 +233,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Require a provided expected repository to match the collected evidence.",
     )
     inspect_parser.add_argument(
+        "--trusted-publisher-organization",
+        action="append",
+        default=[],
+        metavar="[PROVIDER:]ORGANIZATION",
+        help=(
+            "Allow only verified publishers owned by this organization; "
+            "repeat for multiple organizations."
+        ),
+    )
+    inspect_parser.add_argument(
         "--fail-on-vulnerability",
         choices=("ignore", "any", "critical", "kev", "fixable"),
         help="Override vulnerability handling for policy evaluation.",
@@ -264,6 +279,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_target_environment_arguments(inspect_parser)
     _add_index_arguments(inspect_parser)
     _add_malicious_arguments(inspect_parser)
+    _add_runtime_arguments(inspect_parser)
 
     scan_parser = subparsers.add_parser(
         "scan",
@@ -339,7 +355,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan_parser.add_argument(
         "--format",
-        choices=OUTPUT_FORMATS,
         default="text",
         help="Output format.",
     )
@@ -401,6 +416,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--require-verified-provenance",
         choices=("none", "all"),
         help="Override whether policy requires verified provenance for every artifact.",
+    )
+    scan_parser.add_argument(
+        "--trusted-publisher-organization",
+        action="append",
+        default=[],
+        metavar="[PROVIDER:]ORGANIZATION",
+        help=(
+            "Allow only verified publishers owned by this organization; "
+            "repeat for multiple organizations."
+        ),
     )
     scan_parser.add_argument(
         "--allow-metadata-only",
@@ -473,6 +498,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_target_environment_arguments(scan_parser)
     _add_index_arguments(scan_parser)
     _add_malicious_arguments(scan_parser)
+    _add_runtime_arguments(scan_parser, resumable=True)
 
     environment_parser = subparsers.add_parser(
         "environment",
@@ -491,7 +517,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     environment_parser.add_argument(
         "--format",
-        choices=OUTPUT_FORMATS,
         default="text",
         help="Output format.",
     )
@@ -552,6 +577,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override whether policy requires verified provenance for every artifact.",
     )
     environment_parser.add_argument(
+        "--trusted-publisher-organization",
+        action="append",
+        default=[],
+        metavar="[PROVIDER:]ORGANIZATION",
+        help=(
+            "Allow only verified publishers owned by this organization; "
+            "repeat for multiple organizations."
+        ),
+    )
+    environment_parser.add_argument(
         "--allow-metadata-only",
         action="store_true",
         default=None,
@@ -596,6 +631,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_index_arguments(environment_parser)
     _add_malicious_arguments(environment_parser)
+    _add_runtime_arguments(environment_parser, resumable=True)
     return parser
 
 
@@ -690,9 +726,58 @@ def _add_malicious_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_runtime_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    resumable: bool = False,
+) -> None:
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        help="Bound concurrent network and target work; defaults to 8.",
+    )
+    parser.add_argument(
+        "--advisory-snapshot",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Read a versioned offline advisory snapshot; repeatable.",
+    )
+    parser.add_argument(
+        "--write-advisory-snapshot",
+        metavar="PATH",
+        help="Write merged advisory results as a reusable offline snapshot.",
+    )
+    parser.add_argument(
+        "--enable-plugins",
+        action="store_true",
+        help="Enable installed trustcheck entry-point plugins.",
+    )
+    parser.add_argument(
+        "--plugin",
+        action="append",
+        default=[],
+        metavar="[KIND:]NAME",
+        help="Enable only this installed plugin; repeatable.",
+    )
+    parser.add_argument(
+        "--plugin-config",
+        metavar="PATH",
+        help="JSON configuration keyed by plugin name.",
+    )
+    if resumable:
+        parser.add_argument(
+            "--resume-state",
+            metavar="PATH",
+            help="Persist completed targets and resume a matching interrupted scan.",
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.max_workers is not None and args.max_workers < 1:
+        parser.error("--max-workers must be at least 1")
     if args.command == "scan":
         if args.dry_run and not args.fix:
             parser.error("--dry-run requires --fix")
@@ -704,8 +789,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--max-fix-attempts must be at least 1")
 
     try:
+        plugin_manager = PluginManager.from_options(
+            enabled=args.enable_plugins,
+            selected=args.plugin,
+            config_path=args.plugin_config,
+        )
+        supported_formats = set(OUTPUT_FORMATS) | set(
+            plugin_manager.output_formats()
+        )
+        if args.format not in supported_formats:
+            parser.error(
+                "--format must be one of: "
+                + ", ".join(sorted(supported_formats))
+            )
         if args.command == "inspect":
             config_payload = _load_config_file(args.config_file)
+            args.max_workers = _resolve_max_workers(args, config_payload)
             progress_callback = None
             dependency_progress_callback = None
             if args.format == "text":
@@ -723,8 +822,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args,
                 client,
                 config_payload=config_payload,
+                plugin_manager=plugin_manager,
             )
-            resolver = _resolver_from_args(args)
+            resolver = _resolver_from_args(args, plugin_manager=plugin_manager)
             inspection_client: PypiClient | IndexBackedPackageClient = client
             expected_artifacts: tuple[ArtifactReference, ...] = ()
             dependency_confusion_indexes: tuple[str, ...] = ()
@@ -775,6 +875,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         requires_dist=root.requires_dist,
                     ),
                     keyring_provider=args.keyring_provider,
+                    plugin_manager=plugin_manager,
                 )
             report = inspect_package(
                 args.project,
@@ -793,6 +894,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_artifacts=expected_artifacts,
                 dependency_confusion_indexes=dependency_confusion_indexes,
                 trusted_projects=args.trusted_project,
+                plugin_manager=plugin_manager,
             )
             policy_name = "strict" if args.strict else args.policy
             policy = resolve_policy(
@@ -802,11 +904,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "require_verified_provenance": args.require_verified_provenance,
                     "allow_metadata_only": args.allow_metadata_only,
                     "require_expected_repository_match": args.require_expected_repo_match,
+                    "allowed_publisher_organizations": (
+                        args.trusted_publisher_organization or None
+                    ),
                     "vulnerability_mode": args.fail_on_vulnerability,
                     "fail_on_severity": args.fail_on_risk_severity,
                 },
             )
-            evaluation = evaluate_policy(report, policy)
+            evaluation = evaluate_policy(
+                report,
+                policy,
+                plugin_manager=plugin_manager,
+            )
             if args.cve:
                 if args.format == "json":
                     rendered = json.dumps(
@@ -827,6 +936,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             )
                         ],
                         source_name=f"{report.project} {report.version}",
+                        plugin_manager=plugin_manager,
                     )
             elif args.format == "json":
                 rendered = json.dumps(
@@ -850,13 +960,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                         )
                     ],
                     source_name=f"{report.project} {report.version}",
+                    plugin_manager=plugin_manager,
                 )
+            if vulnerability_client is not None:
+                vulnerability_client.flush_snapshots()
             _emit_output(rendered, args.output_file)
             if not evaluation.passed:
                 return EXIT_POLICY_FAILURE
             return EXIT_OK
         if args.command == "scan":
             config_payload = _load_config_file(args.config_file)
+            args.max_workers = _resolve_max_workers(args, config_payload)
             progress_callback = None
             dependency_progress_callback = None
             if args.format == "text":
@@ -874,6 +988,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args,
                 client,
                 config_payload=config_payload,
+                plugin_manager=plugin_manager,
             )
             policy_name = "strict" if args.strict else args.policy
             policy = resolve_policy(
@@ -882,11 +997,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 cli_overrides={
                     "require_verified_provenance": args.require_verified_provenance,
                     "allow_metadata_only": args.allow_metadata_only,
+                    "allowed_publisher_organizations": (
+                        args.trusted_publisher_organization or None
+                    ),
                     "vulnerability_mode": args.fail_on_vulnerability,
                     "fail_on_severity": args.fail_on_risk_severity,
                 },
             )
-            resolver = _resolver_from_args(args)
+            resolver = _resolver_from_args(args, plugin_manager=plugin_manager)
             targets = _load_scan_targets(
                 args.filename,
                 client,
@@ -907,9 +1025,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 progress_callback=progress_callback,
                 dependency_progress_callback=dependency_progress_callback,
                 resolver=resolver,
+                plugin_manager=plugin_manager,
             )
         if args.command == "environment":
             config_payload = _load_config_file(args.config_file)
+            args.max_workers = _resolve_max_workers(args, config_payload)
             progress_callback = None
             dependency_progress_callback = None
             if args.format == "text":
@@ -927,6 +1047,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args,
                 client,
                 config_payload=config_payload,
+                plugin_manager=plugin_manager,
             )
             policy_name = "strict" if args.strict else args.policy
             policy = resolve_policy(
@@ -935,13 +1056,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 cli_overrides={
                     "require_verified_provenance": args.require_verified_provenance,
                     "allow_metadata_only": args.allow_metadata_only,
+                    "allowed_publisher_organizations": (
+                        args.trusted_publisher_organization or None
+                    ),
                     "vulnerability_mode": args.fail_on_vulnerability,
                     "fail_on_severity": args.fail_on_risk_severity,
                 },
             )
             resolution = discover_installed_distributions(args.path)
             if _uses_nondefault_indexes(args):
-                resolution = _resolver_from_args(args).annotate_indexes(resolution)
+                resolution = _resolver_from_args(
+                    args,
+                    plugin_manager=plugin_manager,
+                ).annotate_indexes(resolution)
             targets = _scan_targets_from_resolution(resolution)
             source_label = (
                 ", ".join(str(Path(path).resolve()) for path in args.path)
@@ -958,6 +1085,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 progress_callback=progress_callback,
                 dependency_progress_callback=dependency_progress_callback,
                 resolver=None,
+                plugin_manager=plugin_manager,
             )
 
         parser.error("unknown command")
@@ -975,6 +1103,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         json.JSONDecodeError,
         ResolutionError,
         RemediationError,
+        PluginError,
+        ScanStateError,
+        AdvisorySnapshotError,
     ) as exc:
         return _handle_error(
             f"error: received an invalid response while inspecting the package: {exc}",
@@ -1000,36 +1131,89 @@ def _run_scan_targets(
     progress_callback: ProgressCallback | None,
     dependency_progress_callback: DependencyProgressCallback | None,
     resolver: PipResolver | None,
+    plugin_manager: PluginManager,
 ) -> int:
-    reports: list[TrustReport] = []
-    report_targets: list[ScanTarget] = []
-    failures: list[dict[str, str]] = []
+    reports_by_index: dict[int, TrustReport] = {}
+    failures_by_index: dict[int, dict[str, str]] = {}
     overall_exit_code = EXIT_OK
-    for target in targets:
+    keys = [target_key(target) for target in targets]
+    state = _build_scan_state(
+        source_label,
+        targets,
+        keys=keys,
+        args=args,
+        policy=policy,
+        plugin_manager=plugin_manager,
+    )
+    callback_lock = threading.Lock()
+    safe_progress = _synchronized_progress_callback(
+        progress_callback,
+        callback_lock,
+    )
+    safe_dependency_progress = _synchronized_dependency_progress_callback(
+        dependency_progress_callback,
+        callback_lock,
+    )
+
+    if vulnerability_client is not None:
+        vulnerability_client.prefetch(
+            [
+                (target.project, target.version)
+                for target in targets
+                if target.failure_message is None and target.version is not None
+            ]
+        )
+
+    pending: list[tuple[int, ScanTarget]] = []
+    for index, target in enumerate(targets):
         if target.failure_message is not None:
-            failures.append(
-                {
-                    "requirement": target.requirement,
-                    "message": target.failure_message,
-                }
-            )
+            failure = {
+                "requirement": target.requirement,
+                "message": target.failure_message,
+            }
+            failures_by_index[index] = failure
+            if state is not None:
+                state.record_failure(
+                    keys[index],
+                    requirement=target.requirement,
+                    message=target.failure_message,
+                )
             overall_exit_code = _merge_exit_codes(
                 overall_exit_code,
                 target.failure_exit_code,
             )
             continue
+        resumed = state.report(keys[index]) if state is not None else None
+        if resumed is not None:
+            reports_by_index[index] = resumed
+            evaluation = evaluate_policy(
+                resumed,
+                policy,
+                plugin_manager=plugin_manager,
+            )
+            if not evaluation.passed and overall_exit_code == EXIT_OK:
+                overall_exit_code = EXIT_POLICY_FAILURE
+            continue
+        pending.append((index, target))
+
+    def scan_target(
+        index: int,
+        target: ScanTarget,
+    ) -> tuple[int, TrustReport | None, dict[str, str] | None, int]:
         try:
+            isolated_client = _clone_pypi_client(client)
             target_client = _client_for_target(
-                client,
+                isolated_client,
                 target,
                 keyring_provider=args.keyring_provider,
+                plugin_manager=plugin_manager,
             )
             report = inspect_package(
                 target.project,
                 version=target.version,
                 client=target_client,
-                progress_callback=progress_callback,
-                dependency_progress_callback=dependency_progress_callback,
+                progress_callback=safe_progress,
+                dependency_progress_callback=safe_dependency_progress,
                 include_dependencies=args.with_deps,
                 include_transitive_dependencies=args.with_transitive_deps,
                 include_osv=vulnerability_client is not None,
@@ -1040,37 +1224,82 @@ def _run_scan_targets(
                 expected_artifacts=target.artifacts,
                 dependency_confusion_indexes=target.dependency_confusion,
                 trusted_projects=args.trusted_project,
+                plugin_manager=plugin_manager,
             )
-            evaluation = evaluate_policy(report, policy)
-            reports.append(report)
-            report_targets.append(target)
-            if not evaluation.passed and overall_exit_code == EXIT_OK:
-                overall_exit_code = EXIT_POLICY_FAILURE
+            evaluation = evaluate_policy(
+                report,
+                policy,
+                plugin_manager=plugin_manager,
+            )
+            return (
+                index,
+                report,
+                None,
+                EXIT_OK if evaluation.passed else EXIT_POLICY_FAILURE,
+            )
         except PypiClientError as exc:
-            failures.append(
+            return (
+                index,
+                None,
                 {
                     "requirement": target.requirement,
                     "message": _format_upstream_error(exc),
-                }
-            )
-            overall_exit_code = _merge_exit_codes(
-                overall_exit_code,
+                },
                 EXIT_UPSTREAM_FAILURE,
             )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            failures.append(
+            return (
+                index,
+                None,
                 {
                     "requirement": target.requirement,
                     "message": (
                         "error: received an invalid response while "
                         f"inspecting the package: {exc}"
                     ),
-                }
-            )
-            overall_exit_code = _merge_exit_codes(
-                overall_exit_code,
+                },
                 EXIT_DATA_ERROR,
             )
+
+    workers = min(max(1, args.max_workers), max(1, len(pending)))
+    if pending:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(scan_target, index, target): (index, target)
+                for index, target in pending
+            }
+            for future in as_completed(futures):
+                index, target = futures[future]
+                result_index, report, result_failure, exit_code = future.result()
+                if result_index != index:
+                    raise RuntimeError("scan worker returned an invalid target index")
+                overall_exit_code = _merge_exit_codes(
+                    overall_exit_code,
+                    exit_code,
+                )
+                if report is not None:
+                    reports_by_index[index] = report
+                    if state is not None:
+                        state.record_report(keys[index], report)
+                elif result_failure is not None:
+                    failures_by_index[index] = result_failure
+                    if state is not None:
+                        state.record_failure(
+                            keys[index],
+                            requirement=target.requirement,
+                            message=result_failure["message"],
+                        )
+
+    report_indexes = sorted(reports_by_index)
+    reports = [reports_by_index[index] for index in report_indexes]
+    report_targets = [targets[index] for index in report_indexes]
+    failures = [
+        failures_by_index[index] for index in sorted(failures_by_index)
+    ]
+    if vulnerability_client is not None:
+        vulnerability_client.flush_snapshots()
+    if state is not None:
+        state.complete()
     remediation: RemediationPlan | None = None
     if (
         args.command == "scan"
@@ -1090,6 +1319,7 @@ def _run_scan_targets(
                 resolver=resolver,
                 progress_callback=progress_callback,
                 dependency_progress_callback=dependency_progress_callback,
+                plugin_manager=plugin_manager,
             )
         except RemediationError as exc:
             remediation = RemediationPlan(
@@ -1156,6 +1386,7 @@ def _run_scan_targets(
             ],
             source_name=source_label,
             failures=failures,
+            plugin_manager=plugin_manager,
         )
     _emit_output(rendered, args.output_file)
     return overall_exit_code
@@ -1173,7 +1404,9 @@ def _run_remediation(
     resolver: PipResolver,
     progress_callback: ProgressCallback | None,
     dependency_progress_callback: DependencyProgressCallback | None,
+    plugin_manager: PluginManager | None = None,
 ) -> RemediationPlan:
+    plugin_manager = plugin_manager or PluginManager()
     source_path = Path(source_label).resolve()
     baseline = _resolution_from_scan_targets(targets)
     report_map = {
@@ -1219,6 +1452,7 @@ def _run_remediation(
             policy=policy,
             progress_callback=progress_callback,
             dependency_progress_callback=dependency_progress_callback,
+            plugin_manager=plugin_manager,
         )
 
     plan = plan_remediation(
@@ -1478,7 +1712,9 @@ def _scan_resolution_for_remediation(
     policy: PolicySettings,
     progress_callback: ProgressCallback | None,
     dependency_progress_callback: DependencyProgressCallback | None,
+    plugin_manager: PluginManager | None = None,
 ) -> dict[str, TrustReport]:
+    plugin_manager = plugin_manager or PluginManager()
     reports: dict[str, TrustReport] = {}
     versions = resolution.versions
     for distribution in resolution.distributions:
@@ -1490,6 +1726,7 @@ def _scan_resolution_for_remediation(
             client,
             target,
             keyring_provider=args.keyring_provider,
+            plugin_manager=plugin_manager,
         )
         report = inspect_package(
             target.project,
@@ -1507,8 +1744,13 @@ def _scan_resolution_for_remediation(
             expected_artifacts=target.artifacts,
             dependency_confusion_indexes=target.dependency_confusion,
             trusted_projects=args.trusted_project,
+            plugin_manager=plugin_manager,
         )
-        evaluate_policy(report, policy)
+        evaluate_policy(
+            report,
+            policy,
+            plugin_manager=plugin_manager,
+        )
         reports[str(canonicalize_name(report.project))] = report
     return reports
 
@@ -1521,7 +1763,10 @@ def _resolution_from_prepared(
     resolver: PipResolver,
     offline: bool,
 ) -> Resolution:
-    relative_target = source_path.relative_to(prepared.source_root)
+    relative_target = _relative_to_resolved_root(
+        source_path,
+        prepared.source_root,
+    )
     staged_target = prepared.root / relative_target
     target_environment = _target_environment_from_args(args)
     if is_supported_lockfile(staged_target):
@@ -1572,7 +1817,11 @@ def _resolution_from_prepared(
             offline=offline,
         )
     staged_constraints = [
-        prepared.root / Path(path).resolve().relative_to(prepared.source_root)
+        prepared.root
+        / _relative_to_resolved_root(
+            Path(path),
+            prepared.source_root,
+        )
         for path in args.constraint
     ]
     resolution = resolver.resolve_requirements_file(
@@ -1613,6 +1862,17 @@ def _resolution_from_prepared(
     return resolution
 
 
+def _relative_to_resolved_root(path: Path, root: Path) -> Path:
+    resolved_path = path.resolve()
+    resolved_root = root.resolve()
+    try:
+        return resolved_path.relative_to(resolved_root)
+    except ValueError as exc:
+        raise RemediationError(
+            f"remediation path is outside the project root: {resolved_path}"
+        ) from exc
+
+
 def _attach_remediation_summary(
     reports: Sequence[TrustReport],
     plan: RemediationPlan,
@@ -1645,6 +1905,105 @@ def _emit_output(rendered: str, output_file: str | None) -> None:
         rendered + ("" if rendered.endswith("\n") else "\n"),
         encoding="utf-8",
     )
+
+
+def _build_scan_state(
+    source_label: str,
+    targets: Sequence[ScanTarget],
+    *,
+    keys: Sequence[str],
+    args: argparse.Namespace,
+    policy: PolicySettings,
+    plugin_manager: PluginManager,
+) -> ScanState | None:
+    state_path = getattr(args, "resume_state", None)
+    if not state_path:
+        return None
+    source_path = Path(source_label)
+    source_digest: str | None = None
+    if source_path.is_file():
+        source_digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    fingerprint = scan_fingerprint(
+        {
+            "source": str(source_path.resolve()) if source_path.exists() else source_label,
+            "source_sha256": source_digest,
+            "targets": list(keys),
+            "policy": asdict(policy),
+            "options": {
+                "with_deps": args.with_deps,
+                "with_transitive_deps": args.with_transitive_deps,
+                "inspect_artifacts": args.inspect_artifacts,
+                "with_osv": args.with_osv,
+                "osv_urls": list(args.osv_url),
+                "with_ecosystems": args.with_ecosystems,
+                "with_kev": args.with_kev,
+                "with_epss": args.with_epss,
+                "offline": args.offline,
+                "trusted_projects": list(args.trusted_project),
+                "index": _index_configuration_from_args(args).redacted(),
+                "plugins": [
+                    {
+                        "name": item.name,
+                        "kind": item.kind,
+                        "value": item.value,
+                        "distribution": item.distribution,
+                    }
+                    for item in plugin_manager.descriptors()
+                ],
+            },
+            "target_count": len(targets),
+        }
+    )
+    return ScanState(
+        state_path,
+        fingerprint=fingerprint,
+        target_keys=keys,
+    )
+
+
+def _clone_pypi_client(client: PypiClient) -> PypiClient:
+    if type(client) is not PypiClient:
+        return client
+    return PypiClient(
+        base_url=client.base_url,
+        timeout=client.timeout,
+        user_agent=client.user_agent,
+        max_retries=client.max_retries,
+        backoff_factor=client.backoff_factor,
+        enable_cache=client.enable_cache,
+        cache_dir=client.cache_dir,
+        offline=client.offline,
+        request_hook=client.request_hook,
+        sleep=client.sleep,
+    )
+
+
+def _synchronized_progress_callback(
+    callback: ProgressCallback | None,
+    lock: threading.Lock,
+) -> ProgressCallback | None:
+    if callback is None:
+        return None
+
+    def emit(filename: str, current: int, total: int) -> None:
+        with lock:
+            callback(filename, current, total)
+
+    return emit
+
+
+def _synchronized_dependency_progress_callback(
+    callback: DependencyProgressCallback | None,
+    lock: threading.Lock,
+) -> DependencyProgressCallback | None:
+    if callback is None:
+        return None
+
+    def emit(project: str, depth: int, percent: int, done: bool) -> None:
+        with lock:
+            callback(project, depth, percent, done)
+
+    return emit
 
 
 def _handle_error(message: str, exit_code: int, *, debug: bool) -> int:
@@ -1733,13 +2092,20 @@ def _index_configuration_from_args(
     )
 
 
-def _resolver_from_args(args: argparse.Namespace) -> PipResolver:
+def _resolver_from_args(
+    args: argparse.Namespace,
+    *,
+    plugin_manager: PluginManager | None = None,
+) -> PipResolver:
     indexes = _index_configuration_from_args(args)
+    index_client: RepositoryClient = SimpleRepositoryClient(
+        keyring_provider=indexes.keyring_provider,
+    )
+    if plugin_manager is not None:
+        index_client = plugin_manager.repository_client(index_client)
     return PipResolver(
         indexes=indexes,
-        index_client=SimpleRepositoryClient(
-            keyring_provider=indexes.keyring_provider,
-        ),
+        index_client=index_client,
         allow_dependency_confusion=args.allow_dependency_confusion,
     )
 
@@ -1758,6 +2124,7 @@ def _client_for_target(
     target: ScanTarget,
     *,
     keyring_provider: str,
+    plugin_manager: PluginManager | None = None,
 ) -> PypiClient | IndexBackedPackageClient:
     if target.version is None:
         return client
@@ -1779,6 +2146,12 @@ def _client_for_target(
     if index_url is None:
         parsed = parse.urlsplit(artifact_urls[0])
         index_url = f"{parsed.scheme}://{parsed.netloc}/"
+    repository_client: RepositoryClient = SimpleRepositoryClient(
+        timeout=client.timeout,
+        keyring_provider=keyring_provider,
+    )
+    if plugin_manager is not None:
+        repository_client = plugin_manager.repository_client(repository_client)
     return IndexBackedPackageClient(
         base_client=client,
         project=target.project,
@@ -1786,10 +2159,7 @@ def _client_for_target(
         index_url=index_url,
         artifacts=target.artifacts,
         requires_dist=target.requires_dist,
-        repository_client=SimpleRepositoryClient(
-            timeout=client.timeout,
-            keyring_provider=keyring_provider,
-        ),
+        repository_client=repository_client,
     )
 
 
@@ -1846,6 +2216,7 @@ def _build_osv_client(
     client: PypiClient,
     *,
     base_url: str = OSV_BASE_URL,
+    max_workers: int = 8,
 ) -> OsvClient:
     return OsvClient(
         base_url=base_url.rstrip("/"),
@@ -1853,6 +2224,7 @@ def _build_osv_client(
         max_retries=client.max_retries,
         backoff_factor=client.backoff_factor,
         offline=client.offline,
+        max_workers=max_workers,
         request_hook=client.request_hook,
     )
 
@@ -1862,6 +2234,7 @@ def _build_vulnerability_client(
     client: PypiClient,
     *,
     config_payload: dict[str, object],
+    plugin_manager: PluginManager | None = None,
 ) -> VulnerabilityIntelligenceClient | None:
     raw_config = config_payload.get("advisories")
     if raw_config is not None and not isinstance(raw_config, dict):
@@ -1882,6 +2255,7 @@ def _build_vulnerability_client(
             "unknown advisories config setting(s): " + ", ".join(unknown)
         )
 
+    max_workers = _resolve_max_workers(args, config_payload)
     providers: list[OsvProvider] = []
     seen_urls: set[str] = set()
 
@@ -1890,7 +2264,11 @@ def _build_vulnerability_client(
         if not normalized or normalized in seen_urls:
             return
         seen_urls.add(normalized)
-        provider_client = _build_osv_client(client, base_url=normalized)
+        provider_client = _build_osv_client(
+            client,
+            base_url=normalized,
+            max_workers=max_workers,
+        )
         provider_client.request_hook = None
         providers.append(
             OsvProvider(
@@ -1915,7 +2293,23 @@ def _build_vulnerability_client(
 
     kev_enabled = args.with_kev or _config_bool(advisory_config, "kev")
     epss_enabled = args.with_epss or _config_bool(advisory_config, "epss")
-    if not providers and not kev_enabled and not epss_enabled:
+    advisory_sources = (
+        plugin_manager.advisory_sources()
+        if plugin_manager is not None
+        else ()
+    )
+    snapshot_store = AdvisorySnapshotStore(
+        inputs=getattr(args, "advisory_snapshot", ()),
+        output=getattr(args, "write_advisory_snapshot", None),
+    )
+    if (
+        not providers
+        and not kev_enabled
+        and not epss_enabled
+        and not advisory_sources
+        and not snapshot_store.sources
+        and snapshot_store.output is None
+    ):
         return None
 
     kev_url = _config_string(
@@ -1930,6 +2324,7 @@ def _build_vulnerability_client(
     )
     return VulnerabilityIntelligenceClient(
         providers=tuple(providers),
+        advisory_sources=advisory_sources,
         kev_client=(
             CisaKevClient(
                 url=kev_url,
@@ -1952,8 +2347,34 @@ def _build_vulnerability_client(
             if epss_enabled
             else None
         ),
+        snapshot_store=snapshot_store,
+        max_workers=max_workers,
         request_hook=client.request_hook,
     )
+
+
+def _resolve_max_workers(
+    args: argparse.Namespace,
+    config_payload: dict[str, object],
+) -> int:
+    raw_config = config_payload.get("performance")
+    if raw_config is not None and not isinstance(raw_config, dict):
+        raise ValueError("config file field 'performance' must be an object")
+    performance_config = raw_config or {}
+    unknown = sorted(set(performance_config) - {"max_workers"})
+    if unknown:
+        raise ValueError(
+            "unknown performance config setting(s): " + ", ".join(unknown)
+        )
+    workers = _resolve_int(
+        getattr(args, "max_workers", None),
+        env_name="TRUSTCHECK_MAX_WORKERS",
+        config_value=performance_config.get("max_workers"),
+        default=8,
+    )
+    if workers < 1 or workers > 64:
+        raise ValueError("max_workers must be between 1 and 64")
+    return workers
 
 
 def _config_bool(config: dict[str, object], name: str) -> bool:
@@ -3004,6 +3425,20 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
         lines.append(f"sdist/wheel provenance consistency: {consistency_label}")
     if report.release_drift.compared_to_version:
         lines.append(f"release drift baseline: {report.release_drift.compared_to_version}")
+        drift_fields = [
+            name
+            for name, changed in (
+                ("signer", report.release_drift.signer_drift),
+                ("repository", report.release_drift.publisher_repository_drift),
+                ("workflow", report.release_drift.publisher_workflow_drift),
+                ("builder", report.release_drift.builder_drift),
+                ("source commit", report.release_drift.source_commit_drift),
+                ("build type", report.release_drift.build_type_drift),
+            )
+            if changed
+        ]
+        if drift_fields:
+            lines.append("release provenance changes: " + ", ".join(drift_fields))
 
     if report.malicious_package.findings:
         lines.append("")
@@ -3100,6 +3535,30 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
                         f"kind={identity.kind} "
                         f"repository={identity.repository or '-'} "
                         f"workflow={identity.workflow or '-'}"
+                    )
+            for assessment in file.slsa_provenance:
+                lines.append("    SLSA provenance:")
+                lines.append(
+                    f"      source: {assessment.source_repository or '-'}"
+                    f"@{assessment.source_commit or '-'}"
+                )
+                lines.append(f"      builder: {assessment.builder_id or '-'}")
+                lines.append(f"      build type: {assessment.build_type or '-'}")
+                lines.append(
+                    "      workflow: "
+                    f"{assessment.workflow_path or '-'}"
+                    f"@{assessment.workflow_ref or '-'}"
+                )
+                lines.append(f"      materials: {len(assessment.materials)}")
+                if assessment.action_references:
+                    lines.append(
+                        "      actions: "
+                        + ", ".join(assessment.action_references)
+                    )
+                for issue in assessment.issues:
+                    lines.append(
+                        f"      issue: [{issue.severity}] "
+                        f"{issue.code}: {issue.message}"
                     )
             if file.error:
                 lines.append(f"    note: {file.error}")
@@ -3253,6 +3712,8 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
         "  settings: "
         f"verified_provenance={report.policy.require_verified_provenance} "
         f"expected_repo={report.policy.require_expected_repository_match} "
+        "publisher_orgs="
+        f"{','.join(report.policy.allowed_publisher_organizations) or 'any'} "
         f"metadata_only={report.policy.allow_metadata_only} "
         f"vulnerabilities={report.policy.vulnerability_mode} "
         f"suppressions={report.policy.suppressions_applied}/"

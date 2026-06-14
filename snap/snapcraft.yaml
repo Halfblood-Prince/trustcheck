@@ -5,10 +5,7 @@ summary: Audit Python packages, provenance, dependencies, and vulnerabilities
 description: |
   **Know what you are installing before it reaches production.**
 
-  TrustCheck Package Scanner brings package trust, provenance, vulnerability,
-  dependency, and artifact checks into one focused command-line workflow. Use
-  it for an individual PyPI release or scan an entire Python dependency file
-  before installation, promotion, or approval.
+  TrustCheck Package Scanner brings package trust, provenance, vulnerability, dependency, and artifact checks into one focused command-line workflow. Use it for an individual PyPI release or scan an entire Python dependency file before installation, promotion, or approval.
 
   **What TrustCheck examines**
 
@@ -22,11 +19,7 @@ description: |
 
   **Built for real Python projects**
 
-  Scan package names, `requirements.txt`, `pyproject.toml`, `uv.lock`,
-  `poetry.lock`, and `pdm.lock`. Choose the balanced default policy, require
-  stricter verification, or supply a custom JSON policy for your own release
-  rules. Reports are available as readable terminal output or structured JSON
-  for automation.
+  Scan package names, `requirements.txt`, `pyproject.toml`, `uv.lock`, `poetry.lock`, and `pdm.lock`. Choose the balanced default policy, require stricter verification, or supply a custom JSON policy for your own release rules. Reports are available as readable terminal output or structured JSON for automation.
 
   **Quick start**
 
@@ -34,10 +27,7 @@ description: |
       trustcheck inspect sampleproject --version 4.0.0 --strict
       trustcheck scan requirements.txt --policy strict
 
-  Artifact inspection reads archive contents without importing or executing
-  the package being examined. The snap uses strict confinement and requests
-  only network access plus access to dependency files you choose from your
-  home directory or removable media.
+  Artifact inspection reads archive contents without importing or executing the package being examined. The snap uses strict confinement and requests only network access plus access to dependency files you choose from your home directory or removable media.
 
 base: core24
 grade: stable

@@ -12,17 +12,18 @@
 
 ## Current schema identifiers
 
-- `JSON_SCHEMA_VERSION = "1.8.0"`
-- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.8.0"`
+- `JSON_SCHEMA_VERSION = "1.9.0"`
+- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.9.0"`
 
-Package versions and report schema versions are independent. Schema `1.8.0`
-adds an optional remediation summary to every report.
+Package versions and report schema versions are independent. Schema `1.9.0`
+adds interpreted SLSA provenance, expanded consistency and release-drift
+evidence, and verified-publisher organization policy settings.
 
 ## Top-level shape
 
 ```json
 {
-  "schema_version": "1.8.0",
+  "schema_version": "1.9.0",
   "report": {
     "project": "demo",
     "version": "1.2.3",
@@ -48,6 +49,7 @@ adds an optional remediation summary to every report.
       "fail_on_severity": "none",
       "require_verified_provenance": "none",
       "require_expected_repository_match": false,
+      "allowed_publisher_organizations": [],
       "allow_metadata_only": true,
       "vulnerability_mode": "ignore",
       "suppressions_applied": 0,
@@ -106,14 +108,28 @@ adds an optional remediation summary to every report.
       "has_wheel": false,
       "sdist_wheel_consistent": null,
       "consistent_repositories": [],
-      "consistent_workflows": []
+      "consistent_workflows": [],
+      "builder_consistent": null,
+      "source_commit_consistent": null,
+      "build_type_consistent": null,
+      "consistent_builders": [],
+      "consistent_source_commits": [],
+      "consistent_build_types": []
     },
     "release_drift": {
       "compared_to_version": null,
       "publisher_repository_drift": null,
       "publisher_workflow_drift": null,
+      "signer_drift": null,
+      "builder_drift": null,
+      "source_commit_drift": null,
+      "build_type_drift": null,
+      "previous_signers": [],
       "previous_repositories": [],
-      "previous_workflows": []
+      "previous_workflows": [],
+      "previous_builders": [],
+      "previous_source_commits": [],
+      "previous_build_types": []
     },
     "malicious_package": {
       "score": 0,
@@ -161,6 +177,26 @@ adds an optional remediation summary to every report.
   }
 }
 ```
+
+## Deep provenance fields
+
+Each `report.files[]` item contains `slsa_provenance`. A verified SLSA v1
+statement records:
+
+- signer identity derived from the verified Trusted Publisher
+- normalized source URI, repository, and full git commit
+- builder identity, build type, and invocation ID
+- workflow repository, path, reference, and whether the reference is immutable
+- resolved materials with names, URIs, digests, and source designation
+- discovered action references and the subset not pinned to full commits
+- structured provenance issues with code, severity, message, and evidence
+
+`report.provenance_consistency` compares repository, workflow, builder, source
+commit, and build type between verified sdists and wheels.
+`report.release_drift` compares signer, repository, workflow, builder, source
+commit, and build type with the previous release. Source commit drift is
+recorded for auditability but is not by itself treated as suspicious because a
+new release normally comes from a new commit.
 
 ## Dependency fields
 

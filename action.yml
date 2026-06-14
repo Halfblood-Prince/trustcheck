@@ -18,6 +18,10 @@ inputs:
     description: Expected source repository URL for a package target.
     required: false
     default: ""
+  trusted-publisher-organizations:
+    description: Whitespace- or newline-separated [provider:]organization publisher allowlist entries.
+    required: false
+    default: ""
   with-osv:
     description: Query OSV for additional vulnerability records.
     required: false
@@ -68,6 +72,34 @@ inputs:
     default: "false"
   trusted-projects:
     description: Whitespace- or newline-separated project names added to the typosquatting reference set.
+    required: false
+    default: ""
+  max-workers:
+    description: Maximum concurrent scan, advisory, and network workers (1-64).
+    required: false
+    default: "8"
+  advisory-snapshots:
+    description: Whitespace- or newline-separated advisory snapshot paths.
+    required: false
+    default: ""
+  write-advisory-snapshot:
+    description: Path for a merged reusable advisory snapshot.
+    required: false
+    default: ""
+  resume-state:
+    description: Checkpoint path used to resume matching dependency-file scans.
+    required: false
+    default: ""
+  enable-plugins:
+    description: Enable installed trustcheck entry-point plugins.
+    required: false
+    default: "false"
+  plugins:
+    description: Whitespace- or newline-separated [kind:]name plugin allowlist.
+    required: false
+    default: ""
+  plugin-config:
+    description: JSON configuration path keyed by plugin name.
     required: false
     default: ""
   remediation:
@@ -177,6 +209,7 @@ runs:
         TRUSTCHECK_ACTION_TARGET: ${{ inputs.target }}
         TRUSTCHECK_ACTION_POLICY: ${{ inputs.policy }}
         TRUSTCHECK_ACTION_EXPECTED_REPO: ${{ inputs['expected-repo'] }}
+        TRUSTCHECK_ACTION_TRUSTED_PUBLISHER_ORGANIZATIONS: ${{ inputs['trusted-publisher-organizations'] }}
         TRUSTCHECK_ACTION_WITH_OSV: ${{ inputs['with-osv'] }}
         TRUSTCHECK_ACTION_OSV_URLS: ${{ inputs['osv-urls'] }}
         TRUSTCHECK_ACTION_WITH_ECOSYSTEMS: ${{ inputs['with-ecosystems'] }}
@@ -190,6 +223,13 @@ runs:
         TRUSTCHECK_ACTION_KEYRING_PROVIDER: ${{ inputs['keyring-provider'] }}
         TRUSTCHECK_ACTION_ALLOW_DEPENDENCY_CONFUSION: ${{ inputs['allow-dependency-confusion'] }}
         TRUSTCHECK_ACTION_TRUSTED_PROJECTS: ${{ inputs['trusted-projects'] }}
+        TRUSTCHECK_ACTION_MAX_WORKERS: ${{ inputs['max-workers'] }}
+        TRUSTCHECK_ACTION_ADVISORY_SNAPSHOTS: ${{ inputs['advisory-snapshots'] }}
+        TRUSTCHECK_ACTION_WRITE_ADVISORY_SNAPSHOT: ${{ inputs['write-advisory-snapshot'] }}
+        TRUSTCHECK_ACTION_RESUME_STATE: ${{ inputs['resume-state'] }}
+        TRUSTCHECK_ACTION_ENABLE_PLUGINS: ${{ inputs['enable-plugins'] }}
+        TRUSTCHECK_ACTION_PLUGINS: ${{ inputs.plugins }}
+        TRUSTCHECK_ACTION_PLUGIN_CONFIG: ${{ inputs['plugin-config'] }}
         TRUSTCHECK_ACTION_REMEDIATION: ${{ inputs.remediation }}
         TRUSTCHECK_ACTION_DRY_RUN: ${{ inputs['dry-run'] }}
         TRUSTCHECK_ACTION_ALLOW_CONSTRAINT_CHANGES: ${{ inputs['allow-constraint-changes'] }}

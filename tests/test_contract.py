@@ -11,10 +11,13 @@ from trustcheck.models import (
     DependencySummary,
     FileProvenance,
     ProvenanceConsistency,
+    ProvenanceIssue,
+    ProvenanceMaterial,
     PublisherIdentity,
     PublisherTrustSummary,
     ReleaseDriftSummary,
     RiskFlag,
+    SlsaProvenance,
     VulnerabilityRecord,
     VulnerabilitySuppression,
 )
@@ -104,6 +107,54 @@ class ContractTests(unittest.TestCase):
                             raw={"repository": "example/demo"},
                         )
                     ],
+                    slsa_provenance=[
+                        SlsaProvenance(
+                            valid=True,
+                            signer_identity=(
+                                "GitHub:https://github.com/example/demo:"
+                                ".github/workflows/release.yml"
+                            ),
+                            source_uri=(
+                                "git+https://github.com/example/demo"
+                                "@refs/tags/v1.2.3"
+                            ),
+                            source_repository="https://github.com/example/demo",
+                            source_commit="a" * 40,
+                            builder_id="https://github.com/actions/runner",
+                            build_type=(
+                                "https://slsa-framework.github.io/"
+                                "github-actions-buildtypes/workflow/v1"
+                            ),
+                            workflow_uri="https://github.com/example/demo",
+                            workflow_path=".github/workflows/release.yml",
+                            workflow_ref="refs/tags/v1.2.3",
+                            workflow_ref_immutable=False,
+                            invocation_id=(
+                                "https://github.com/example/demo/"
+                                "actions/runs/123/attempts/1"
+                            ),
+                            materials=[
+                                ProvenanceMaterial(
+                                    uri=(
+                                        "git+https://github.com/example/demo"
+                                        "@refs/tags/v1.2.3"
+                                    ),
+                                    digests={"gitcommit": "a" * 40},
+                                    source=True,
+                                )
+                            ],
+                            issues=[
+                                ProvenanceIssue(
+                                    code="mutable_workflow_reference",
+                                    severity="medium",
+                                    message=(
+                                        "The SLSA workflow reference is mutable."
+                                    ),
+                                    evidence=["refs/tags/v1.2.3"],
+                                )
+                            ],
+                        )
+                    ],
                 )
             ],
             coverage=CoverageSummary(
@@ -125,13 +176,30 @@ class ContractTests(unittest.TestCase):
                 has_sdist=False,
                 has_wheel=True,
                 sdist_wheel_consistent=None,
+                builder_consistent=None,
+                source_commit_consistent=None,
+                build_type_consistent=None,
             ),
             release_drift=ReleaseDriftSummary(
                 compared_to_version="1.2.2",
                 publisher_repository_drift=False,
                 publisher_workflow_drift=False,
+                signer_drift=False,
+                builder_drift=False,
+                source_commit_drift=True,
+                build_type_drift=False,
+                previous_signers=[
+                    "GitHub:https://github.com/example/demo:"
+                    ".github/workflows/release.yml"
+                ],
                 previous_repositories=["https://github.com/example/demo"],
                 previous_workflows=[".github/workflows/release.yml"],
+                previous_builders=["https://github.com/actions/runner"],
+                previous_source_commits=["b" * 40],
+                previous_build_types=[
+                    "https://slsa-framework.github.io/"
+                    "github-actions-buildtypes/workflow/v1"
+                ],
             ),
             dependencies=[
                 DependencyInspection(

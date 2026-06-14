@@ -2201,6 +2201,23 @@ class RemediationCliTests(unittest.TestCase):
         self.assertEqual(artifacts[0].hashes, (("sha256", "c" * 64),))
         self.assertTrue(resolver.kwargs["offline"])
 
+    def test_staged_paths_are_derived_from_resolved_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "requirements.txt"
+            target.write_text("demo==1\n", encoding="utf-8")
+            aliased = root / "nested" / ".." / "requirements.txt"
+
+            self.assertEqual(
+                cli_module._relative_to_resolved_root(aliased, root),
+                Path("requirements.txt"),
+            )
+            with self.assertRaisesRegex(RemediationError, "outside"):
+                cli_module._relative_to_resolved_root(
+                    root.parent / "outside.txt",
+                    root,
+                )
+
     def test_run_remediation_supports_plan_dry_run_and_apply(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -139,6 +139,7 @@ review immediately.
 | `target` | required | Package name or supported dependency file. |
 | `policy` | `default` | `default`, `strict`, or a custom JSON policy path. |
 | `expected-repo` | empty | Expected repository for a package target. |
+| `trusted-publisher-organizations` | empty | Whitespace- or newline-separated `[provider:]organization` publisher allowlist entries. |
 | `with-osv` | `false` | Query OSV and GitHub advisory data. |
 | `osv-urls` | empty | Whitespace- or newline-separated custom OSV-compatible API base URLs. |
 | `with-ecosystems` | `false` | Query the Ecosyste.ms OSV-compatible advisory service. |
@@ -152,6 +153,13 @@ review immediately.
 | `keyring-provider` | `auto` | `auto`, `disabled`, `import`, or `subprocess`. |
 | `allow-dependency-confusion` | `false` | Continue after reporting a cross-index project-name collision. |
 | `trusted-projects` | empty | Whitespace- or newline-separated names added to the typosquatting reference set. |
+| `max-workers` | `8` | Bound concurrent target, advisory, and network work from 1 through 64. |
+| `advisory-snapshots` | empty | Whitespace- or newline-separated advisory snapshot paths. |
+| `write-advisory-snapshot` | empty | Write a merged versioned advisory snapshot. |
+| `resume-state` | empty | Checkpoint path for resumable dependency-file scans. |
+| `enable-plugins` | `false` | Enable installed Trustcheck entry-point plugins. |
+| `plugins` | empty | Whitespace- or newline-separated `[kind:]name` plugin allowlist. |
+| `plugin-config` | empty | JSON configuration path keyed by plugin name. |
 | `remediation` | `none` | `none`, `plan`, or `fix` for dependency-file targets. |
 | `dry-run` | `false` | Regenerate and validate the exact patch without applying it. |
 | `allow-constraint-changes` | `false` | Permit minimum required declared-range changes. |

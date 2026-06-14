@@ -58,6 +58,43 @@ class PublisherIdentity:
 
 
 @dataclass(slots=True)
+class ProvenanceIssue:
+    code: str
+    severity: str
+    message: str
+    evidence: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ProvenanceMaterial:
+    uri: str
+    digests: dict[str, str] = field(default_factory=dict)
+    name: str | None = None
+    source: bool = False
+
+
+@dataclass(slots=True)
+class SlsaProvenance:
+    predicate_type: str = "https://slsa.dev/provenance/v1"
+    valid: bool = False
+    signer_identity: str | None = None
+    source_uri: str | None = None
+    source_repository: str | None = None
+    source_commit: str | None = None
+    builder_id: str | None = None
+    build_type: str | None = None
+    workflow_uri: str | None = None
+    workflow_path: str | None = None
+    workflow_ref: str | None = None
+    workflow_ref_immutable: bool | None = None
+    invocation_id: str | None = None
+    materials: list[ProvenanceMaterial] = field(default_factory=list)
+    action_references: list[str] = field(default_factory=list)
+    unpinned_actions: list[str] = field(default_factory=list)
+    issues: list[ProvenanceIssue] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class HeuristicFinding:
     code: str
     category: str
@@ -125,6 +162,7 @@ class FileProvenance:
     verified_attestation_count: int = 0
     observed_sha256: str | None = None
     publisher_identities: list[PublisherIdentity] = field(default_factory=list)
+    slsa_provenance: list[SlsaProvenance] = field(default_factory=list)
     error: str | None = None
     artifact: ArtifactInspection = field(default_factory=ArtifactInspection)
 
@@ -153,6 +191,12 @@ class ProvenanceConsistency:
     sdist_wheel_consistent: bool | None = None
     consistent_repositories: list[str] = field(default_factory=list)
     consistent_workflows: list[str] = field(default_factory=list)
+    builder_consistent: bool | None = None
+    source_commit_consistent: bool | None = None
+    build_type_consistent: bool | None = None
+    consistent_builders: list[str] = field(default_factory=list)
+    consistent_source_commits: list[str] = field(default_factory=list)
+    consistent_build_types: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -160,8 +204,16 @@ class ReleaseDriftSummary:
     compared_to_version: str | None = None
     publisher_repository_drift: bool | None = None
     publisher_workflow_drift: bool | None = None
+    signer_drift: bool | None = None
+    builder_drift: bool | None = None
+    source_commit_drift: bool | None = None
+    build_type_drift: bool | None = None
+    previous_signers: list[str] = field(default_factory=list)
     previous_repositories: list[str] = field(default_factory=list)
     previous_workflows: list[str] = field(default_factory=list)
+    previous_builders: list[str] = field(default_factory=list)
+    previous_source_commits: list[str] = field(default_factory=list)
+    previous_build_types: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -222,6 +274,7 @@ class PolicyEvaluation:
     fail_on_severity: str = "none"
     require_verified_provenance: str = "none"
     require_expected_repository_match: bool = False
+    allowed_publisher_organizations: list[str] = field(default_factory=list)
     allow_metadata_only: bool = True
     vulnerability_mode: str = "ignore"
     suppressions_applied: int = 0

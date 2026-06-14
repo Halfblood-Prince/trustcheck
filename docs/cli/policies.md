@@ -37,6 +37,7 @@ Example:
   "require_verified_provenance": "all",
   "allow_metadata_only": false,
   "require_expected_repository_match": true,
+  "allowed_publisher_organizations": ["github:pypa"],
   "vulnerability_mode": "kev",
   "fail_on_severity": "medium",
   "suppressions": [
@@ -56,6 +57,9 @@ Example:
 - `require_verified_provenance`: `none` or `all`
 - `allow_metadata_only`: `true` or `false`
 - `require_expected_repository_match`: `true` or `false`
+- `allowed_publisher_organizations`: organization names, optionally scoped as
+  `github:organization` or `gitlab:group/subgroup`; every verified publisher
+  identity must match
 - `vulnerability_mode`: `ignore`, `any`, `critical`, `kev`, or `fixable`
 - `fail_on_severity`: `none`, `medium`, or `high`
 - `suppressions`: advisory-ID or alias exceptions with required `owner`,
@@ -87,5 +91,6 @@ Example:
 trustcheck inspect sampleproject \
   --version 4.0.0 \
   --policy-file ./policy.json \
+  --trusted-publisher-organization github:pypa \
   --fail-on-risk-severity high
 ```

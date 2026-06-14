@@ -47,6 +47,7 @@ class ActionSettings:
     target: str
     policy: str = "default"
     expected_repo: str = ""
+    trusted_publisher_organizations: tuple[str, ...] = ()
     with_osv: bool = False
     osv_urls: tuple[str, ...] = ()
     with_ecosystems: bool = False
@@ -60,6 +61,13 @@ class ActionSettings:
     keyring_provider: str = "auto"
     allow_dependency_confusion: bool = False
     trusted_projects: tuple[str, ...] = ()
+    max_workers: int = 8
+    advisory_snapshots: tuple[str, ...] = ()
+    write_advisory_snapshot: str = ""
+    resume_state: str = ""
+    enable_plugins: bool = False
+    plugins: tuple[str, ...] = ()
+    plugin_config: str = ""
     remediation: str = "none"
     dry_run: bool = False
     allow_constraint_changes: bool = False
@@ -110,6 +118,14 @@ class ActionSettings:
             raise ActionInputError(
                 "'max-fix-attempts' must be at least 1"
             )
+        try:
+            max_workers = int(
+                environment.get("TRUSTCHECK_ACTION_MAX_WORKERS", "8")
+            )
+        except ValueError as exc:
+            raise ActionInputError("'max-workers' must be an integer") from exc
+        if max_workers < 1 or max_workers > 64:
+            raise ActionInputError("'max-workers' must be between 1 and 64")
         report_path = environment.get(
             "TRUSTCHECK_ACTION_REPORT_PATH", ""
         ).strip() or _default_report_path(output_format)
@@ -120,6 +136,12 @@ class ActionSettings:
             expected_repo=environment.get(
                 "TRUSTCHECK_ACTION_EXPECTED_REPO", ""
             ).strip(),
+            trusted_publisher_organizations=_parse_multi_value(
+                environment.get(
+                    "TRUSTCHECK_ACTION_TRUSTED_PUBLISHER_ORGANIZATIONS",
+                    "",
+                )
+            ),
             with_osv=_parse_bool(
                 environment.get("TRUSTCHECK_ACTION_WITH_OSV", "false"),
                 name="with-osv",
@@ -171,6 +193,35 @@ class ActionSettings:
             trusted_projects=_parse_multi_value(
                 environment.get("TRUSTCHECK_ACTION_TRUSTED_PROJECTS", "")
             ),
+            max_workers=max_workers,
+            advisory_snapshots=_parse_multi_value(
+                environment.get(
+                    "TRUSTCHECK_ACTION_ADVISORY_SNAPSHOTS",
+                    "",
+                )
+            ),
+            write_advisory_snapshot=environment.get(
+                "TRUSTCHECK_ACTION_WRITE_ADVISORY_SNAPSHOT",
+                "",
+            ).strip(),
+            resume_state=environment.get(
+                "TRUSTCHECK_ACTION_RESUME_STATE",
+                "",
+            ).strip(),
+            enable_plugins=_parse_bool(
+                environment.get(
+                    "TRUSTCHECK_ACTION_ENABLE_PLUGINS",
+                    "false",
+                ),
+                name="enable-plugins",
+            ),
+            plugins=_parse_multi_value(
+                environment.get("TRUSTCHECK_ACTION_PLUGINS", "")
+            ),
+            plugin_config=environment.get(
+                "TRUSTCHECK_ACTION_PLUGIN_CONFIG",
+                "",
+            ).strip(),
             remediation=remediation,
             dry_run=_parse_bool(
                 environment.get("TRUSTCHECK_ACTION_DRY_RUN", "false"),
@@ -257,6 +308,8 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
         )
     if settings.max_fix_attempts < 1:
         raise ActionInputError("'max-fix-attempts' must be at least 1")
+    if settings.max_workers < 1 or settings.max_workers > 64:
+        raise ActionInputError("'max-workers' must be between 1 and 64")
     if settings.dry_run and settings.remediation != "fix":
         raise ActionInputError("'dry-run' requires remediation mode 'fix'")
     if settings.create_pr and (
@@ -316,6 +369,12 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
                 arguments.extend(["--pr-title", settings.pr_title])
             if settings.pr_ready:
                 arguments.append("--pr-ready")
+        if settings.resume_state:
+            resume_state = _resolve_workspace_path(
+                settings.resume_state,
+                workspace,
+            )
+            arguments.extend(["--resume-state", str(resume_state)])
     else:
         if settings.remediation != "none":
             raise ActionInputError(
@@ -324,6 +383,11 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
         arguments = ["inspect", settings.target]
         if settings.expected_repo:
             arguments.extend(["--expected-repo", settings.expected_repo])
+
+    for organization in settings.trusted_publisher_organizations:
+        arguments.extend(
+            ["--trusted-publisher-organization", organization]
+        )
 
     policy_path = _resolve_workspace_path(settings.policy, workspace)
     if settings.policy in {"default", "strict"}:
@@ -360,6 +424,36 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
         arguments.append("--allow-dependency-confusion")
     for project in settings.trusted_projects:
         arguments.extend(["--trusted-project", project])
+    arguments.extend(["--max-workers", str(settings.max_workers)])
+    for snapshot in settings.advisory_snapshots:
+        snapshot_path = _resolve_workspace_path(snapshot, workspace)
+        if not snapshot_path.is_file():
+            raise ActionInputError(
+                f"advisory snapshot does not exist: {snapshot}"
+            )
+        arguments.extend(["--advisory-snapshot", str(snapshot_path)])
+    if settings.write_advisory_snapshot:
+        snapshot_output = _resolve_workspace_path(
+            settings.write_advisory_snapshot,
+            workspace,
+        )
+        arguments.extend(
+            ["--write-advisory-snapshot", str(snapshot_output)]
+        )
+    if settings.enable_plugins:
+        arguments.append("--enable-plugins")
+    for plugin in settings.plugins:
+        arguments.extend(["--plugin", plugin])
+    if settings.plugin_config:
+        plugin_config = _resolve_workspace_path(
+            settings.plugin_config,
+            workspace,
+        )
+        if not plugin_config.is_file():
+            raise ActionInputError(
+                f"plugin config does not exist: {settings.plugin_config}"
+            )
+        arguments.extend(["--plugin-config", str(plugin_config)])
     arguments.extend(["--format", "json"])
     return arguments
 

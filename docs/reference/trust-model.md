@@ -21,6 +21,46 @@ Recommendation tiers are documented in more detail in [Recommendation model](rec
 - `review-required`: medium-severity issues require manual review
 - `high-risk`: high-severity issues were detected
 
+## SLSA provenance interpretation
+
+For `https://slsa.dev/provenance/v1` statements, successful envelope and
+artifact verification is only the first step. Trustcheck also interprets and
+validates:
+
+- `buildDefinition.buildType`
+- untrusted `externalParameters`, including workflow repository, path, and ref
+- `resolvedDependencies`, selecting the source repository material and
+  requiring its full git commit digest
+- `runDetails.builder.id` and invocation metadata
+- agreement between source material, workflow, Trusted Publisher repository,
+  and Trusted Publisher workflow
+
+For the GitHub Actions workflow build type, the publisher and builder must be
+consistent with GitHub. A source repository, workflow path, or immutable
+workflow commit contradiction invalidates verification.
+
+Mutable workflow references, missing workflow revisions, weak auxiliary
+material digests, and action references not pinned to full commits remain
+explicit review findings. They indicate a weaker or less reproducible build,
+not proof that the artifact is malicious.
+
+Verified sdists and wheels are compared on repository, workflow, builder,
+source commit, and build type. Release history separately records changes in
+signer, repository, workflow, builder, source commit, and build type. A source
+commit normally changes between releases, so commit drift is retained as
+evidence without automatically creating a risk flag.
+
+Policies can restrict verified publishers to organization-owned repositories:
+
+```bash
+trustcheck inspect sampleproject \
+  --trusted-publisher-organization github:pypa
+```
+
+Entries may be unscoped (`pypa`) or provider-scoped (`github:pypa`,
+`gitlab:group/subgroup`). Every verified publisher identity must match the
+configured allowlist.
+
 ## Repository matching rules
 
 Repository matching is intentionally strict.

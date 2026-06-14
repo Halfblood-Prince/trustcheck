@@ -23,6 +23,8 @@ nav:
       - Trust model and repository matching: reference/trust-model.md
       - Malicious-package detection: reference/malicious-package-detection.md
       - Safe remediation: reference/remediation.md
+      - Performance and extensibility: reference/performance-extensibility.md
+      - Benchmarks: reference/benchmarks.md
       - Recommendation model: reference/recommendations.md
   - Guides:
       - TrustCheck Package Scanner: guides/ci-integration.md

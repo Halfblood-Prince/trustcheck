@@ -353,6 +353,15 @@ class PolicyCoverageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fail_on_severity"):
             policy_from_mapping({"fail_on_severity": "low"})
 
+        with self.assertRaisesRegex(ValueError, "organization allowlist"):
+            policy_from_mapping(
+                {
+                    "allowed_publisher_organizations": [
+                        "https://github.com/example"
+                    ]
+                }
+            )
+
     def test_resolve_policy_rejects_unknown_builtin(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown built-in policy"):
             resolve_policy(builtin_name="missing")
@@ -389,6 +398,43 @@ class PolicyCoverageTests(unittest.TestCase):
         self.assertEqual(
             [item.code for item in evaluation.violations],
             ["vulnerabilities_blocked", "publisher_repository_drift"],
+        )
+
+    def test_publisher_organization_policy_uses_verified_identities(self) -> None:
+        report = make_report()
+        allowed = evaluate_policy(
+            report,
+            PolicySettings(
+                allowed_publisher_organizations=["github:halfblood-prince"]
+            ),
+        )
+        self.assertTrue(allowed.passed)
+        self.assertEqual(
+            allowed.allowed_publisher_organizations,
+            ["github:halfblood-prince"],
+        )
+
+        blocked = evaluate_policy(
+            report,
+            PolicySettings(
+                allowed_publisher_organizations=["github:other-org"]
+            ),
+        )
+        self.assertEqual(
+            [violation.code for violation in blocked.violations],
+            ["publisher_organization_not_allowed"],
+        )
+
+        report.files[0].verified = False
+        unverified = evaluate_policy(
+            report,
+            PolicySettings(
+                allowed_publisher_organizations=["halfblood-prince"]
+            ),
+        )
+        self.assertEqual(
+            [violation.code for violation in unverified.violations],
+            ["publisher_organization_unverified"],
         )
 
     def test_vulnerability_modes_and_expiring_suppressions(self) -> None:

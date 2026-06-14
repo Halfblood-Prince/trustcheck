@@ -1,0 +1,31 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit-comparison:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install . pip-audit==2.10.0
+      - run: >-
+          python benchmarks/benchmark_against_pip_audit.py
+          --warmups 1
+          --iterations 5
+          --output benchmarks/results/${{ github.sha }}.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: trustcheck-pip-audit-benchmark-${{ github.sha }}
+          path: benchmarks/results/${{ github.sha }}.json
+          if-no-files-found: error

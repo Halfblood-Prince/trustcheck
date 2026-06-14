@@ -51,6 +51,7 @@
     "package_url": "https://pypi.org/project/demo/0.0.1/",
     "policy": {
       "allow_metadata_only": true,
+      "allowed_publisher_organizations": [],
       "enforced": false,
       "fail_on_severity": "none",
       "passed": true,
@@ -64,11 +65,17 @@
     },
     "project": "demo",
     "provenance_consistency": {
+      "build_type_consistent": null,
+      "builder_consistent": null,
+      "consistent_build_types": [],
+      "consistent_builders": [],
       "consistent_repositories": [],
+      "consistent_source_commits": [],
       "consistent_workflows": [],
       "has_sdist": false,
       "has_wheel": false,
-      "sdist_wheel_consistent": null
+      "sdist_wheel_consistent": null,
+      "source_commit_consistent": null
     },
     "publisher_trust": {
       "depth_label": "none",
@@ -79,11 +86,19 @@
     },
     "recommendation": "metadata-only",
     "release_drift": {
+      "build_type_drift": null,
+      "builder_drift": null,
       "compared_to_version": null,
+      "previous_build_types": [],
+      "previous_builders": [],
       "previous_repositories": [],
+      "previous_signers": [],
+      "previous_source_commits": [],
       "previous_workflows": [],
       "publisher_repository_drift": null,
-      "publisher_workflow_drift": null
+      "publisher_workflow_drift": null,
+      "signer_drift": null,
+      "source_commit_drift": null
     },
     "remediation": {
       "attempts": 0,
@@ -100,5 +115,5 @@
     "version": "0.0.1",
     "vulnerabilities": []
   },
-  "schema_version": "1.8.0"
+  "schema_version": "1.9.0"
 }

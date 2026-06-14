@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field, fields, replace
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from .models import (
     PolicyEvaluation,
@@ -14,6 +14,13 @@ from .models import (
     VulnerabilityRecord,
     VulnerabilitySuppression,
 )
+from .provenance import (
+    publisher_matches_organization_allowlist,
+    validate_publisher_organization_allowlist,
+)
+
+if TYPE_CHECKING:
+    from .plugins import PluginManager
 
 SeverityLevel = Literal["none", "medium", "high"]
 ProvenanceRequirement = Literal["none", "all"]
@@ -28,6 +35,7 @@ class PolicySettings:
     require_verified_provenance: ProvenanceRequirement = "none"
     allow_metadata_only: bool = True
     require_expected_repository_match: bool = False
+    allowed_publisher_organizations: list[str] = field(default_factory=list)
     vulnerability_mode: VulnerabilityMode = "ignore"
     fail_on_severity: SeverityLevel = "none"
     suppressions: list[VulnerabilitySuppression] = field(default_factory=list)
@@ -72,6 +80,7 @@ def advisory_evaluation_for(report: TrustReport) -> PolicyEvaluation:
         fail_on_severity="none",
         require_verified_provenance="none",
         require_expected_repository_match=False,
+        allowed_publisher_organizations=[],
         allow_metadata_only=True,
         vulnerability_mode="ignore",
         suppressions_applied=0,
@@ -86,6 +95,7 @@ def evaluate_policy(
     settings: PolicySettings,
     *,
     now: datetime | None = None,
+    plugin_manager: PluginManager | None = None,
 ) -> PolicyEvaluation:
     violations: list[PolicyViolation] = []
     suppressions_applied, suppressions_expired = _apply_suppressions(
@@ -141,6 +151,58 @@ def evaluate_policy(
                 if flag.code in matching_codes
             )
 
+    if settings.allowed_publisher_organizations:
+        verified_identities = [
+            identity
+            for file in report.files
+            if file.verified
+            for identity in file.publisher_identities
+        ]
+        disallowed = [
+            identity
+            for identity in verified_identities
+            if not publisher_matches_organization_allowlist(
+                identity,
+                settings.allowed_publisher_organizations,
+            )
+        ]
+        if not verified_identities:
+            violations.append(
+                PolicyViolation(
+                    code="publisher_organization_unverified",
+                    severity="high",
+                    message=(
+                        "Policy requires an organization-owned verified publisher, "
+                        "but no verified publisher identity was available."
+                    ),
+                )
+            )
+        elif disallowed:
+            observed = sorted(
+                {
+                    ":".join(
+                        (
+                            identity.kind or "unknown",
+                            identity.repository or "-",
+                            identity.workflow or "-",
+                        )
+                    )
+                    for identity in disallowed
+                }
+            )
+            violations.append(
+                PolicyViolation(
+                    code="publisher_organization_not_allowed",
+                    severity="high",
+                    message=(
+                        "Verified publisher identity is outside the allowed "
+                        "organization set: "
+                        + ", ".join(observed[:5])
+                        + "."
+                    ),
+                )
+            )
+
     blocked_vulnerabilities = [
         vulnerability
         for vulnerability in report.vulnerabilities
@@ -194,6 +256,9 @@ def evaluate_policy(
             )
         )
 
+    if plugin_manager is not None:
+        violations.extend(plugin_manager.evaluate_policy(report))
+
     evaluation = PolicyEvaluation(
         profile=settings.profile,
         passed=not violations,
@@ -201,6 +266,9 @@ def evaluate_policy(
         fail_on_severity=settings.fail_on_severity,
         require_verified_provenance=settings.require_verified_provenance,
         require_expected_repository_match=settings.require_expected_repository_match,
+        allowed_publisher_organizations=list(
+            settings.allowed_publisher_organizations
+        ),
         allow_metadata_only=settings.allow_metadata_only,
         vulnerability_mode=settings.vulnerability_mode,
         suppressions_applied=suppressions_applied,
@@ -277,6 +345,11 @@ def _validate_policy_settings(settings: PolicySettings) -> None:
         )
     if settings.fail_on_severity not in {"none", "medium", "high"}:
         raise ValueError("fail_on_severity must be 'none', 'medium', or 'high'")
+    settings.allowed_publisher_organizations = list(
+        validate_publisher_organization_allowlist(
+            settings.allowed_publisher_organizations
+        )
+    )
     _validate_suppressions(settings.suppressions)
 
 

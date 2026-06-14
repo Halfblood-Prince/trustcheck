@@ -61,6 +61,10 @@ class GitHubActionTests(unittest.TestCase):
                 target="sampleproject",
                 policy="policy.json",
                 expected_repo="https://github.com/pypa/sampleproject",
+                trusted_publisher_organizations=(
+                    "github:pypa",
+                    "github:example",
+                ),
                 with_osv=True,
                 osv_urls=("https://osv.internal.example",),
                 with_ecosystems=True,
@@ -80,6 +84,11 @@ class GitHubActionTests(unittest.TestCase):
         self.assertEqual(arguments[:2], ["inspect", "sampleproject"])
         self.assertIn("--expected-repo", arguments)
         self.assertIn("https://github.com/pypa/sampleproject", arguments)
+        self.assertEqual(
+            arguments.count("--trusted-publisher-organization"),
+            2,
+        )
+        self.assertIn("github:pypa", arguments)
         self.assertIn("--policy-file", arguments)
         self.assertIn("--with-osv", arguments)
         self.assertIn("--osv-url", arguments)
@@ -585,6 +594,9 @@ class GitHubActionTests(unittest.TestCase):
                 ),
                 "TRUSTCHECK_ACTION_KEYRING_PROVIDER": "subprocess",
                 "TRUSTCHECK_ACTION_ALLOW_DEPENDENCY_CONFUSION": "true",
+                "TRUSTCHECK_ACTION_TRUSTED_PUBLISHER_ORGANIZATIONS": (
+                    "github:pypa\ngitlab:example/platform"
+                ),
                 "TRUSTCHECK_ACTION_REMEDIATION": "fix",
                 "TRUSTCHECK_ACTION_DRY_RUN": "true",
                 "TRUSTCHECK_ACTION_ALLOW_CONSTRAINT_CHANGES": "true",
@@ -609,6 +621,10 @@ class GitHubActionTests(unittest.TestCase):
         )
         self.assertEqual(settings.keyring_provider, "subprocess")
         self.assertTrue(settings.allow_dependency_confusion)
+        self.assertEqual(
+            settings.trusted_publisher_organizations,
+            ("github:pypa", "gitlab:example/platform"),
+        )
         self.assertEqual(settings.remediation, "fix")
         self.assertTrue(settings.dry_run)
         self.assertTrue(settings.allow_constraint_changes)

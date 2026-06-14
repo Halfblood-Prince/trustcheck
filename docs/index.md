@@ -12,9 +12,14 @@ For a selected package version, `trustcheck` can:
 - inspect declared repository URLs from project metadata
 - retrieve provenance envelopes for each release artifact
 - verify attestations against the downloaded artifact digest
+- interpret SLSA v1 builder, build type, source commit, workflow, and material
+  evidence
+- detect mutable workflow references, unpinned build actions, and
+  source-to-artifact inconsistencies
 - extract Trusted Publisher identity details such as repository and workflow
 - compare expected repository input against declared and attested repository signals
-- flag publisher repository and workflow drift against the previous release
+- compare signer, repository, workflow, builder, build type, and source commit
+  evidence against the previous release
 - merge PyPI, OSV, custom OSV-compatible, and Ecosyste.ms advisory intelligence
 - normalize CVSS, CWE, aliases, fix versions, and withdrawn status
 - enrich CVEs with optional CISA KEV and FIRST EPSS intelligence
@@ -28,6 +33,10 @@ For a selected package version, `trustcheck` can:
   plus PE, ELF, and Mach-O binaries for suspicious capabilities
 - calculate, validate, dry-run, and transactionally apply minimal secure
   dependency upgrades
+- batch advisory queries, bound concurrent scans, checkpoint interrupted work,
+  and use SHA-256 content-addressed offline caches
+- extend advisory, index, artifact, policy, and rendering behavior through
+  explicitly enabled entry-point plugins
 - emit a concise human-readable report or structured JSON
 
 ## Install
@@ -139,7 +148,7 @@ print(report.to_dict()["report"]["coverage"]["status"])
 print(report.dependency_summary.highest_risk_recommendation)
 ```
 
-Machine-readable reports currently use JSON schema `1.8.0`. The package release
+Machine-readable reports currently use JSON schema `1.9.0`. The package release
 and report schema are versioned independently.
 
 <script
@@ -154,5 +163,7 @@ and report schema are versioned independently.
 - Use [JSON contract](reference/json-contract.md) for integrations
 - Use [Python API](reference/python-api.md) for programmatic use
 - Use [Compatibility](reference/compatibility.md) for API and JSON stability guarantees
+- Use [Performance and extensibility](reference/performance-extensibility.md) for batching, caching, snapshots, resume state, and plugins
+- Use [Benchmarks](reference/benchmarks.md) for the reproducible `pip-audit` comparison
 - Use [Trust model and repository matching](reference/trust-model.md) for verification semantics and diagnostics
 - Use [CI integration](guides/ci-integration.md) to wire `trustcheck` into GitHub Actions

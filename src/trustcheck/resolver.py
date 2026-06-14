@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import Distribution, distributions
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib import parse
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -24,6 +24,21 @@ from .indexes import (
 
 # Pip is invoked with a fixed argv list and the shell explicitly disabled.
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
+
+
+class RepositoryIndexClient(Protocol):
+    def find_dependency_confusion(
+        self,
+        projects: Sequence[str],
+        indexes: Sequence[str],
+    ) -> tuple[DependencyConfusionFinding, ...]: ...
+
+    def locate_artifact_index(
+        self,
+        project: str,
+        artifact_url: str | None,
+        indexes: Sequence[str],
+    ) -> str | None: ...
 
 
 class ResolutionError(RuntimeError):
@@ -116,7 +131,7 @@ class PipResolver:
     python_executable: str = sys.executable
     runner: CommandRunner = subprocess.run
     indexes: IndexConfiguration = field(default_factory=IndexConfiguration)
-    index_client: SimpleRepositoryClient | None = None
+    index_client: RepositoryIndexClient | None = None
     allow_dependency_confusion: bool = False
 
     def check_dependency_confusion(

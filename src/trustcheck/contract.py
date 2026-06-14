@@ -19,6 +19,8 @@ from .models import (
     PolicyEvaluation,
     PolicyViolation,
     ProvenanceConsistency,
+    ProvenanceIssue,
+    ProvenanceMaterial,
     PublisherIdentity,
     PublisherTrustSummary,
     ReleaseDriftSummary,
@@ -26,15 +28,16 @@ from .models import (
     ReportDiagnostics,
     RequestFailureDiagnostic,
     RiskFlag,
+    SlsaProvenance,
     TrustReport,
     VulnerabilityRecord,
     VulnerabilitySuppression,
 )
 
-JSON_SCHEMA_VERSION: Final = "1.8.0"
+JSON_SCHEMA_VERSION: Final = "1.9.0"
 JSON_SCHEMA_ID = f"urn:trustcheck:report:{JSON_SCHEMA_VERSION}"
-SchemaVersion: TypeAlias = Literal["1.8.0"]
-DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.8.0"
+SchemaVersion: TypeAlias = Literal["1.9.0"]
+DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.9.0"
 
 
 class RiskFlagPayload(BaseModel):
@@ -92,6 +95,46 @@ class PublisherIdentityPayload(BaseModel):
     workflow: str | None = None
     environment: str | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProvenanceIssuePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    severity: str
+    message: str
+    evidence: list[str] = Field(default_factory=list)
+
+
+class ProvenanceMaterialPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    uri: str
+    digests: dict[str, str] = Field(default_factory=dict)
+    name: str | None = None
+    source: bool = False
+
+
+class SlsaProvenancePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    predicate_type: str = "https://slsa.dev/provenance/v1"
+    valid: bool = False
+    signer_identity: str | None = None
+    source_uri: str | None = None
+    source_repository: str | None = None
+    source_commit: str | None = None
+    builder_id: str | None = None
+    build_type: str | None = None
+    workflow_uri: str | None = None
+    workflow_path: str | None = None
+    workflow_ref: str | None = None
+    workflow_ref_immutable: bool | None = None
+    invocation_id: str | None = None
+    materials: list[ProvenanceMaterialPayload] = Field(default_factory=list)
+    action_references: list[str] = Field(default_factory=list)
+    unpinned_actions: list[str] = Field(default_factory=list)
+    issues: list[ProvenanceIssuePayload] = Field(default_factory=list)
 
 
 class HeuristicFindingPayload(BaseModel):
@@ -166,6 +209,7 @@ class FileProvenancePayload(BaseModel):
     verified_attestation_count: int = 0
     observed_sha256: str | None = None
     publisher_identities: list[PublisherIdentityPayload] = Field(default_factory=list)
+    slsa_provenance: list[SlsaProvenancePayload] = Field(default_factory=list)
     error: str | None = None
     artifact: ArtifactInspectionPayload = Field(default_factory=ArtifactInspectionPayload)
 
@@ -197,6 +241,12 @@ class ProvenanceConsistencyPayload(BaseModel):
     sdist_wheel_consistent: bool | None = None
     consistent_repositories: list[str] = Field(default_factory=list)
     consistent_workflows: list[str] = Field(default_factory=list)
+    builder_consistent: bool | None = None
+    source_commit_consistent: bool | None = None
+    build_type_consistent: bool | None = None
+    consistent_builders: list[str] = Field(default_factory=list)
+    consistent_source_commits: list[str] = Field(default_factory=list)
+    consistent_build_types: list[str] = Field(default_factory=list)
 
 
 class ReleaseDriftSummaryPayload(BaseModel):
@@ -205,8 +255,16 @@ class ReleaseDriftSummaryPayload(BaseModel):
     compared_to_version: str | None = None
     publisher_repository_drift: bool | None = None
     publisher_workflow_drift: bool | None = None
+    signer_drift: bool | None = None
+    builder_drift: bool | None = None
+    source_commit_drift: bool | None = None
+    build_type_drift: bool | None = None
+    previous_signers: list[str] = Field(default_factory=list)
     previous_repositories: list[str] = Field(default_factory=list)
     previous_workflows: list[str] = Field(default_factory=list)
+    previous_builders: list[str] = Field(default_factory=list)
+    previous_source_commits: list[str] = Field(default_factory=list)
+    previous_build_types: list[str] = Field(default_factory=list)
 
 
 class MaliciousPackageAssessmentPayload(BaseModel):
@@ -272,6 +330,7 @@ class PolicyEvaluationPayload(BaseModel):
     fail_on_severity: str = "none"
     require_verified_provenance: str = "none"
     require_expected_repository_match: bool = False
+    allowed_publisher_organizations: list[str] = Field(default_factory=list)
     allow_metadata_only: bool = True
     vulnerability_mode: str = "ignore"
     suppressions_applied: int = 0
@@ -401,6 +460,22 @@ def deserialize_report(payload: Mapping[str, object]) -> TrustReport:
                 "publisher_identities": [
                     PublisherIdentity(**identity)
                     for identity in item["publisher_identities"]
+                ],
+                "slsa_provenance": [
+                    SlsaProvenance(
+                        **{
+                            **assessment,
+                            "materials": [
+                                ProvenanceMaterial(**material)
+                                for material in assessment["materials"]
+                            ],
+                            "issues": [
+                                ProvenanceIssue(**issue)
+                                for issue in assessment["issues"]
+                            ],
+                        }
+                    )
+                    for assessment in item["slsa_provenance"]
                 ],
                 "artifact": ArtifactInspection(
                     **{

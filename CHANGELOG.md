@@ -8,6 +8,30 @@ The project follows Semantic Versioning for the supported public API described i
 
 ### Added
 
+- Added bounded concurrent target scans, OSV `/v1/querybatch` support with
+  deduplicated advisory fetches, and configurable `--max-workers` controls.
+- Added SHA-256 content-addressed persistent caching with verified references,
+  atomic writes, legacy-cache reads, and fail-closed corruption handling.
+- Added versioned offline advisory snapshots and fingerprinted, atomic
+  `--resume-state` checkpoints that restore successful targets and retry
+  failures.
+- Added opt-in entry-point plugins for advisory sources, package indexes,
+  artifact analyzers, policy rules, and output renderers, including CLI,
+  Python API, configuration, and GitHub Action support.
+- Added a reproducible, alias-aware performance and correctness benchmark
+  against `pip-audit`, a scheduled benchmark workflow, and published raw
+  results.
+- Added deep SLSA v1 provenance interpretation for build definitions, source
+  materials and commits, builder identities, build types, workflow references,
+  invocation IDs, and resolved dependencies.
+- Added detection of mutable workflow references, unpinned build actions,
+  weak material digests, and source, workflow, builder, build-type, or
+  cross-artifact inconsistencies.
+- Added release-history comparison across signer, repository, workflow,
+  builder, source commit, and build type, plus organization-owned verified
+  publisher allowlists for CLI, policy files, and the GitHub Action.
+- Added deep provenance evidence to text, JSON, CycloneDX, SPDX, and the public
+  Python API; advanced the schema to `1.9.0`.
 - Added the safe remediation engine with `scan --plan-fixes`, `--fix`, and
   `--fix --dry-run`, bounded minimal-change dependency resolution, isolated
   lockfile regeneration, exact post-write rescans, transactional application,

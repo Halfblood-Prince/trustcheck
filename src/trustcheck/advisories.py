@@ -4,10 +4,12 @@ import json
 import math
 import re
 import socket
+import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib import error, parse, request
@@ -16,6 +18,7 @@ from packaging.utils import canonicalize_name
 
 from .models import VulnerabilityRecord
 from .pypi import DEFAULT_USER_AGENT, TRANSIENT_HTTP_STATUS_CODES, PypiClientError
+from .snapshots import AdvisorySnapshotStore
 
 OSV_BASE_URL = "https://api.osv.dev"
 OSV_SOURCE = "OSV"
@@ -33,6 +36,21 @@ class OsvQueryClient(Protocol):
 
     def query(self, project: str, version: str) -> list[dict[str, Any]]: ...
 
+    def query_batch(
+        self,
+        packages: Sequence[tuple[str, str]],
+    ) -> dict[tuple[str, str], list[dict[str, Any]]]: ...
+
+
+class AdvisorySourceClient(Protocol):
+    name: str
+
+    def query(
+        self,
+        project: str,
+        version: str,
+    ) -> Sequence[VulnerabilityRecord]: ...
+
 
 @dataclass(slots=True)
 class OsvClient:
@@ -42,19 +60,31 @@ class OsvClient:
     max_retries: int = 2
     backoff_factor: float = 0.25
     offline: bool = False
+    max_workers: int = 8
+    batch_size: int = 1000
     request_hook: Callable[[str, dict[str, Any]], None] | None = None
     sleep: Callable[[float], None] = time.sleep
     _cache: dict[tuple[str, str], list[dict[str, Any]]] = field(
         default_factory=dict,
         init=False,
     )
+    _vulnerability_cache: dict[str, dict[str, Any]] = field(
+        default_factory=dict,
+        init=False,
+    )
+    _lock: threading.RLock = field(
+        default_factory=threading.RLock,
+        init=False,
+        repr=False,
+    )
 
     def query(self, project: str, version: str) -> list[dict[str, Any]]:
         cache_key = (canonicalize_name(project), version)
-        cached = self._cache.get(cache_key)
+        with self._lock:
+            cached = self._cache.get(cache_key)
         if cached is not None:
             self._emit("cache_hit", url=f"{self.base_url}/v1/query", kind="json")
-            return cached
+            return deepcopy(cached)
         if self.offline:
             raise PypiClientError(
                 "offline mode enabled and OSV queries are unavailable",
@@ -102,8 +132,190 @@ class OsvClient:
             seen_page_tokens.add(next_page_token)
             page_token = next_page_token
 
-        self._cache[cache_key] = vulnerabilities
+        with self._lock:
+            self._cache[cache_key] = deepcopy(vulnerabilities)
         return vulnerabilities
+
+    def query_batch(
+        self,
+        packages: Sequence[tuple[str, str]],
+    ) -> dict[tuple[str, str], list[dict[str, Any]]]:
+        ordered: list[tuple[str, str]] = list(
+            dict.fromkeys(
+                (str(canonicalize_name(project)), version)
+                for project, version in packages
+            )
+        )
+        if not ordered:
+            return {}
+        results: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        missing: list[tuple[str, str]] = []
+        with self._lock:
+            for key in ordered:
+                cached = self._cache.get(key)
+                if cached is None:
+                    missing.append(key)
+                else:
+                    results[key] = deepcopy(cached)
+        if missing and self.offline:
+            raise PypiClientError(
+                "offline mode enabled and OSV batch queries are unavailable",
+                transient=False,
+                url=f"{self.base_url}/v1/querybatch",
+                code="advisory",
+                subcode="offline_unavailable",
+            )
+
+        for offset in range(0, len(missing), self.batch_size):
+            chunk = missing[offset : offset + self.batch_size]
+            try:
+                identifiers = self._query_batch_identifiers(chunk)
+            except PypiClientError as exc:
+                if exc.status_code not in {404, 405}:
+                    raise
+                fallback_records = self._fallback_query_records(chunk)
+                for key, records in fallback_records.items():
+                    with self._lock:
+                        self._cache[key] = deepcopy(records)
+                    results[key] = records
+                continue
+            unique_ids = sorted(
+                {
+                    identifier
+                    for values in identifiers.values()
+                    for identifier in values
+                }
+            )
+            full_records = self._load_vulnerabilities(unique_ids)
+            for key in chunk:
+                records = [
+                    deepcopy(full_records[identifier])
+                    for identifier in identifiers.get(key, [])
+                    if identifier in full_records
+                ]
+                with self._lock:
+                    self._cache[key] = deepcopy(records)
+                results[key] = records
+
+        return {key: results.get(key, []) for key in ordered}
+
+    def _query_batch_identifiers(
+        self,
+        packages: Sequence[tuple[str, str]],
+    ) -> dict[tuple[str, str], list[str]]:
+        identifiers: dict[tuple[str, str], list[str]] = {
+            package: [] for package in packages
+        }
+        pending: list[tuple[tuple[str, str], str | None]] = [
+            (package, None) for package in packages
+        ]
+        seen_tokens: dict[tuple[str, str], set[str]] = {
+            package: set() for package in packages
+        }
+        while pending:
+            query_payload = []
+            for (project, version), page_token in pending:
+                query: dict[str, Any] = {
+                    "package": {"name": project, "ecosystem": "PyPI"},
+                    "version": version,
+                }
+                if page_token:
+                    query["page_token"] = page_token
+                query_payload.append(query)
+            response = self._post_json(
+                "/v1/querybatch",
+                {"queries": query_payload},
+            )
+            raw_results = response.get("results")
+            if not isinstance(raw_results, list) or len(raw_results) != len(pending):
+                raise _response_shape_error(
+                    f"{self.base_url}/v1/querybatch",
+                    source="OSV",
+                )
+            next_pending: list[tuple[tuple[str, str], str | None]] = []
+            for (package, _), raw_result in zip(pending, raw_results, strict=True):
+                if not isinstance(raw_result, dict):
+                    raise _response_shape_error(
+                        f"{self.base_url}/v1/querybatch",
+                        source="OSV",
+                    )
+                raw_vulnerabilities = raw_result.get("vulns", [])
+                if not isinstance(raw_vulnerabilities, list):
+                    raise _response_shape_error(
+                        f"{self.base_url}/v1/querybatch",
+                        source="OSV",
+                    )
+                for item in raw_vulnerabilities:
+                    if not isinstance(item, dict):
+                        continue
+                    identifier = item.get("id")
+                    if (
+                        isinstance(identifier, str)
+                        and identifier not in identifiers[package]
+                    ):
+                        identifiers[package].append(identifier)
+                next_token = raw_result.get("next_page_token")
+                if isinstance(next_token, str) and next_token:
+                    if next_token in seen_tokens[package]:
+                        raise PypiClientError(
+                            "OSV returned a repeated batch pagination token",
+                            transient=False,
+                            url=f"{self.base_url}/v1/querybatch",
+                            code="advisory",
+                            subcode="pagination_invalid",
+                        )
+                    seen_tokens[package].add(next_token)
+                    next_pending.append((package, next_token))
+            pending = next_pending
+        return identifiers
+
+    def _fallback_query_records(
+        self,
+        packages: Sequence[tuple[str, str]],
+    ) -> dict[tuple[str, str], list[dict[str, Any]]]:
+        workers = min(max(1, self.max_workers), len(packages))
+        results: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(self.query, project, version): (project, version)
+                for project, version in packages
+            }
+            for future in as_completed(futures):
+                key = futures[future]
+                results[key] = future.result()
+        return results
+
+    def _load_vulnerabilities(
+        self,
+        identifiers: Sequence[str],
+    ) -> dict[str, dict[str, Any]]:
+        missing: list[str] = []
+        with self._lock:
+            for identifier in identifiers:
+                if identifier not in self._vulnerability_cache:
+                    missing.append(identifier)
+        if missing:
+            workers = min(max(1, self.max_workers), len(missing))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(self._get_vulnerability, identifier): identifier
+                    for identifier in missing
+                }
+                for future in as_completed(futures):
+                    identifier = futures[future]
+                    record = future.result()
+                    with self._lock:
+                        self._vulnerability_cache[identifier] = record
+        with self._lock:
+            return {
+                identifier: deepcopy(self._vulnerability_cache[identifier])
+                for identifier in identifiers
+                if identifier in self._vulnerability_cache
+            }
+
+    def _get_vulnerability(self, identifier: str) -> dict[str, Any]:
+        encoded = parse.quote(identifier, safe="")
+        return self._get_json(f"/v1/vulns/{encoded}")
 
     def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
@@ -176,6 +388,74 @@ class OsvClient:
             self._emit("retry", url=url, attempt=attempt + 1, delay=delay)
             self.sleep(delay)
 
+        raise AssertionError("unreachable")
+
+    def _get_json(self, path: str) -> dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        _require_http_url(url, source="OSV")
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": self.user_agent,
+        }
+        for attempt in range(self.max_retries + 1):
+            self._emit("request", url=url, attempt=attempt + 1, method="GET")
+            req = request.Request(url, headers=headers, method="GET")
+            try:
+                # The URL scheme is constrained to HTTP(S) before the request is built.
+                # nosemgrep
+                with request.urlopen(  # nosec B310
+                    req,
+                    timeout=self.timeout,
+                ) as response:
+                    response_bytes = bytes(response.read())
+                    self._emit(
+                        "response",
+                        url=url,
+                        attempt=attempt + 1,
+                        status=getattr(response, "status", None),
+                    )
+                    return self._decode_json(response_bytes, url)
+            except (TimeoutError, socket.timeout) as exc:
+                client_error = PypiClientError(
+                    f"unable to reach OSV: {exc}; retrying may help",
+                    transient=True,
+                    url=url,
+                    code="advisory",
+                    subcode="network_timeout",
+                )
+            except error.HTTPError as exc:
+                transient = exc.code in TRANSIENT_HTTP_STATUS_CODES
+                client_error = PypiClientError(
+                    f"OSV returned HTTP {exc.code} for {url}",
+                    transient=transient,
+                    status_code=exc.code,
+                    url=url,
+                    code="advisory",
+                    subcode="http_transient" if transient else "http_error",
+                )
+            except error.URLError as exc:
+                client_error = PypiClientError(
+                    f"unable to reach OSV: {exc.reason}; retrying may help",
+                    transient=True,
+                    url=url,
+                    code="advisory",
+                    subcode="network_error",
+                )
+            self._emit(
+                "failure",
+                url=url,
+                attempt=attempt + 1,
+                transient=client_error.transient,
+                message=str(client_error),
+                code=client_error.code,
+                subcode=client_error.subcode,
+                status_code=client_error.status_code,
+            )
+            if not client_error.transient or attempt == self.max_retries:
+                raise client_error
+            delay = self.backoff_factor * (2**attempt)
+            self._emit("retry", url=url, attempt=attempt + 1, delay=delay)
+            self.sleep(delay)
         raise AssertionError("unreachable")
 
     def _decode_json(self, payload: bytes, url: str) -> dict[str, Any]:
@@ -340,9 +620,22 @@ class OsvProvider:
 @dataclass(slots=True)
 class VulnerabilityIntelligenceClient:
     providers: tuple[OsvProvider, ...] = ()
+    advisory_sources: tuple[AdvisorySourceClient, ...] = ()
     kev_client: CisaKevClient | None = None
     epss_client: EpssClient | None = None
+    snapshot_store: AdvisorySnapshotStore | None = None
+    max_workers: int = 8
     request_hook: Callable[[str, dict[str, Any]], None] | None = None
+    _cache: dict[tuple[str, str], list[VulnerabilityRecord]] = field(
+        default_factory=dict,
+        init=False,
+    )
+    _enriched: set[tuple[str, str]] = field(default_factory=set, init=False)
+    _lock: threading.RLock = field(
+        default_factory=threading.RLock,
+        init=False,
+        repr=False,
+    )
 
     def query(
         self,
@@ -350,12 +643,16 @@ class VulnerabilityIntelligenceClient:
         version: str,
         pypi_vulnerabilities: Sequence[VulnerabilityRecord] = (),
     ) -> list[VulnerabilityRecord]:
-        provider_records = self._query_providers(project, version)
-        vulnerabilities = merge_vulnerabilities(
-            list(pypi_vulnerabilities),
-            *provider_records,
+        provider_records, enriched = self._cached_provider_records(
+            project,
+            version,
         )
-        self._enrich(vulnerabilities)
+        vulnerabilities = merge_vulnerabilities(
+            deepcopy(list(pypi_vulnerabilities)),
+            provider_records,
+        )
+        if not enriched or pypi_vulnerabilities:
+            self._enrich(vulnerabilities)
         return sorted(
             vulnerabilities,
             key=lambda item: (
@@ -364,38 +661,179 @@ class VulnerabilityIntelligenceClient:
             ),
         )
 
-    def _query_providers(
+    def prefetch(
+        self,
+        packages: Sequence[tuple[str, str]],
+    ) -> None:
+        ordered: list[tuple[str, str]] = list(
+            dict.fromkeys(
+                (str(canonicalize_name(project)), version)
+                for project, version in packages
+            )
+        )
+        missing = []
+        for project, version in ordered:
+            key = (project, version)
+            with self._lock:
+                if key in self._cache:
+                    continue
+            snapshot = (
+                self.snapshot_store.get(project, version)
+                if self.snapshot_store is not None
+                else None
+            )
+            if snapshot is not None:
+                with self._lock:
+                    self._cache[key] = snapshot
+                    self._enriched.add(key)
+                self._emit(
+                    "cache_hit",
+                    {
+                        "kind": "advisory-snapshot",
+                        "project": project,
+                        "version": version,
+                    },
+                )
+                continue
+            missing.append(key)
+        if not missing:
+            return
+
+        grouped: dict[tuple[str, str], list[VulnerabilityRecord]] = {
+            key: [] for key in missing
+        }
+        provider_results = self._query_providers_batch(missing)
+        for key, records in provider_results.items():
+            grouped[key].extend(records)
+        source_results = self._query_sources_batch(missing)
+        for key, records in source_results.items():
+            grouped[key].extend(records)
+
+        merged_by_key = {
+            key: merge_vulnerabilities(records)
+            for key, records in grouped.items()
+        }
+        all_records = [
+            record
+            for records in merged_by_key.values()
+            for record in records
+        ]
+        self._enrich(all_records)
+        with self._lock:
+            for key, records in merged_by_key.items():
+                self._cache[key] = deepcopy(records)
+                self._enriched.add(key)
+                if self.snapshot_store is not None:
+                    self.snapshot_store.put(key[0], key[1], records)
+
+    def flush_snapshots(self) -> None:
+        if self.snapshot_store is not None:
+            self.snapshot_store.write()
+
+    def _cached_provider_records(
         self,
         project: str,
         version: str,
-    ) -> list[list[VulnerabilityRecord]]:
-        if not self.providers:
-            return []
-        with ThreadPoolExecutor(max_workers=len(self.providers)) as executor:
-            futures = [
-                executor.submit(
-                    self._query_provider,
-                    provider,
-                    project,
-                    version,
-                )
-                for provider in self.providers
-            ]
-            return [future.result() for future in futures]
+    ) -> tuple[list[VulnerabilityRecord], bool]:
+        key = (canonicalize_name(project), version)
+        with self._lock:
+            cached = self._cache.get(key)
+            if cached is not None:
+                return deepcopy(cached), key in self._enriched
+        self.prefetch([key])
+        with self._lock:
+            return deepcopy(self._cache.get(key, [])), key in self._enriched
 
-    def _query_provider(
+    def _query_providers_batch(
+        self,
+        packages: Sequence[tuple[str, str]],
+    ) -> dict[tuple[str, str], list[VulnerabilityRecord]]:
+        combined: dict[tuple[str, str], list[VulnerabilityRecord]] = {
+            package: [] for package in packages
+        }
+        if not self.providers:
+            return combined
+        workers = min(max(1, self.max_workers), len(self.providers))
+        provider_results: dict[
+            int,
+            dict[tuple[str, str], list[VulnerabilityRecord]],
+        ] = {}
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(
+                    self._query_provider_batch,
+                    provider,
+                    packages,
+                ): index
+                for index, provider in enumerate(self.providers)
+            }
+            for future in as_completed(futures):
+                provider_results[futures[future]] = future.result()
+        for index in range(len(self.providers)):
+            for key, records in provider_results[index].items():
+                combined[key].extend(records)
+        return combined
+
+    def _query_provider_batch(
         self,
         provider: OsvProvider,
-        project: str,
-        version: str,
-    ) -> list[VulnerabilityRecord]:
+        packages: Sequence[tuple[str, str]],
+    ) -> dict[tuple[str, str], list[VulnerabilityRecord]]:
         with _instrument_request_hook(provider.client, self._emit):
-            items = provider.client.query(project, version)
-        return parse_osv_vulnerabilities(
-            items,
-            project=project,
-            source=provider.name,
-        )
+            query_batch = getattr(provider.client, "query_batch", None)
+            if callable(query_batch):
+                raw_results = query_batch(packages)
+            else:
+                raw_results = {
+                    package: provider.client.query(*package)
+                    for package in packages
+                }
+        return {
+            package: parse_osv_vulnerabilities(
+                raw_results.get(package, []),
+                project=package[0],
+                source=provider.name,
+            )
+            for package in packages
+        }
+
+    def _query_sources_batch(
+        self,
+        packages: Sequence[tuple[str, str]],
+    ) -> dict[tuple[str, str], list[VulnerabilityRecord]]:
+        combined: dict[tuple[str, str], list[VulnerabilityRecord]] = {
+            package: [] for package in packages
+        }
+        tasks = [
+            (source, package)
+            for source in self.advisory_sources
+            for package in packages
+        ]
+        if not tasks:
+            return combined
+        workers = min(max(1, self.max_workers), len(tasks))
+        ordered_results: dict[
+            int,
+            tuple[AdvisorySourceClient, tuple[str, str], Sequence[VulnerabilityRecord]],
+        ] = {}
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(source.query, *package): (index, source, package)
+                for index, (source, package) in enumerate(tasks)
+            }
+            for future in as_completed(futures):
+                index, source, package = futures[future]
+                ordered_results[index] = (source, package, future.result())
+        for index in range(len(tasks)):
+            source, package, values = ordered_results[index]
+            for record in values:
+                if not isinstance(record, VulnerabilityRecord):
+                    raise TypeError(
+                        f"advisory plugin {source.name!r} returned "
+                        f"{type(record).__name__}, expected VulnerabilityRecord"
+                    )
+                combined[package].append(deepcopy(record))
+        return combined
 
     def _enrich(self, vulnerabilities: list[VulnerabilityRecord]) -> None:
         if self.kev_client is None and self.epss_client is None:
@@ -410,7 +848,11 @@ class VulnerabilityIntelligenceClient:
         if not cve_ids:
             return
         tasks = []
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        workers = min(
+            max(1, self.max_workers),
+            int(self.kev_client is not None) + int(self.epss_client is not None),
+        )
+        with ThreadPoolExecutor(max_workers=workers) as executor:
             if self.kev_client is not None:
                 tasks.append(
                     (

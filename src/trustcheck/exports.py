@@ -7,18 +7,21 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import escape as html_escape
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path, PureWindowsPath
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 from urllib import parse
-from xml.etree import ElementTree  # nosec B405
 
 from packaging.utils import canonicalize_name
 
 from .contract import deserialize_report
-from .models import HeuristicFinding, TrustReport, VulnerabilityRecord
+from .models import HeuristicFinding, SlsaProvenance, TrustReport, VulnerabilityRecord
 from .resolver import ArtifactReference
+
+if TYPE_CHECKING:
+    from .plugins import PluginManager
 
 OUTPUT_FORMATS: Final = (
     "text",
@@ -37,6 +40,44 @@ SARIF_SCHEMA = (
 )
 CYCLONEDX_NAMESPACE = "http://cyclonedx.org/schema/bom/1.6"
 OPENVEX_CONTEXT = "https://openvex.dev/ns/v0.2.0"
+
+
+class _XmlElement:
+    def __init__(
+        self,
+        tag: str,
+        attributes: Mapping[str, str] | None = None,
+    ) -> None:
+        self.tag = tag
+        self.attributes = dict(attributes or {})
+        self.children: list[_XmlElement] = []
+        self.text: str | None = None
+
+
+class _XmlTree:
+    """Minimal serializer-only XML tree for deterministic CycloneDX output."""
+
+    @staticmethod
+    def Element(
+        tag: str,
+        attributes: Mapping[str, str] | None = None,
+    ) -> _XmlElement:
+        return _XmlElement(tag, attributes)
+
+    @staticmethod
+    def SubElement(
+        parent: _XmlElement,
+        tag: str,
+        attributes: Mapping[str, str] | None = None,
+    ) -> _XmlElement:
+        element = _XmlElement(tag, attributes)
+        parent.children.append(element)
+        return element
+
+    @staticmethod
+    def serialize(element: _XmlElement) -> str:
+        document = _serialize_xml_element(element, level=0, is_root=True)
+        return "<?xml version='1.0' encoding='utf-8'?>\n" + document
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +127,7 @@ def render_export(
     source_name: str,
     failures: Sequence[Mapping[str, str]] = (),
     generated_at: datetime | None = None,
+    plugin_manager: PluginManager | None = None,
 ) -> str:
     timestamp = _timestamp(generated_at)
     if output_format == "sarif":
@@ -104,6 +146,13 @@ def render_export(
         return _json_text(payload)
     if output_format == "markdown":
         return _markdown_document(packages, source_name, failures)
+    if plugin_manager is not None:
+        return plugin_manager.render(
+            output_format,
+            packages=packages,
+            source_name=source_name,
+            failures=failures,
+        )
     raise ValueError(f"unsupported industry output format: {output_format}")
 
 
@@ -112,6 +161,7 @@ def render_payload_export(
     payload: Mapping[str, object],
     *,
     generated_at: datetime | None = None,
+    plugin_manager: PluginManager | None = None,
 ) -> str:
     packages, source_name, failures = export_packages_from_payload(payload)
     return render_export(
@@ -120,6 +170,7 @@ def render_payload_export(
         source_name=source_name,
         failures=failures,
         generated_at=generated_at,
+        plugin_manager=plugin_manager,
     )
 
 
@@ -841,6 +892,55 @@ def _cyclonedx_properties(
                     "value": digest,
                 }
             )
+    for filename, index, assessment in _slsa_assessments(report):
+        properties.append(
+            {
+                "name": (
+                    "trustcheck:provenance:slsa:"
+                    f"{_property_token(filename)}:{index}"
+                ),
+                "value": json.dumps(
+                    {
+                        "predicate_type": assessment.predicate_type,
+                        "signer_identity": assessment.signer_identity,
+                        "source_uri": assessment.source_uri,
+                        "source_repository": assessment.source_repository,
+                        "source_commit": assessment.source_commit,
+                        "builder_id": assessment.builder_id,
+                        "build_type": assessment.build_type,
+                        "workflow_uri": assessment.workflow_uri,
+                        "workflow_path": assessment.workflow_path,
+                        "workflow_ref": assessment.workflow_ref,
+                        "workflow_ref_immutable": (
+                            assessment.workflow_ref_immutable
+                        ),
+                        "invocation_id": assessment.invocation_id,
+                        "materials": [
+                            {
+                                "uri": material.uri,
+                                "digests": material.digests,
+                                "name": material.name,
+                                "source": material.source,
+                            }
+                            for material in assessment.materials
+                        ],
+                        "action_references": assessment.action_references,
+                        "unpinned_actions": assessment.unpinned_actions,
+                        "issues": [
+                            {
+                                "code": issue.code,
+                                "severity": issue.severity,
+                                "message": issue.message,
+                                "evidence": issue.evidence,
+                            }
+                            for issue in assessment.issues
+                        ],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            }
+        )
     properties.extend(
         {
             "name": (
@@ -909,6 +1009,16 @@ def _cyclonedx_properties(
         for violation in report.policy.violations
     )
     return properties
+
+
+def _slsa_assessments(
+    report: TrustReport,
+) -> list[tuple[str, int, SlsaProvenance]]:
+    return [
+        (file.filename, index, assessment)
+        for file in report.files
+        for index, assessment in enumerate(file.slsa_provenance, start=1)
+    ]
 
 
 def _cyclonedx_dependencies(
@@ -1031,19 +1141,18 @@ def _cyclonedx_xml(
     timestamp: str,
 ) -> str:
     document = _cyclonedx_document(packages, source_name, failures, timestamp)
-    ElementTree.register_namespace("", CYCLONEDX_NAMESPACE)
-    root = ElementTree.Element(
+    root = _XmlTree.Element(
         _xml_tag("bom"),
         {
             "serialNumber": str(document["serialNumber"]),
             "version": "1",
         },
     )
-    metadata = ElementTree.SubElement(root, _xml_tag("metadata"))
+    metadata = _XmlTree.SubElement(root, _xml_tag("metadata"))
     _xml_text(metadata, "timestamp", timestamp)
-    tools = ElementTree.SubElement(metadata, _xml_tag("tools"))
-    tool_components = ElementTree.SubElement(tools, _xml_tag("components"))
-    tool = ElementTree.SubElement(
+    tools = _XmlTree.SubElement(metadata, _xml_tag("tools"))
+    tool_components = _XmlTree.SubElement(tools, _xml_tag("components"))
+    tool = _XmlTree.SubElement(
         tool_components,
         _xml_tag("component"),
         {"type": "application"},
@@ -1055,9 +1164,9 @@ def _cyclonedx_xml(
         document["metadata"]["properties"],
     )
 
-    components_element = ElementTree.SubElement(root, _xml_tag("components"))
+    components_element = _XmlTree.SubElement(root, _xml_tag("components"))
     for component in document["components"]:
-        component_element = ElementTree.SubElement(
+        component_element = _XmlTree.SubElement(
             components_element,
             _xml_tag("component"),
             {
@@ -1074,12 +1183,12 @@ def _cyclonedx_xml(
                 str(component["description"]),
             )
         if component.get("hashes"):
-            hashes = ElementTree.SubElement(
+            hashes = _XmlTree.SubElement(
                 component_element,
                 _xml_tag("hashes"),
             )
             for item in component["hashes"]:
-                hash_element = ElementTree.SubElement(
+                hash_element = _XmlTree.SubElement(
                     hashes,
                     _xml_tag("hash"),
                     {"alg": str(item["alg"])},
@@ -1087,12 +1196,12 @@ def _cyclonedx_xml(
                 hash_element.text = str(item["content"])
         _xml_text(component_element, "purl", str(component["purl"]))
         if component.get("externalReferences"):
-            references = ElementTree.SubElement(
+            references = _XmlTree.SubElement(
                 component_element,
                 _xml_tag("externalReferences"),
             )
             for reference in component["externalReferences"]:
-                reference_element = ElementTree.SubElement(
+                reference_element = _XmlTree.SubElement(
                     references,
                     _xml_tag("reference"),
                     {"type": str(reference["type"])},
@@ -1100,18 +1209,18 @@ def _cyclonedx_xml(
                 _xml_text(reference_element, "url", str(reference["url"]))
         _xml_properties(component_element, component.get("properties", []))
 
-    dependencies_element = ElementTree.SubElement(
+    dependencies_element = _XmlTree.SubElement(
         root,
         _xml_tag("dependencies"),
     )
     for relationship in document["dependencies"]:
-        dependency = ElementTree.SubElement(
+        dependency = _XmlTree.SubElement(
             dependencies_element,
             _xml_tag("dependency"),
             {"ref": str(relationship["ref"])},
         )
         for child_ref in relationship["dependsOn"]:
-            ElementTree.SubElement(
+            _XmlTree.SubElement(
                 dependency,
                 _xml_tag("dependency"),
                 {"ref": str(child_ref)},
@@ -1119,12 +1228,12 @@ def _cyclonedx_xml(
 
     vulnerabilities = document["vulnerabilities"]
     if vulnerabilities:
-        vulnerabilities_element = ElementTree.SubElement(
+        vulnerabilities_element = _XmlTree.SubElement(
             root,
             _xml_tag("vulnerabilities"),
         )
         for vulnerability in vulnerabilities:
-            vulnerability_element = ElementTree.SubElement(
+            vulnerability_element = _XmlTree.SubElement(
                 vulnerabilities_element,
                 _xml_tag("vulnerability"),
                 {"bom-ref": str(vulnerability["bom-ref"])},
@@ -1132,7 +1241,7 @@ def _cyclonedx_xml(
             _xml_text(vulnerability_element, "id", str(vulnerability["id"]))
             source = vulnerability.get("source")
             if isinstance(source, Mapping):
-                source_element = ElementTree.SubElement(
+                source_element = _XmlTree.SubElement(
                     vulnerability_element,
                     _xml_tag("source"),
                 )
@@ -1142,12 +1251,12 @@ def _cyclonedx_xml(
                     _xml_text(source_element, "url", str(source["url"]))
             ratings = vulnerability.get("ratings")
             if isinstance(ratings, list) and ratings:
-                ratings_element = ElementTree.SubElement(
+                ratings_element = _XmlTree.SubElement(
                     vulnerability_element,
                     _xml_tag("ratings"),
                 )
                 for rating in ratings:
-                    rating_element = ElementTree.SubElement(
+                    rating_element = _XmlTree.SubElement(
                         ratings_element,
                         _xml_tag("rating"),
                     )
@@ -1176,7 +1285,7 @@ def _cyclonedx_xml(
                         )
             cwes = vulnerability.get("cwes")
             if isinstance(cwes, list) and cwes:
-                cwes_element = ElementTree.SubElement(
+                cwes_element = _XmlTree.SubElement(
                     vulnerability_element,
                     _xml_tag("cwes"),
                 )
@@ -1187,12 +1296,12 @@ def _cyclonedx_xml(
                 "description",
                 str(vulnerability["description"]),
             )
-            affects_element = ElementTree.SubElement(
+            affects_element = _XmlTree.SubElement(
                 vulnerability_element,
                 _xml_tag("affects"),
             )
             for affected in vulnerability["affects"]:
-                target_element = ElementTree.SubElement(
+                target_element = _XmlTree.SubElement(
                     affects_element,
                     _xml_tag("target"),
                 )
@@ -1201,12 +1310,7 @@ def _cyclonedx_xml(
                 vulnerability_element,
                 vulnerability.get("properties", []),
             )
-    ElementTree.indent(root, space="  ")
-    return ElementTree.tostring(
-        root,
-        encoding="unicode",
-        xml_declaration=True,
-    )
+    return _XmlTree.serialize(root)
 
 
 def _spdx_document(
@@ -1423,6 +1527,27 @@ def _spdx_annotations(
         for artifact in _all_artifacts(package)
         for algorithm, digest in artifact.hashes
     )
+    comments.extend(
+        (
+            f"{spdx_id}:trustcheck:provenance:slsa:{filename}:{index}:"
+            + json.dumps(
+                {
+                    "signer": assessment.signer_identity,
+                    "source": assessment.source_repository,
+                    "commit": assessment.source_commit,
+                    "builder": assessment.builder_id,
+                    "build_type": assessment.build_type,
+                    "workflow": assessment.workflow_path,
+                    "workflow_ref": assessment.workflow_ref,
+                    "materials": len(assessment.materials),
+                    "issues": [issue.code for issue in assessment.issues],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        for filename, index, assessment in _slsa_assessments(report)
+    )
     return [
         {
             "annotationDate": timestamp,
@@ -1485,6 +1610,27 @@ def _spdx_trust_comment(package: ExportPackage) -> str:
         )
         for artifact in _all_artifacts(package)
         for algorithm, digest in artifact.hashes
+    )
+    lines.extend(
+        (
+            f"trustcheck:provenance:slsa:{filename}:{index}="
+            + json.dumps(
+                {
+                    "signer": assessment.signer_identity,
+                    "source": assessment.source_repository,
+                    "commit": assessment.source_commit,
+                    "builder": assessment.builder_id,
+                    "build_type": assessment.build_type,
+                    "workflow": assessment.workflow_path,
+                    "workflow_ref": assessment.workflow_ref,
+                    "materials": len(assessment.materials),
+                    "issues": [issue.code for issue in assessment.issues],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        for filename, index, assessment in _slsa_assessments(report)
     )
     return "\n".join(lines)
 
@@ -2034,27 +2180,86 @@ def _xml_tag(name: str) -> str:
     return f"{{{CYCLONEDX_NAMESPACE}}}{name}"
 
 
-def _xml_text(parent: ElementTree.Element, name: str, value: str) -> None:
-    element = ElementTree.SubElement(parent, _xml_tag(name))
+def _xml_text(parent: _XmlElement, name: str, value: str) -> None:
+    element = _XmlTree.SubElement(parent, _xml_tag(name))
     element.text = value
 
 
 def _xml_properties(
-    parent: ElementTree.Element,
+    parent: _XmlElement,
     properties: object,
 ) -> None:
     if not isinstance(properties, list) or not properties:
         return
-    properties_element = ElementTree.SubElement(
+    properties_element = _XmlTree.SubElement(
         parent,
         _xml_tag("properties"),
     )
     for item in properties:
         if not isinstance(item, Mapping):
             continue
-        property_element = ElementTree.SubElement(
+        property_element = _XmlTree.SubElement(
             properties_element,
             _xml_tag("property"),
             {"name": str(item.get("name") or "trustcheck:property")},
         )
         property_element.text = str(item.get("value") or "")
+
+
+def _serialize_xml_element(
+    element: _XmlElement,
+    *,
+    level: int,
+    is_root: bool,
+) -> str:
+    indentation = "  " * level
+    tag = _xml_local_name(element.tag)
+    attributes = dict(element.attributes)
+    if is_root:
+        attributes = {"xmlns": CYCLONEDX_NAMESPACE, **attributes}
+    rendered_attributes = "".join(
+        f' {name}="{_xml_escape(value, attribute=True)}"'
+        for name, value in attributes.items()
+    )
+    if not element.children:
+        if element.text is None:
+            return f"{indentation}<{tag}{rendered_attributes} />"
+        return (
+            f"{indentation}<{tag}{rendered_attributes}>"
+            f"{_xml_escape(element.text)}</{tag}>"
+        )
+    children = "\n".join(
+        _serialize_xml_element(child, level=level + 1, is_root=False)
+        for child in element.children
+    )
+    text = _xml_escape(element.text) if element.text is not None else ""
+    return (
+        f"{indentation}<{tag}{rendered_attributes}>{text}\n"
+        f"{children}\n"
+        f"{indentation}</{tag}>"
+    )
+
+
+def _xml_local_name(tag: str) -> str:
+    if tag.startswith("{"):
+        _, _, local_name = tag.partition("}")
+        return local_name
+    return tag
+
+
+def _xml_escape(value: object, *, attribute: bool = False) -> str:
+    sanitized = "".join(
+        character
+        for character in str(value)
+        if _is_xml_character(ord(character))
+    )
+    return html_escape(sanitized, quote=attribute)
+
+
+def _is_xml_character(codepoint: int) -> bool:
+    return (
+        codepoint in {0x09, 0x0A, 0x0D}
+        or 0x20 <= codepoint <= 0xD7FF
+        or 0xE000 <= codepoint <= 0xFFFD
+        or 0x10000 <= codepoint <= 0x10FFFF
+    )

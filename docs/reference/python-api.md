@@ -35,6 +35,19 @@
 - `trustcheck.analyze_python_source`
 - `trustcheck.inspect_native_binary`
 - `trustcheck.heuristic_score`
+- `trustcheck.ContentAddressedCache`
+- `trustcheck.AdvisorySnapshotStore`
+- `trustcheck.ADVISORY_SNAPSHOT_SCHEMA`
+- `trustcheck.PluginManager`
+- `trustcheck.PluginDescriptor`
+- `trustcheck.PluginError`
+- `trustcheck.AdvisorySourcePlugin`
+- `trustcheck.IndexPlugin`
+- `trustcheck.ArtifactAnalyzerPlugin`
+- `trustcheck.PolicyRulePlugin`
+- `trustcheck.RendererPlugin`
+- `trustcheck.PLUGIN_API_VERSION`
+- `trustcheck.PLUGIN_GROUPS`
 
 Everything else under `trustcheck.*` should be treated as internal implementation detail and may change between minor releases.
 
@@ -71,6 +84,20 @@ report = inspect_package(
 Configured providers are queried concurrently. Results merge by identifiers
 and aliases, then receive normalized CVSS, CWE, withdrawal, fix-version, KEV,
 and EPSS fields.
+
+`VulnerabilityIntelligenceClient.prefetch()` performs bounded multi-package
+OSV batch queries. An `AdvisorySnapshotStore` can be supplied for reusable
+offline records, and `flush_snapshots()` atomically writes configured output.
+
+## Plugin API
+
+`PluginManager` discovers entry points only when explicitly enabled. It routes
+advisory sources, index clients, artifact analyzers, policy rules, and
+renderers through the public protocol types listed above. Plugin API version
+`1` requires deterministic return values and thread-safe plugin instances.
+
+See [Performance and extensibility](performance-extensibility.md) for entry
+point group names and registration examples.
 
 ## Industry exports
 
@@ -354,10 +381,22 @@ for flag in report.risk_flags:
 
 for file in report.files:
     print(file.filename, file.verified, file.error)
+    for provenance in file.slsa_provenance:
+        print(
+            provenance.source_repository,
+            provenance.source_commit,
+            provenance.builder_id,
+        )
 
 for dependency in report.dependencies:
     print(dependency.project, dependency.depth, dependency.recommendation, dependency.error)
 ```
+
+The public deep-provenance surface includes `SlsaProvenance`,
+`ProvenanceMaterial`, `ProvenanceIssue`, `analyze_slsa_provenance(...)`, and
+publisher-organization allowlist helpers. Normal package inspection populates
+these models only after the SLSA statement, signature, subject filename, and
+artifact digest have verified.
 
 ## Remediation API
 

@@ -6,7 +6,7 @@ from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from packaging.markers import default_environment
@@ -42,8 +42,12 @@ from .models import (
     VulnerabilityRecord,
 )
 from .policy import advisory_evaluation_for
+from .provenance import SLSA_PROVENANCE_V1, analyze_slsa_provenance
 from .pypi import PackageClient, PypiClient, PypiClientError
 from .resolver import ArtifactReference, PipResolver, ResolutionError, TargetEnvironment
+
+if TYPE_CHECKING:
+    from .plugins import PluginManager
 
 GITHUB_RESERVED_SEGMENTS = {
     "about",
@@ -211,6 +215,7 @@ def inspect_package(
     expected_artifacts: Sequence[ArtifactReference] = (),
     dependency_confusion_indexes: Sequence[str] = (),
     trusted_projects: Sequence[str] = (),
+    plugin_manager: PluginManager | None = None,
     _dependency_context: DependencyTraversalContext | None = None,
 ) -> TrustReport:
     client = client or PypiClient()
@@ -295,6 +300,7 @@ def inspect_package(
             inspect_artifacts=inspect_artifacts,
             expected_requires_dist=declared_dependencies,
             expected_artifacts=expected_artifacts,
+            plugin_manager=plugin_manager,
         )
         if inspect_artifacts:
             compare_artifact_metadata(file.artifact for file in files)
@@ -359,6 +365,7 @@ def inspect_package(
                 locked_versions=normalized_locked_versions,
                 complete_locked_versions=complete_locked_versions,
                 trusted_projects=trusted_projects,
+                plugin_manager=plugin_manager,
             )
         report.dependency_summary = _build_dependency_summary(
             declared_dependencies,
@@ -382,6 +389,7 @@ def _collect_files(
     inspect_artifacts: bool = False,
     expected_requires_dist: list[str] | None = None,
     expected_artifacts: Sequence[ArtifactReference] = (),
+    plugin_manager: PluginManager | None = None,
 ) -> list[FileProvenance]:
     urls = payload.get("urls") or []
     selected_urls = _select_expected_artifacts(urls, expected_artifacts)
@@ -441,6 +449,16 @@ def _collect_files(
                     expected_version=version,
                     expected_requires_dist=expected_requires_dist,
                 )
+                if plugin_manager is not None:
+                    provenance.artifact.heuristic_findings.extend(
+                        plugin_manager.analyze_artifact(
+                            filename=filename,
+                            payload=artifact_bytes,
+                            project=project,
+                            version=version,
+                            inspection=provenance.artifact,
+                        )
+                    )
                 if provenance.artifact.error and diagnostics is not None:
                     diagnostics.add_artifact_failure(
                         filename=filename,
@@ -490,7 +508,33 @@ def _collect_files(
                 )
                 for bundle in bundles:
                     for attestation in bundle.attestations:
-                        attestation.verify(bundle.publisher, dist)
+                        predicate_type, predicate = attestation.verify(
+                            bundle.publisher,
+                            dist,
+                        )
+                        if (
+                            predicate_type == SLSA_PROVENANCE_V1
+                            and predicate is not None
+                        ):
+                            provenance.slsa_provenance.append(
+                                analyze_slsa_provenance(
+                                    predicate,
+                                    publisher_kind=bundle.publisher.kind,
+                                    publisher_repository=getattr(
+                                        bundle.publisher,
+                                        "repository",
+                                        None,
+                                    ),
+                                    publisher_workflow=(
+                                        getattr(bundle.publisher, "workflow", None)
+                                        or getattr(
+                                            bundle.publisher,
+                                            "workflow_filepath",
+                                            None,
+                                        )
+                                    ),
+                                )
+                            )
                         provenance.verified_attestation_count += 1
 
             provenance.verified = (
@@ -699,6 +743,7 @@ def _inspect_dependencies(
     locked_versions: Mapping[str, str],
     complete_locked_versions: bool,
     trusted_projects: Sequence[str],
+    plugin_manager: PluginManager | None,
 ) -> list[DependencyInspection]:
     inspections: list[DependencyInspection] = []
     environment: dict[str, str] = {
@@ -727,6 +772,7 @@ def _inspect_dependencies(
             locked_versions=locked_versions,
             complete_locked_versions=complete_locked_versions,
             trusted_projects=trusted_projects,
+            plugin_manager=plugin_manager,
         )
         if inspection is None:
             continue
@@ -759,6 +805,7 @@ def _inspect_dependency_requirement(
     locked_versions: Mapping[str, str],
     complete_locked_versions: bool,
     trusted_projects: Sequence[str],
+    plugin_manager: PluginManager | None,
 ) -> tuple[DependencyInspection | None, list[str]]:
     try:
         requirement = Requirement(requirement_text)
@@ -832,6 +879,7 @@ def _inspect_dependency_requirement(
             locked_versions=locked_versions,
             complete_locked_versions=complete_locked_versions,
             trusted_projects=trusted_projects,
+            plugin_manager=plugin_manager,
         )
         if dependency_progress_callback is not None and not nested_report.files:
             dependency_progress_callback(project_name, depth, 100, True)
@@ -1515,22 +1563,176 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
         )
 
     if report.provenance_consistency.sdist_wheel_consistent is False:
+        mismatches = [
+            label
+            for label, consistent in (
+                (
+                    "builder identity",
+                    report.provenance_consistency.builder_consistent,
+                ),
+                (
+                    "source commit",
+                    report.provenance_consistency.source_commit_consistent,
+                ),
+                (
+                    "build type",
+                    report.provenance_consistency.build_type_consistent,
+                ),
+            )
+            if consistent is False
+        ]
+        if not mismatches:
+            mismatches.append("publisher repository or workflow identity")
         flags.append(
             RiskFlag(
                 code="sdist_wheel_provenance_mismatch",
                 severity="high",
                 message=(
-                    "Verified sdist and wheel provenance do not agree on the "
-                    "publisher repository or workflow."
+                    "Verified sdist and wheel provenance do not agree on their "
+                    "source or build identity."
                 ),
                 why=[
-                    "The verified sdist and wheel do not overlap on "
-                    "repository or workflow identity.",
+                    "Mismatched fields: " + ", ".join(mismatches) + ".",
                 ],
                 remediation=[
                     "Inspect both artifacts separately before installation.",
                     "Ask the maintainer why different build sources or "
                     "workflows produced the release files.",
+                ],
+            )
+        )
+
+    deep_issues: dict[tuple[str, str], list[str]] = {}
+    for file in report.files:
+        if not file.verified:
+            continue
+        for assessment in file.slsa_provenance:
+            for issue in assessment.issues:
+                key = (issue.code, issue.severity)
+                evidence = deep_issues.setdefault(key, [])
+                details = ", ".join(issue.evidence)
+                evidence.append(
+                    f"{file.filename}: {issue.message}"
+                    + (f" ({details})" if details else "")
+                )
+    for (code, severity), evidence in sorted(deep_issues.items()):
+        messages = {
+            "mutable_workflow_reference": (
+                "Verified SLSA provenance uses a mutable workflow reference."
+            ),
+            "missing_workflow_reference": (
+                "Verified SLSA provenance does not identify the workflow revision."
+            ),
+            "unpinned_build_actions": (
+                "Verified SLSA provenance contains build actions that are not "
+                "pinned to immutable commits."
+            ),
+            "weak_material_digest": (
+                "Verified SLSA provenance contains build materials without a "
+                "strong digest."
+            ),
+        }
+        flags.append(
+            RiskFlag(
+                code=code,
+                severity=severity,
+                message=messages.get(code, "SLSA provenance requires review."),
+                why=evidence[:5],
+                remediation=[
+                    "Pin workflows and build actions to full commit digests.",
+                    "Require strong digests for every resolved build material.",
+                ],
+            )
+        )
+
+    deep_values = {
+        "source repository": _collect_verified_slsa_values(
+            report.files,
+            "source_repository",
+        ),
+        "source commit": _collect_verified_slsa_values(
+            report.files,
+            "source_commit",
+        ),
+    }
+    inconsistent_sources = [
+        f"{label}: {', '.join(sorted(values))}"
+        for label, values in deep_values.items()
+        if len(values) > 1
+    ]
+    if inconsistent_sources:
+        flags.append(
+            RiskFlag(
+                code="release_slsa_source_inconsistency",
+                severity="high",
+                message=(
+                    "Verified artifacts in the same release were attributed to "
+                    "different SLSA source repositories or commits."
+                ),
+                why=inconsistent_sources,
+                remediation=[
+                    "Do not treat the release as a single reproducible artifact set.",
+                    "Confirm every artifact was built from the intended release commit.",
+                ],
+            )
+        )
+
+    build_values = {
+        "builder": _collect_verified_slsa_values(report.files, "builder_id"),
+        "build type": _collect_verified_slsa_values(report.files, "build_type"),
+        "workflow": _collect_verified_slsa_values(report.files, "workflow_path"),
+    }
+    inconsistent_builds = [
+        f"{label}: {', '.join(sorted(values))}"
+        for label, values in build_values.items()
+        if len(values) > 1
+    ]
+    if inconsistent_builds:
+        flags.append(
+            RiskFlag(
+                code="release_slsa_build_inconsistency",
+                severity="medium",
+                message=(
+                    "Verified artifacts in the same release use different SLSA "
+                    "builders, build types, or workflows."
+                ),
+                why=inconsistent_builds,
+                remediation=[
+                    "Confirm the release intentionally uses multiple build paths.",
+                    "Review each builder and workflow trust boundary independently.",
+                ],
+            )
+        )
+
+    slsa_sources = {
+        assessment.source_repository
+        for file in report.files
+        if file.verified
+        for assessment in file.slsa_provenance
+        if assessment.source_repository
+    }
+    declared_sources = {
+        normalized
+        for url in report.declared_repository_urls
+        if (normalized := _normalize_repo_url(url))
+    }
+    if slsa_sources and declared_sources and not slsa_sources <= declared_sources:
+        flags.append(
+            RiskFlag(
+                code="slsa_source_repository_mismatch",
+                severity="high",
+                message=(
+                    "The verified SLSA source repository conflicts with package "
+                    "metadata."
+                ),
+                why=[
+                    "Verified SLSA sources: " + ", ".join(sorted(slsa_sources)),
+                    "Declared repositories: " + ", ".join(sorted(declared_sources)),
+                ],
+                remediation=[
+                    "Confirm the release was built from the declared source repository.",
+                    "Treat unexplained source-to-metadata inconsistencies as a "
+                    "supply-chain warning.",
                 ],
             )
         )
@@ -1552,6 +1754,56 @@ def _build_risk_flags(report: TrustReport) -> list[RiskFlag]:
                 remediation=[
                     "Confirm that a repository transfer, rename, or fork was intentional.",
                     "Review release notes and maintainer communications before upgrading.",
+                ],
+            )
+        )
+
+    if report.release_drift.signer_drift:
+        flags.append(
+            RiskFlag(
+                code="provenance_signer_drift",
+                severity="high",
+                message="Verified provenance signer identity changed since the prior release.",
+                why=[
+                    f"Compared with {report.release_drift.compared_to_version}.",
+                    "Previous signers: "
+                    f"{', '.join(report.release_drift.previous_signers) or 'unknown'}",
+                ],
+                remediation=[
+                    "Confirm the publisher identity or ownership transfer independently.",
+                    "Review the release workflow and repository permissions.",
+                ],
+            )
+        )
+
+    if report.release_drift.builder_drift:
+        flags.append(
+            RiskFlag(
+                code="provenance_builder_drift",
+                severity="medium",
+                message="The verified SLSA builder identity changed since the prior release.",
+                why=[
+                    "Previous builders: "
+                    f"{', '.join(report.release_drift.previous_builders) or 'unknown'}",
+                ],
+                remediation=[
+                    "Review the builder migration and its trust configuration.",
+                ],
+            )
+        )
+
+    if report.release_drift.build_type_drift:
+        flags.append(
+            RiskFlag(
+                code="provenance_build_type_drift",
+                severity="medium",
+                message="The verified SLSA build type changed since the prior release.",
+                why=[
+                    "Previous build types: "
+                    f"{', '.join(report.release_drift.previous_build_types) or 'unknown'}",
+                ],
+                remediation=[
+                    "Review whether the release process intentionally changed.",
                 ],
             )
         )
@@ -1768,11 +2020,43 @@ def _build_provenance_consistency(files: list[FileProvenance]) -> ProvenanceCons
     wheel_repositories = _collect_verified_identity_values(wheel_files, "repository")
     sdist_workflows = _collect_verified_identity_values(sdist_files, "workflow")
     wheel_workflows = _collect_verified_identity_values(wheel_files, "workflow")
+    sdist_builders = _collect_verified_slsa_values(sdist_files, "builder_id")
+    wheel_builders = _collect_verified_slsa_values(wheel_files, "builder_id")
+    sdist_source_commits = _collect_verified_slsa_values(
+        sdist_files,
+        "source_commit",
+    )
+    wheel_source_commits = _collect_verified_slsa_values(
+        wheel_files,
+        "source_commit",
+    )
+    sdist_build_types = _collect_verified_slsa_values(sdist_files, "build_type")
+    wheel_build_types = _collect_verified_slsa_values(wheel_files, "build_type")
 
     repository_overlap = sorted(sdist_repositories & wheel_repositories)
     workflow_overlap = sorted(sdist_workflows & wheel_workflows)
-    consistent = bool(repository_overlap) and (
+    builder_overlap = sorted(sdist_builders & wheel_builders)
+    source_commit_overlap = sorted(sdist_source_commits & wheel_source_commits)
+    build_type_overlap = sorted(sdist_build_types & wheel_build_types)
+    builder_consistent = _optional_set_overlap(sdist_builders, wheel_builders)
+    source_commit_consistent = _optional_set_overlap(
+        sdist_source_commits,
+        wheel_source_commits,
+    )
+    build_type_consistent = _optional_set_overlap(
+        sdist_build_types,
+        wheel_build_types,
+    )
+    identity_consistent = bool(repository_overlap) and (
         not sdist_workflows and not wheel_workflows or bool(workflow_overlap)
+    )
+    consistent = identity_consistent and all(
+        value is not False
+        for value in (
+            builder_consistent,
+            source_commit_consistent,
+            build_type_consistent,
+        )
     )
 
     return ProvenanceConsistency(
@@ -1781,6 +2065,12 @@ def _build_provenance_consistency(files: list[FileProvenance]) -> ProvenanceCons
         sdist_wheel_consistent=consistent,
         consistent_repositories=repository_overlap,
         consistent_workflows=workflow_overlap,
+        builder_consistent=builder_consistent,
+        source_commit_consistent=source_commit_consistent,
+        build_type_consistent=build_type_consistent,
+        consistent_builders=builder_overlap,
+        consistent_source_commits=source_commit_overlap,
+        consistent_build_types=build_type_overlap,
     )
 
 
@@ -1812,20 +2102,47 @@ def _build_release_drift_summary(
     current_workflows = _collect_verified_identity_values(current_files, "workflow")
     previous_repositories = _collect_verified_identity_values(previous_files, "repository")
     previous_workflows = _collect_verified_identity_values(previous_files, "workflow")
+    current_signers = _collect_verified_signers(current_files)
+    previous_signers = _collect_verified_signers(previous_files)
+    current_builders = _collect_verified_slsa_values(current_files, "builder_id")
+    previous_builders = _collect_verified_slsa_values(previous_files, "builder_id")
+    current_source_commits = _collect_verified_slsa_values(
+        current_files,
+        "source_commit",
+    )
+    previous_source_commits = _collect_verified_slsa_values(
+        previous_files,
+        "source_commit",
+    )
+    current_build_types = _collect_verified_slsa_values(current_files, "build_type")
+    previous_build_types = _collect_verified_slsa_values(previous_files, "build_type")
 
-    repository_drift = None
-    workflow_drift = None
-    if current_repositories and previous_repositories:
-        repository_drift = current_repositories != previous_repositories
-    if current_workflows and previous_workflows:
-        workflow_drift = current_workflows != previous_workflows
+    repository_drift = _optional_set_difference(
+        current_repositories,
+        previous_repositories,
+    )
+    workflow_drift = _optional_set_difference(current_workflows, previous_workflows)
 
     return ReleaseDriftSummary(
         compared_to_version=previous_version,
         publisher_repository_drift=repository_drift,
         publisher_workflow_drift=workflow_drift,
+        signer_drift=_optional_set_difference(current_signers, previous_signers),
+        builder_drift=_optional_set_difference(current_builders, previous_builders),
+        source_commit_drift=_optional_set_difference(
+            current_source_commits,
+            previous_source_commits,
+        ),
+        build_type_drift=_optional_set_difference(
+            current_build_types,
+            previous_build_types,
+        ),
+        previous_signers=sorted(previous_signers),
         previous_repositories=sorted(previous_repositories),
         previous_workflows=sorted(previous_workflows),
+        previous_builders=sorted(previous_builders),
+        previous_source_commits=sorted(previous_source_commits),
+        previous_build_types=sorted(previous_build_types),
     )
 
 
@@ -1911,6 +2228,48 @@ def _collect_verified_identity_values(
             if value:
                 values.add(str(value))
     return values
+
+
+def _collect_verified_slsa_values(
+    files: list[FileProvenance],
+    attribute: str,
+) -> set[str]:
+    values: set[str] = set()
+    for file in files:
+        if not file.verified:
+            continue
+        for provenance in file.slsa_provenance:
+            value = getattr(provenance, attribute, None)
+            if value:
+                values.add(str(value))
+    return values
+
+
+def _optional_set_overlap(left: set[str], right: set[str]) -> bool | None:
+    if not left and not right:
+        return None
+    return bool(left & right)
+
+
+def _optional_set_difference(left: set[str], right: set[str]) -> bool | None:
+    if not left and not right:
+        return None
+    return left != right
+
+
+def _collect_verified_signers(files: list[FileProvenance]) -> set[str]:
+    return {
+        ":".join(
+            (
+                identity.kind or "unknown",
+                identity.repository or "-",
+                identity.workflow or "-",
+            )
+        )
+        for file in files
+        if file.verified
+        for identity in file.publisher_identities
+    }
 
 
 def _is_sdist(filename: str) -> bool:

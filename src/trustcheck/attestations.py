@@ -23,8 +23,13 @@ from sigstore.models import Bundle
 from sigstore.verify import Verifier, policy
 from sigstore.verify.policy import VerificationPolicy
 
+from .provenance import (
+    SLSA_PROVENANCE_V1,
+    SlsaValidationError,
+    analyze_slsa_provenance,
+)
+
 PYPI_PUBLISH_V1 = "https://docs.pypi.org/attestations/publish/v1"
-SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1"
 IN_TOTO_PAYLOAD_TYPE = "application/vnd.in-toto+json"
 SUPPORTED_ATTESTATION_TYPES = {PYPI_PUBLISH_V1, SLSA_PROVENANCE_V1}
 
@@ -207,6 +212,18 @@ class Attestation(BaseModel):
             raise VerificationError(
                 f"unknown attestation type: {statement.predicate_type}"
             )
+        if statement.predicate_type == SLSA_PROVENANCE_V1:
+            try:
+                analyze_slsa_provenance(
+                    statement.predicate,
+                    publisher_kind=publisher.kind,
+                    publisher_repository=publisher.repository,
+                    publisher_workflow=(
+                        publisher.workflow or publisher.workflow_filepath
+                    ),
+                )
+            except SlsaValidationError as exc:
+                raise VerificationError(f"invalid SLSA provenance: {exc}") from exc
 
         return statement.predicate_type, statement.predicate
 

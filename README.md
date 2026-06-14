@@ -4,7 +4,6 @@
 
 # trustcheck [![Awesome](https://awesome.re/badge.svg)](https://awesome.re)
 
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Halfblood-Prince/trustcheck/badge)](https://scorecard.dev/viewer/?uri=github.com/Halfblood-Prince/trustcheck)
 [![CI](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
 [![Source Build](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/source-build.yml/badge.svg?branch=main)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/source-build.yml)
 [![CodeQL](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/codeql.yml/badge.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/codeql.yml)
@@ -33,7 +32,13 @@ For a selected package version, `trustcheck` can:
 
 - fetch project and release metadata from PyPI
 - verify published provenance against artifact digests
+- interpret SLSA v1 build definitions, builders, source materials, commits,
+  workflows, and resolved build dependencies
+- detect mutable workflow references, unpinned build actions, and
+  source-to-artifact inconsistencies
 - surface Trusted Publisher repository and workflow identity hints
+- compare signer, repository, workflow, builder, build type, and source commit
+  evidence across release history
 - compare expected repository input against declared and attested signals
 - flag publisher drift, missing verification, and known vulnerabilities
 - scan requirements files, project TOML, `pylock.toml`, `Pipfile.lock`,
@@ -47,6 +52,10 @@ For a selected package version, `trustcheck` can:
 - preserve and verify lockfile artifact hashes before trusting downloaded bytes
 - plan, dry-run, apply, or publish the smallest validated secure dependency
   upgrade set without silently widening declared constraints
+- batch OSV queries, bound concurrent target work, and store responses by
+  verified SHA-256 content digest
+- consume offline advisory snapshots, resume interrupted scans, and load
+  explicitly enabled advisory, index, artifact, policy, or renderer plugins
 - optionally inspect wheel and sdist contents without importing or executing package code
 - score typosquatting, dependency-confusion, package-history, source-code, and
   native-binary heuristic indicators without claiming a malware verdict
@@ -100,7 +109,7 @@ PyPI installation requirements:
 - Python `>=3.11`
 - Network access to PyPI
 
-Machine-readable reports currently use JSON schema `1.8.0`. Package and report
+Machine-readable reports currently use JSON schema `1.9.0`. Package and report
 schema versions are independent so documentation-only package releases do not
 force contract churn.
 
@@ -189,6 +198,14 @@ Gate only critical, known-exploited, or fixable vulnerabilities:
 trustcheck scan pylock.toml --fail-on-vulnerability kev
 ```
 
+Require verified publishers to belong to an approved organization:
+
+```bash
+trustcheck inspect sampleproject \
+  --version 4.0.0 \
+  --trusted-publisher-organization github:pypa
+```
+
 Custom policy files can suppress a specific advisory temporarily, but every
 suppression must name an owner, justification, and ISO expiration date.
 
@@ -269,6 +286,22 @@ Inspect exact direct and transitive versions from a supported lockfile:
 ```bash
 trustcheck scan pylock.toml --with-transitive-deps
 trustcheck scan Pipfile.lock
+```
+
+Run a bounded, resumable scan and publish an advisory snapshot:
+
+```bash
+trustcheck scan requirements.txt \
+  --with-osv \
+  --max-workers 8 \
+  --resume-state .trustcheck/scan-state.json \
+  --write-advisory-snapshot .trustcheck/advisories.json
+```
+
+Enable an installed plugin explicitly:
+
+```bash
+trustcheck scan requirements.txt --plugin policy:company-policy
 ```
 
 Hash-pinned pip-tools output is detected automatically. Every retained
@@ -401,6 +434,8 @@ Full documentation: https://halfblood-prince.github.io/trustcheck/
 - Integrations: [JSON contract](https://halfblood-prince.github.io/trustcheck/reference/json-contract/), [Python API](https://halfblood-prince.github.io/trustcheck/reference/python-api/), and [Compatibility](https://halfblood-prince.github.io/trustcheck/reference/compatibility/)
 - Trust model: [Verification model and repository matching](https://halfblood-prince.github.io/trustcheck/reference/trust-model/)
 - Automation: [CI integration](https://halfblood-prince.github.io/trustcheck/guides/ci-integration/)
+- Performance and extensibility: [Batching, caching, snapshots, resume state, and plugins](https://halfblood-prince.github.io/trustcheck/reference/performance-extensibility/)
+- Benchmarks: [Reproducible comparison with pip-audit](https://halfblood-prince.github.io/trustcheck/reference/benchmarks/)
 - Project details: [Changelog](https://halfblood-prince.github.io/trustcheck/changelog/)
 
 Project support:

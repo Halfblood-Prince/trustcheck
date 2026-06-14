@@ -4,7 +4,8 @@ You can provide network settings through a JSON config file and optionally combi
 
 ## Config file shape
 
-`--config-file` expects a JSON object. The `network` and `advisories` fields,
+`--config-file` expects a JSON object. The `network`, `advisories`, and
+`performance` fields,
 when present, must also be objects.
 
 Example:
@@ -25,6 +26,9 @@ Example:
     "kev_url": "https://www.cisa.gov/example/known_exploited.json",
     "epss": true,
     "epss_url": "https://api.first.org/data/v1/epss"
+  },
+  "performance": {
+    "max_workers": 8
   }
 }
 ```
@@ -51,6 +55,7 @@ The CLI also recognizes these environment variables:
 - `TRUSTCHECK_BACKOFF`
 - `TRUSTCHECK_CACHE_DIR`
 - `TRUSTCHECK_OFFLINE`
+- `TRUSTCHECK_MAX_WORKERS`
 
 ## Precedence
 
@@ -75,6 +80,17 @@ trustcheck inspect sampleproject \
 ```
 
 Offline mode is useful in hermetic CI or for repeated local analysis after an
-initial cached run. PyPI's persistent cache remains available offline.
-OSV-compatible, KEV, and EPSS clients use per-process caches and fail closed
-when required advisory data is not already present.
+initial cached run. PyPI responses use a SHA-256 content-addressed persistent
+cache with integrity verification.
+
+Use repeatable `--advisory-snapshot PATH` for portable advisory data and
+`--write-advisory-snapshot PATH` to create or update a snapshot. KEV and EPSS
+data included in normalized snapshot records remains available offline.
+Missing package metadata or artifacts still fail closed.
+
+`scan` and `environment` can checkpoint target reports with
+`--resume-state PATH`. State is reused only when the source, resolved targets,
+policy, providers, indexes, and plugins produce the same fingerprint.
+
+See [Performance and extensibility](../reference/performance-extensibility.md)
+for cache layout, batching, resume semantics, and plugin entry points.

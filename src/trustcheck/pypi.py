@@ -13,6 +13,7 @@ from urllib import error, parse, request
 
 from pydantic import ValidationError
 
+from .cache import CacheIntegrityError, ContentAddressedCache
 from .schemas import ProjectResponsePayload, ProvenanceEnvelopePayload
 
 if TYPE_CHECKING:
@@ -112,6 +113,7 @@ class PypiClient:
     sleep: Callable[[float], None] = time.sleep
     _json_cache: dict[tuple[str, str], dict[str, Any]] | None = None
     _bytes_cache: dict[str, bytes] | None = None
+    _content_cache: ContentAddressedCache | None = None
 
     def __post_init__(self) -> None:
         if self.enable_cache:
@@ -119,6 +121,7 @@ class PypiClient:
             self._bytes_cache = {}
         if self.cache_dir:
             Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
+            self._content_cache = ContentAddressedCache(self.cache_dir)
 
     def get_project(self, project: str) -> dict[str, Any]:
         payload = self._get_json(f"/pypi/{parse.quote(project)}/json", accept=JSON_ACCEPT)
@@ -366,6 +369,26 @@ class PypiClient:
         return Path(self.cache_dir) / f"{digest}{suffix}"
 
     def _read_disk_cache(self, url: str, *, accept: str | None) -> bytes | None:
+        key = self._content_cache_key(url, accept=accept)
+        if self._content_cache is not None:
+            try:
+                payload = self._content_cache.get("http", key)
+            except CacheIntegrityError as exc:
+                raise PypiClientError(
+                    f"cached response failed integrity verification for {url}: {exc}",
+                    transient=False,
+                    url=url,
+                    code="upstream",
+                    subcode="cache_integrity_failed",
+                ) from exc
+            if payload is not None:
+                self._emit(
+                    "cache_hit",
+                    url=url,
+                    kind="content-addressed",
+                    sha256=hashlib.sha256(payload).hexdigest(),
+                )
+                return payload
         cache_path = self._cache_path(url, accept=accept)
         if cache_path is None or not cache_path.exists():
             return None
@@ -373,17 +396,25 @@ class PypiClient:
         return cache_path.read_bytes()
 
     def _write_disk_cache(self, url: str, payload: bytes, *, accept: str | None) -> None:
-        cache_path = self._cache_path(url, accept=accept)
-        if cache_path is None:
+        if self._content_cache is None:
             return
-        cache_path.write_bytes(payload)
+        cache_object = self._content_cache.put(
+            "http",
+            self._content_cache_key(url, accept=accept),
+            payload,
+            media_type=accept,
+        )
         self._emit(
             "cache_store",
             url=url,
-            kind="disk",
-            cache_path=str(cache_path),
+            kind="content-addressed",
+            cache_path=str(cache_object.path),
+            sha256=cache_object.digest,
             size=len(payload),
         )
+
+    def _content_cache_key(self, url: str, *, accept: str | None) -> str:
+        return f"{accept or ''}|{url}"
 
     def _validate_project_payload(self, payload: dict[str, Any], path: str) -> dict[str, Any]:
         url = f"{self.base_url}{path}"

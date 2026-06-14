@@ -55,6 +55,8 @@ dependency references. Components include trustcheck properties for:
 - recommendation and policy status
 - policy profile and violations
 - provenance status and verified/total artifact counts
+- interpreted SLSA signer, source repository and commit, builder, build type,
+  workflow reference, materials, action references, and provenance issues
 - vulnerabilities and fixed versions
 - normalized CVSS ratings and CWE identifiers
 - withdrawn status, CISA KEV, FIRST EPSS, and suppression evidence
@@ -74,9 +76,10 @@ purls are package-manager external references.
 
 SPDX 2.3 does not define CycloneDX-style arbitrary properties, so trustcheck
 evidence is represented through package comments and document annotations.
-Those records include vulnerabilities, provenance coverage, artifact
-checksums, recommendations, policy violations, CVSS, CWE, withdrawal, KEV,
-EPSS, suppression state, and malicious-package heuristic evidence.
+Those records include vulnerabilities, provenance coverage, interpreted SLSA
+source and build evidence, artifact checksums, recommendations, policy
+violations, CVSS, CWE, withdrawal, KEV, EPSS, suppression state, and
+malicious-package heuristic evidence.
 
 ## OpenVEX
 
