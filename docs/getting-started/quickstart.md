@@ -29,20 +29,19 @@ trustcheck inspect sampleproject --version 4.0.0
 ## Show only known vulnerabilities
 
 ```bash
-trustcheck inspect sampleproject --version 4.0.0 --cve
+trustcheck scan sampleproject --version 4.0.0
 ```
 
 ## Merge and enrich vulnerability intelligence
 
 ```bash
-trustcheck inspect jinja2 \
+trustcheck scan jinja2 \
   --version 2.10.0 \
   --with-osv \
   --with-ecosystems \
   --osv-url https://advisories.example.com \
   --with-kev \
-  --with-epss \
-  --cve
+  --with-epss
 ```
 
 Configured OSV-compatible providers run concurrently. Records are merged by
@@ -52,9 +51,9 @@ withdrawal, KEV, and EPSS fields.
 Block a selected vulnerability class:
 
 ```bash
-trustcheck scan requirements.txt --fail-on-vulnerability critical
-trustcheck scan requirements.txt --fail-on-vulnerability kev
-trustcheck scan requirements.txt --fail-on-vulnerability fixable
+trustcheck scan -f requirements.txt --fail-on-vulnerability critical
+trustcheck scan -f requirements.txt --fail-on-vulnerability kev
+trustcheck scan -f requirements.txt --fail-on-vulnerability fixable
 ```
 
 ## Require a known source repository
@@ -86,7 +85,7 @@ trustcheck inspect sampleproject --version 4.0.0 --with-transitive-deps
 ## Scan a requirements-style file
 
 ```bash
-trustcheck scan requirements.txt
+trustcheck scan -f requirements.txt
 ```
 
 Pip resolves the complete dependency set before trustcheck audits it. Nested
@@ -94,25 +93,25 @@ requirements, constraints, hashes, editable installs, and VCS references are
 supported.
 
 ```bash
-trustcheck scan requirements.txt --constraint constraints.txt
+trustcheck scan -f requirements.txt --constraint constraints.txt
 ```
 
 ## Scan a TOML dependency file
 
 ```bash
-trustcheck scan pyproject.toml
+trustcheck scan -f pyproject.toml
 ```
 
 Select extras and dependency groups:
 
 ```bash
-trustcheck scan pyproject.toml --extra security --group test
+trustcheck scan -f pyproject.toml --extra security --group test
 ```
 
-## Scan a supported lockfile
+## Inspect a supported lockfile
 
 ```bash
-trustcheck scan uv.lock --with-transitive-deps
+trustcheck inspect -f uv.lock --with-transitive-deps
 ```
 
 Supported lockfiles are PEP 751 `pylock.toml` and named `pylock.<name>.toml`
@@ -123,7 +122,7 @@ inspection. Hash-pinned pip-tools output is recognized as a requirements input.
 ## Scan a private index
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --index-url https://username@packages.example.com/simple \
   --keyring-provider subprocess
 ```
@@ -172,17 +171,17 @@ trustcheck inspect sampleproject --version 4.0.0 --format json
 To emit combined JSON for every package in a requirements-style or TOML dependency file:
 
 ```bash
-trustcheck scan requirements.txt --format json
+trustcheck scan -f requirements.txt --format json
 ```
 
 ## Write SARIF or an SBOM
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --format sarif \
   --output-file reports/trustcheck.sarif
 
-trustcheck scan pylock.toml \
+trustcheck scan -f pylock.toml \
   --format cyclonedx-json \
   --output-file reports/trustcheck.cdx.json
 ```
@@ -192,7 +191,7 @@ Other formats are `cyclonedx-xml`, `spdx-json`, `openvex`, and `markdown`.
 To emit only the known vulnerability records in JSON:
 
 ```bash
-trustcheck inspect sampleproject --version 4.0.0 --cve --format json
+trustcheck scan sampleproject --version 4.0.0 --format json
 ```
 
 ## Enforce a conservative gate

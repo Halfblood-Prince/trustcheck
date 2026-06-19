@@ -178,6 +178,7 @@ class CliBehaviorTests(unittest.TestCase):
         scan_args = parser.parse_args(
             [
                 "scan",
+                "-f",
                 "requirements.txt",
                 "--constraint",
                 "constraints.txt",
@@ -238,7 +239,7 @@ class CliBehaviorTests(unittest.TestCase):
 
     def test_index_and_target_helpers_cover_private_source_variants(self) -> None:
         parser = build_parser()
-        default_args = parser.parse_args(["scan", "requirements.txt"])
+        default_args = parser.parse_args(["scan", "-f", "requirements.txt"])
         self.assertFalse(_uses_nondefault_indexes(default_args))
         self.assertEqual(
             _index_configuration_from_args(default_args).index_url,
@@ -249,6 +250,7 @@ class CliBehaviorTests(unittest.TestCase):
         private_args = parser.parse_args(
             [
                 "scan",
+                "-f",
                 "requirements.txt",
                 "--index-url",
                 "https://private.example/simple",
@@ -1054,7 +1056,7 @@ class CliBehaviorTests(unittest.TestCase):
                 [],
                 failures=[],
                 verbose=False,
-                cve_only=False,
+                vulnerability_only=False,
             ),
         )
 
@@ -1315,7 +1317,7 @@ class CliBehaviorTests(unittest.TestCase):
             str(lock_file),
             [],
             failures=[],
-            cve_only=False,
+            vulnerability_only=False,
             targets=targets,
         )
         resolved = rendered["resolved"]
@@ -1445,7 +1447,7 @@ class CliBehaviorTests(unittest.TestCase):
             [report],
             failures=[{"requirement": "broken", "message": "boom"}],
             verbose=False,
-            cve_only=True,
+            vulnerability_only=True,
         )
         self.assertIn("trustcheck scan results for requirements.txt", text)
         self.assertIn("known vulnerabilities for gridoptim 2.2.0", text)
@@ -1455,7 +1457,7 @@ class CliBehaviorTests(unittest.TestCase):
             "requirements.txt",
             [report],
             failures=[{"requirement": "broken", "message": "boom"}],
-            cve_only=False,
+            vulnerability_only=False,
         )
         self.assertEqual(payload["file"], "requirements.txt")
         self.assertEqual(len(payload["reports"]), 1)
@@ -1622,6 +1624,9 @@ class CliBehaviorTests(unittest.TestCase):
         def fake_inspect_package(*args, **kwargs):
             self.assertIsNone(kwargs["progress_callback"])
             self.assertIsNone(kwargs["dependency_progress_callback"])
+            self.assertFalse(kwargs["include_vulnerabilities"])
+            self.assertFalse(kwargs["include_osv"])
+            self.assertIsNone(kwargs["vulnerability_client"])
             return make_report()
 
         with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
@@ -1633,7 +1638,7 @@ class CliBehaviorTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["report"]["project"], "gridoptim")
 
-    def test_cli_cve_output_only_shows_vulnerabilities(self) -> None:
+    def test_cli_scan_output_only_shows_vulnerabilities(self) -> None:
         stdout = io.StringIO()
         report = make_report()
         report.vulnerabilities = [
@@ -1648,9 +1653,14 @@ class CliBehaviorTests(unittest.TestCase):
             )
         ]
 
-        with patch("trustcheck.cli.inspect_package", return_value=report):
+        def fake_inspect_package(*args, **kwargs):
+            self.assertTrue(kwargs["include_vulnerabilities"])
+            self.assertTrue(kwargs["vulnerability_only"])
+            return report
+
+        with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
             with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                exit_code = main(["inspect", "gridoptim", "--cve"])
+                exit_code = main(["scan", "gridoptim"])
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertIn("known vulnerabilities for gridoptim 2.2.0", stdout.getvalue())
@@ -1663,12 +1673,12 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertNotIn("summary:", stdout.getvalue())
         self.assertNotIn("risk flags:", stdout.getvalue())
 
-    def test_cli_cve_output_handles_empty_vulnerability_list(self) -> None:
+    def test_cli_scan_output_handles_empty_vulnerability_list(self) -> None:
         stdout = io.StringIO()
 
         with patch("trustcheck.cli.inspect_package", return_value=make_report()):
             with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                exit_code = main(["inspect", "gridoptim", "--cve"])
+                exit_code = main(["scan", "gridoptim"])
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertIn(
@@ -1676,7 +1686,7 @@ class CliBehaviorTests(unittest.TestCase):
             stdout.getvalue(),
         )
 
-    def test_cli_cve_json_output_is_minimal(self) -> None:
+    def test_cli_scan_json_output_is_minimal(self) -> None:
         stdout = io.StringIO()
         report = make_report()
         report.vulnerabilities = [
@@ -1693,7 +1703,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch("trustcheck.cli.inspect_package", return_value=report):
             with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                exit_code = main(["inspect", "gridoptim", "--cve", "--format", "json"])
+                exit_code = main(["scan", "gridoptim", "--format", "json"])
 
         self.assertEqual(exit_code, EXIT_OK)
         payload = json.loads(stdout.getvalue())
@@ -1710,16 +1720,18 @@ class CliBehaviorTests(unittest.TestCase):
 
         def fake_inspect_package(*args, **kwargs):
             self.assertTrue(kwargs["include_osv"])
+            self.assertTrue(kwargs["include_vulnerabilities"])
+            self.assertTrue(kwargs["vulnerability_only"])
             self.assertIsNotNone(kwargs["vulnerability_client"])
             return make_report()
 
         with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
             with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                exit_code = main(["inspect", "gridoptim", "--with-osv"])
+                exit_code = main(["scan", "gridoptim", "--with-osv"])
 
         self.assertEqual(exit_code, EXIT_OK)
 
-    def test_cli_cve_mode_respects_policy_failure(self) -> None:
+    def test_cli_file_scan_respects_vulnerability_policy_failure(self) -> None:
         stdout = io.StringIO()
         report = make_report()
         report.vulnerabilities = [
@@ -1730,9 +1742,8 @@ class CliBehaviorTests(unittest.TestCase):
             with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
                 exit_code = main(
                     [
-                        "inspect",
+                        "scan",
                         "gridoptim",
-                        "--cve",
                         "--fail-on-vulnerability",
                         "any",
                     ]
@@ -1764,18 +1775,20 @@ class CliBehaviorTests(unittest.TestCase):
             self.assertIn(project, reports)
             self.assertFalse(kwargs["include_dependencies"])
             self.assertFalse(kwargs["include_transitive_dependencies"])
+            self.assertTrue(kwargs["include_vulnerabilities"])
+            self.assertTrue(kwargs["vulnerability_only"])
             return reports[project]
 
         with patch("trustcheck.cli._load_scan_targets", return_value=targets):
             with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
                 with redirect_stdout(stdout), redirect_stderr(stderr):
-                    exit_code = main(["scan", "requirements.txt"])
+                    exit_code = main(["scan", "-f", "requirements.txt"])
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertIn("trustcheck scan results for requirements.txt", stdout.getvalue())
         self.assertIn("successful: 2", stdout.getvalue())
-        self.assertIn("trustcheck report for gridoptim 2.2.0", stdout.getvalue())
-        self.assertIn("trustcheck report for depalpha 1.4.0", stdout.getvalue())
+        self.assertIn("known vulnerabilities for gridoptim 2.2.0", stdout.getvalue())
+        self.assertIn("known vulnerabilities for depalpha 1.4.0", stdout.getvalue())
         self.assertEqual(stderr.getvalue(), "")
 
     def test_cli_scan_json_output_contains_reports(self) -> None:
@@ -1785,7 +1798,7 @@ class CliBehaviorTests(unittest.TestCase):
         with patch("trustcheck.cli._load_scan_targets", return_value=targets):
             with patch("trustcheck.cli.inspect_package", return_value=make_report()):
                 with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                    exit_code = main(["scan", "requirements.txt", "--format", "json"])
+                    exit_code = main(["scan", "-f", "requirements.txt", "--format", "json"])
 
         self.assertEqual(exit_code, EXIT_OK)
         payload = json.loads(stdout.getvalue())
@@ -1795,7 +1808,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(payload["reports"][0]["project"], "gridoptim")
         self.assertEqual(payload["failures"], [])
 
-    def test_cli_scan_passes_locked_versions_to_dependency_inspection(self) -> None:
+    def test_cli_inspect_file_passes_locked_versions_to_dependency_inspection(self) -> None:
         stdout = io.StringIO()
         locked_versions = {"depalpha": "1.4.0", "depbeta": "2.5.0"}
         targets = [
@@ -1809,17 +1822,19 @@ class CliBehaviorTests(unittest.TestCase):
 
         def fake_inspect_package(*args, **kwargs):
             self.assertTrue(kwargs["include_transitive_dependencies"])
+            self.assertFalse(kwargs["include_vulnerabilities"])
+            self.assertFalse(kwargs["vulnerability_only"])
             self.assertEqual(kwargs["locked_versions"], locked_versions)
             return make_report()
 
         with patch("trustcheck.cli._load_scan_targets", return_value=targets):
             with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
                 with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                    exit_code = main(["scan", "poetry.lock", "--with-transitive-deps"])
+                    exit_code = main(["inspect", "-f", "poetry.lock", "--with-transitive-deps"])
 
         self.assertEqual(exit_code, EXIT_OK)
 
-    def test_cli_normal_output_shows_vulnerability_intelligence(self) -> None:
+    def test_cli_scan_output_shows_vulnerability_intelligence(self) -> None:
         stdout = io.StringIO()
         report = make_report()
         report.vulnerabilities = [
@@ -1835,22 +1850,19 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch("trustcheck.cli.inspect_package", return_value=report):
             with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                exit_code = main(["inspect", "gridoptim"])
+                exit_code = main(["scan", "gridoptim"])
 
         self.assertEqual(exit_code, EXIT_OK)
-        self.assertIn("source=OSV", stdout.getvalue())
-        self.assertIn("severity=CRITICAL", stdout.getvalue())
-        self.assertIn("fixed_in=2.2.1", stdout.getvalue())
-        self.assertIn(
-            "advisory=https://github.com/advisories/GHSA-aaaa-bbbb-cccc",
-            stdout.getvalue(),
-        )
+        self.assertIn("source: OSV", stdout.getvalue())
+        self.assertIn("severity: CRITICAL", stdout.getvalue())
+        self.assertIn("fixed in: 2.2.1", stdout.getvalue())
+        self.assertIn("link: https://github.com/advisories/GHSA-aaaa-bbbb-cccc", stdout.getvalue())
 
     def test_vulnerability_client_builder_supports_all_sources_and_config(self) -> None:
         parser = build_parser()
         args = parser.parse_args(
             [
-                "inspect",
+                "scan",
                 "gridoptim",
                 "--with-osv",
                 "--osv-url",
@@ -1915,7 +1927,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertTrue(client.kev_client.offline)
         self.assertIs(client.request_hook, hook)
 
-        no_sources = parser.parse_args(["inspect", "gridoptim"])
+        no_sources = parser.parse_args(["scan", "gridoptim"])
         self.assertIsNone(
             _build_vulnerability_client(
                 no_sources,
@@ -1925,7 +1937,7 @@ class CliBehaviorTests(unittest.TestCase):
         )
 
     def test_vulnerability_client_builder_rejects_invalid_config(self) -> None:
-        args = build_parser().parse_args(["inspect", "gridoptim"])
+        args = build_parser().parse_args(["scan", "gridoptim"])
         cases = [
             ({"advisories": []}, "must be an object"),
             ({"advisories": {"unknown": True}}, "unknown advisories"),
@@ -2017,7 +2029,7 @@ class CliBehaviorTests(unittest.TestCase):
 
         with patch("trustcheck.cli.inspect_package", side_effect=error):
             with redirect_stdout(stdout), redirect_stderr(stderr):
-                exit_code = main(["inspect", "gridoptim", "--with-osv"])
+                exit_code = main(["scan", "gridoptim", "--with-osv"])
 
         self.assertEqual(exit_code, EXIT_UPSTREAM_FAILURE)
         self.assertIn("unable to inspect package from advisory service", stderr.getvalue())
@@ -2025,18 +2037,26 @@ class CliBehaviorTests(unittest.TestCase):
     def test_cli_scan_respects_policy_failure(self) -> None:
         stdout = io.StringIO()
         report = make_report()
-        report.files[0].verified = False
-        report.coverage.verified_files = 0
-        report.coverage.status = "all-attested"
+        report.vulnerabilities = [
+            VulnerabilityRecord(id="PYSEC-2026-1", summary="Example advisory")
+        ]
         targets = [ScanTarget(requirement="gridoptim", project="gridoptim", version=None)]
 
         with patch("trustcheck.cli._load_scan_targets", return_value=targets):
             with patch("trustcheck.cli.inspect_package", return_value=report):
                 with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                    exit_code = main(["scan", "requirements.txt", "--strict"])
+                    exit_code = main(
+                        [
+                            "scan",
+                            "-f",
+                            "requirements.txt",
+                            "--fail-on-vulnerability",
+                            "any",
+                        ]
+                    )
 
         self.assertEqual(exit_code, EXIT_POLICY_FAILURE)
-        self.assertIn("policy: strict (fail)", stdout.getvalue())
+        self.assertIn("PYSEC-2026-1: Example advisory", stdout.getvalue())
 
     def test_cli_scan_records_package_failures_and_continues(self) -> None:
         stdout = io.StringIO()
@@ -2053,10 +2073,13 @@ class CliBehaviorTests(unittest.TestCase):
         with patch("trustcheck.cli._load_scan_targets", return_value=targets):
             with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
                 with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                    exit_code = main(["scan", "requirements.txt"])
+                    exit_code = main(["scan", "-f", "requirements.txt"])
 
         self.assertEqual(exit_code, EXIT_UPSTREAM_FAILURE)
-        self.assertIn("trustcheck report for gridoptim 2.2.0", stdout.getvalue())
+        self.assertIn(
+            "No known vulnerability records reported by configured sources.",
+            stdout.getvalue(),
+        )
         self.assertIn("scan failures:", stdout.getvalue())
         self.assertIn("broken: error: unable to inspect package from PyPI", stdout.getvalue())
 
@@ -2104,7 +2127,7 @@ class CliBehaviorTests(unittest.TestCase):
         with patch("trustcheck.cli._load_scan_targets", return_value=targets):
             with patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package):
                 with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
-                    exit_code = main(["scan", "requirements.txt"])
+                    exit_code = main(["scan", "-f", "requirements.txt"])
 
         self.assertEqual(exit_code, EXIT_DATA_ERROR)
         self.assertEqual(inspected, ["gridoptim"])

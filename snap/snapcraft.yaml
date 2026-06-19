@@ -25,7 +25,7 @@ description: |
 
       trustcheck inspect requests
       trustcheck inspect sampleproject --version 4.0.0 --strict
-      trustcheck scan requirements.txt --policy strict
+      trustcheck scan -f requirements.txt --policy strict
 
   Artifact inspection reads archive contents without importing or executing the package being examined. The snap uses strict confinement and requests only network access plus access to dependency files you choose from your home directory or removable media.
 

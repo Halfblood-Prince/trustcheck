@@ -323,13 +323,57 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
     target_is_file = target_path.is_file()
     if not target_is_file and _looks_like_scan_file(settings.target):
         raise ActionInputError(f"scan target file does not exist: {settings.target}")
+    scan_mode = target_is_file or (
+        settings.with_osv
+        or bool(settings.osv_urls)
+        or settings.with_ecosystems
+        or settings.with_kev
+        or settings.with_epss
+    )
+    if scan_mode and not target_is_file:
+        unsupported_scan_options = []
+        if settings.expected_repo:
+            unsupported_scan_options.append("expected-repo")
+        if settings.trusted_publisher_organizations:
+            unsupported_scan_options.append("trusted-publisher-organizations")
+        if settings.with_deps:
+            unsupported_scan_options.append("with-deps")
+        if settings.with_transitive_deps:
+            unsupported_scan_options.append("with-transitive-deps")
+        if settings.inspect_artifacts:
+            unsupported_scan_options.append("inspect-artifacts")
+        if settings.trusted_projects:
+            unsupported_scan_options.append("trusted-projects")
+        if unsupported_scan_options:
+            joined = ", ".join(unsupported_scan_options)
+            raise ActionInputError(
+                "package vulnerability scans do not support trust-inspection "
+                f"options: {joined}"
+            )
 
     if target_is_file:
         if settings.expected_repo:
             raise ActionInputError(
                 "'expected-repo' applies to package targets, not dependency files"
             )
-        arguments = ["scan", str(target_path)]
+        unsupported_file_scan_options = []
+        if settings.trusted_publisher_organizations:
+            unsupported_file_scan_options.append("trusted-publisher-organizations")
+        if settings.with_deps:
+            unsupported_file_scan_options.append("with-deps")
+        if settings.with_transitive_deps:
+            unsupported_file_scan_options.append("with-transitive-deps")
+        if settings.inspect_artifacts:
+            unsupported_file_scan_options.append("inspect-artifacts")
+        if settings.trusted_projects:
+            unsupported_file_scan_options.append("trusted-projects")
+        if unsupported_file_scan_options:
+            joined = ", ".join(unsupported_file_scan_options)
+            raise ActionInputError(
+                "dependency-file vulnerability scans do not support "
+                f"trust-inspection options: {joined}"
+            )
+        arguments = ["scan", "-f", str(target_path)]
         if settings.remediation == "plan":
             arguments.append("--plan-fixes")
         elif settings.remediation == "fix":
@@ -380,14 +424,15 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
             raise ActionInputError(
                 "remediation applies to dependency files, not package targets"
             )
-        arguments = ["inspect", settings.target]
+        arguments = ["scan" if scan_mode else "inspect", settings.target]
         if settings.expected_repo:
             arguments.extend(["--expected-repo", settings.expected_repo])
 
-    for organization in settings.trusted_publisher_organizations:
-        arguments.extend(
-            ["--trusted-publisher-organization", organization]
-        )
+    if not scan_mode:
+        for organization in settings.trusted_publisher_organizations:
+            arguments.extend(
+                ["--trusted-publisher-organization", organization]
+            )
 
     policy_path = _resolve_workspace_path(settings.policy, workspace)
     if settings.policy in {"default", "strict"}:
@@ -409,11 +454,11 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
         arguments.append("--with-kev")
     if settings.with_epss:
         arguments.append("--with-epss")
-    if settings.with_deps:
+    if not scan_mode and settings.with_deps:
         arguments.append("--with-deps")
-    if settings.with_transitive_deps:
+    if not scan_mode and settings.with_transitive_deps:
         arguments.append("--with-transitive-deps")
-    if settings.inspect_artifacts:
+    if not scan_mode and settings.inspect_artifacts:
         arguments.append("--inspect-artifacts")
     if settings.index_url:
         arguments.extend(["--index-url", settings.index_url])
@@ -422,8 +467,9 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
     arguments.extend(["--keyring-provider", settings.keyring_provider])
     if settings.allow_dependency_confusion:
         arguments.append("--allow-dependency-confusion")
-    for project in settings.trusted_projects:
-        arguments.extend(["--trusted-project", project])
+    if not scan_mode:
+        for project in settings.trusted_projects:
+            arguments.extend(["--trusted-project", project])
     arguments.extend(["--max-workers", str(settings.max_workers)])
     for snapshot in settings.advisory_snapshots:
         snapshot_path = _resolve_workspace_path(snapshot, workspace)

@@ -18,4 +18,4 @@ an excluded secure release, an immutable VCS or local dependency, a missing
 native locker, search-limit exhaustion, a stale input digest, or a generated
 lockfile that failed the final rescan.
 
-This also applies to `trustcheck inspect --cve`: the command can print only vulnerability records while still returning `4` when policy settings such as `--fail-on-vulnerability any` block the release.
+This also applies to `trustcheck scan`: the command prints vulnerability records while still returning `4` when policy settings such as `--fail-on-vulnerability any` block the release.

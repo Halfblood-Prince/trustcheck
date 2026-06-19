@@ -118,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trustcheck",
         description=(
-            "Inspect PyPI package trust, provenance, vulnerabilities, and dependency files."
+            "Inspect PyPI package trust metadata or scan packages for vulnerabilities."
         ),
         epilog=f"Machine-readable report schema: {JSON_SCHEMA_VERSION}.",
     )
@@ -140,8 +140,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    inspect_parser = subparsers.add_parser("inspect", help="Inspect a package on PyPI.")
-    inspect_parser.add_argument("project", help="Project name on PyPI.")
+    inspect_parser = subparsers.add_parser(
+        "inspect",
+        help="Inspect package trust and provenance without vulnerability checks.",
+    )
+    inspect_parser.add_argument("project", nargs="?", help="Project name on PyPI.")
+    inspect_parser.add_argument(
+        "-f",
+        "--file",
+        dest="filename",
+        help=(
+            "Inspect packages from requirements.txt, pyproject.toml, "
+            "pylock.toml, Pipfile.lock, uv.lock, poetry.lock, or pdm.lock."
+        ),
+    )
     inspect_parser.add_argument("--version", help="Specific version to inspect.")
     inspect_parser.add_argument(
         "--config-file",
@@ -170,17 +182,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Statically inspect wheel and sdist contents without executing package code.",
     )
-    inspect_parser.add_argument(
-        "--cve",
-        action="store_true",
-        help="Show only known vulnerability records for the selected release.",
-    )
-    inspect_parser.add_argument(
-        "--with-osv",
-        action="store_true",
-        help="Query OSV for additional vulnerability records and GitHub advisories.",
-    )
-    _add_advisory_arguments(inspect_parser)
     dependency_group = inspect_parser.add_mutually_exclusive_group()
     dependency_group.add_argument(
         "--with-deps",
@@ -245,11 +246,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     inspect_parser.add_argument(
-        "--fail-on-vulnerability",
-        choices=("ignore", "any", "critical", "kev", "fixable"),
-        help="Override vulnerability handling for policy evaluation.",
-    )
-    inspect_parser.add_argument(
         "--fail-on-risk-severity",
         choices=("none", "medium", "high"),
         help="Fail policy evaluation when risk flags meet or exceed this severity.",
@@ -278,6 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use cached responses only and do not make network requests.",
     )
+    _add_file_resolution_arguments(inspect_parser)
     _add_target_environment_arguments(inspect_parser)
     _add_index_arguments(inspect_parser)
     _add_malicious_arguments(inspect_parser)
@@ -285,12 +282,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan_parser = subparsers.add_parser(
         "scan",
-        help="Inspect packages listed in a requirements, project, or lock file.",
+        help="Scan a PyPI package or dependency file for vulnerabilities.",
     )
     scan_parser.add_argument(
-        "filename",
+        "project",
+        nargs="?",
+        help="Project name on PyPI.",
+    )
+    scan_parser.add_argument("--version", help="Specific version to scan.")
+    scan_parser.add_argument(
+        "-f",
+        "--file",
+        dest="filename",
         help=(
-            "Path to requirements.txt, pyproject.toml, pylock.toml, "
+            "Scan requirements.txt, pyproject.toml, pylock.toml, "
             "Pipfile.lock, uv.lock, poetry.lock, or pdm.lock."
         ),
     )
@@ -365,40 +370,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write the rendered report to this file instead of standard output.",
     )
     scan_parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Show detailed per-file verification evidence.",
-    )
-    scan_parser.add_argument(
-        "--inspect-artifacts",
-        action="store_true",
-        help="Statically inspect wheel and sdist contents without executing package code.",
-    )
-    scan_parser.add_argument(
-        "--cve",
-        action="store_true",
-        help="Show only known vulnerability records for each scanned release.",
-    )
-    scan_parser.add_argument(
         "--with-osv",
         action="store_true",
         help="Query OSV for each resolved package version.",
     )
     _add_advisory_arguments(scan_parser)
-    scan_dependency_group = scan_parser.add_mutually_exclusive_group()
-    scan_dependency_group.add_argument(
-        "--with-deps",
-        action="store_true",
-        help=(
-            "Inspect direct runtime dependencies for every package in the file "
-            "and summarize the worst-risk dependency."
-        ),
-    )
-    scan_dependency_group.add_argument(
-        "--with-transitive-deps",
-        action="store_true",
-        help=("Inspect direct and transitive runtime dependencies for every package in the file."),
-    )
     scan_parser.add_argument(
         "--strict",
         action="store_true",
@@ -415,42 +391,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a JSON file containing policy settings.",
     )
     scan_parser.add_argument(
-        "--require-verified-provenance",
-        choices=("none", "all"),
-        help="Override whether policy requires verified provenance for every artifact.",
-    )
-    scan_parser.add_argument(
-        "--trusted-publisher-organization",
-        action="append",
-        default=[],
-        metavar="[PROVIDER:]ORGANIZATION",
-        help=(
-            "Allow only verified publishers owned by this organization; "
-            "repeat for multiple organizations."
-        ),
-    )
-    scan_parser.add_argument(
-        "--allow-metadata-only",
-        action="store_true",
-        default=None,
-        help="Allow metadata-only outcomes under the selected policy.",
-    )
-    scan_parser.add_argument(
-        "--disallow-metadata-only",
-        action="store_false",
-        dest="allow_metadata_only",
-        default=None,
-        help="Fail policy evaluation when the result is metadata-only.",
-    )
-    scan_parser.add_argument(
         "--fail-on-vulnerability",
         choices=("ignore", "any", "critical", "kev", "fixable"),
         help="Override vulnerability handling for policy evaluation.",
-    )
-    scan_parser.add_argument(
-        "--fail-on-risk-severity",
-        choices=("none", "medium", "high"),
-        help="Fail policy evaluation when risk flags meet or exceed this severity.",
     )
     scan_parser.add_argument(
         "--timeout",
@@ -476,30 +419,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use cached responses only and do not make network requests.",
     )
-    scan_parser.add_argument(
-        "--constraint",
-        action="append",
-        default=[],
-        metavar="FILE",
-        help="Apply a pip constraints file during dependency resolution; repeatable.",
-    )
-    scan_parser.add_argument(
-        "--extra",
-        action="append",
-        default=[],
-        metavar="NAME",
-        help="Select an optional-dependency extra from pyproject.toml; repeatable.",
-    )
-    scan_parser.add_argument(
-        "--group",
-        action="append",
-        default=[],
-        metavar="NAME",
-        help="Select a standard or Poetry dependency group; repeatable.",
-    )
+    _add_file_resolution_arguments(scan_parser)
     _add_target_environment_arguments(scan_parser)
     _add_index_arguments(scan_parser)
-    _add_malicious_arguments(scan_parser)
     _add_runtime_arguments(scan_parser, resumable=True)
 
     environment_parser = subparsers.add_parser(
@@ -535,11 +457,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--inspect-artifacts",
         action="store_true",
         help="Statically inspect wheel and sdist contents without executing package code.",
-    )
-    environment_parser.add_argument(
-        "--cve",
-        action="store_true",
-        help="Show only known vulnerability records for each installed distribution.",
     )
     environment_parser.add_argument(
         "--with-osv",
@@ -715,6 +632,30 @@ def _add_advisory_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_file_resolution_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--constraint",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="Apply a pip constraints file during dependency resolution; repeatable.",
+    )
+    parser.add_argument(
+        "--extra",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Select an optional-dependency extra from pyproject.toml; repeatable.",
+    )
+    parser.add_argument(
+        "--group",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Select a standard or Poetry dependency group; repeatable.",
+    )
+
+
 def _add_malicious_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--trusted-project",
@@ -820,13 +761,53 @@ def main(argv: Sequence[str] | None = None) -> int:
                     log_format=args.log_format,
                 ),
             )
-            vulnerability_client = _build_vulnerability_client(
-                args,
-                client,
-                config_payload=config_payload,
-                plugin_manager=plugin_manager,
-            )
+            if args.filename and args.project:
+                parser.error("inspect accepts either PROJECT or -f/--file, not both")
+            if not args.filename and not args.project:
+                parser.error("inspect requires PROJECT or -f/--file")
+            if args.filename and (args.version or args.expected_repo):
+                parser.error("--version and --expected-repo apply to package inspection")
             resolver = _resolver_from_args(args, plugin_manager=plugin_manager)
+            policy_name = "strict" if args.strict else args.policy
+            policy = resolve_policy(
+                builtin_name=policy_name,
+                config_path=args.policy_file,
+                cli_overrides={
+                    "require_verified_provenance": args.require_verified_provenance,
+                    "allow_metadata_only": args.allow_metadata_only,
+                    "require_expected_repository_match": args.require_expected_repo_match,
+                    "allowed_publisher_organizations": (
+                        args.trusted_publisher_organization or None
+                    ),
+                    "fail_on_severity": args.fail_on_risk_severity,
+                },
+            )
+            if args.filename:
+                targets = _load_scan_targets(
+                    args.filename,
+                    client,
+                    resolver=resolver,
+                    constraints=args.constraint,
+                    extras=args.extra,
+                    groups=args.group,
+                    target_environment=_target_environment_from_args(args),
+                    offline=client.offline,
+                )
+                return _run_scan_targets(
+                    args.filename,
+                    targets,
+                    args=args,
+                    client=client,
+                    vulnerability_client=None,
+                    policy=policy,
+                    include_vulnerabilities=False,
+                    vulnerability_only=False,
+                    progress_callback=progress_callback,
+                    dependency_progress_callback=dependency_progress_callback,
+                    resolver=resolver,
+                    plugin_manager=plugin_manager,
+                )
+
             inspection_client: PypiClient | IndexBackedPackageClient = client
             expected_artifacts: tuple[ArtifactReference, ...] = ()
             dependency_confusion_indexes: tuple[str, ...] = ()
@@ -888,9 +869,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dependency_progress_callback=dependency_progress_callback,
                 include_dependencies=args.with_deps,
                 include_transitive_dependencies=args.with_transitive_deps,
-                include_osv=args.with_osv,
+                include_vulnerabilities=False,
+                include_osv=False,
                 inspect_artifacts=args.inspect_artifacts,
-                vulnerability_client=vulnerability_client,
+                vulnerability_client=None,
                 resolver=resolver,
                 target_environment=_target_environment_from_args(args),
                 expected_artifacts=expected_artifacts,
@@ -898,49 +880,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 trusted_projects=args.trusted_project,
                 plugin_manager=plugin_manager,
             )
-            policy_name = "strict" if args.strict else args.policy
-            policy = resolve_policy(
-                builtin_name=policy_name,
-                config_path=args.policy_file,
-                cli_overrides={
-                    "require_verified_provenance": args.require_verified_provenance,
-                    "allow_metadata_only": args.allow_metadata_only,
-                    "require_expected_repository_match": args.require_expected_repo_match,
-                    "allowed_publisher_organizations": (
-                        args.trusted_publisher_organization or None
-                    ),
-                    "vulnerability_mode": args.fail_on_vulnerability,
-                    "fail_on_severity": args.fail_on_risk_severity,
-                },
-            )
             evaluation = evaluate_policy(
                 report,
                 policy,
                 plugin_manager=plugin_manager,
             )
-            if args.cve:
-                if args.format == "json":
-                    rendered = json.dumps(
-                        _render_cve_json(report),
-                        indent=2,
-                        sort_keys=True,
-                    )
-                elif args.format == "text":
-                    rendered = _render_cve_report(report)
-                else:
-                    rendered = render_export(
-                        args.format,
-                        [
-                            ExportPackage(
-                                report=report,
-                                source=SourceLocation(report.package_url),
-                                artifacts=expected_artifacts,
-                            )
-                        ],
-                        source_name=f"{report.project} {report.version}",
-                        plugin_manager=plugin_manager,
-                    )
-            elif args.format == "json":
+            if args.format == "json":
                 rendered = json.dumps(
                     report.to_dict(),
                     indent=2,
@@ -964,20 +909,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     source_name=f"{report.project} {report.version}",
                     plugin_manager=plugin_manager,
                 )
-            if vulnerability_client is not None:
-                vulnerability_client.flush_snapshots()
             _emit_output(rendered, args.output_file)
             if not evaluation.passed:
                 return EXIT_POLICY_FAILURE
             return EXIT_OK
         if args.command == "scan":
+            if args.filename and args.project:
+                parser.error("scan accepts either PROJECT or -f/--file, not both")
+            if not args.filename and not args.project:
+                parser.error("scan requires PROJECT or -f/--file")
+            if not args.filename and (args.plan_fixes or args.fix):
+                parser.error("remediation requires -f/--file")
             config_payload = _load_config_file(args.config_file)
             args.max_workers = _resolve_max_workers(args, config_payload)
             progress_callback = None
             dependency_progress_callback = None
-            if args.format == "text":
-                progress_callback = _build_progress_callback()
-                dependency_progress_callback = _build_dependency_progress_callback()
             client = _build_client(
                 args,
                 config_payload=config_payload,
@@ -997,16 +943,56 @@ def main(argv: Sequence[str] | None = None) -> int:
                 builtin_name=policy_name,
                 config_path=args.policy_file,
                 cli_overrides={
-                    "require_verified_provenance": args.require_verified_provenance,
-                    "allow_metadata_only": args.allow_metadata_only,
-                    "allowed_publisher_organizations": (
-                        args.trusted_publisher_organization or None
-                    ),
+                    "require_verified_provenance": "none",
+                    "allow_metadata_only": True,
+                    "allowed_publisher_organizations": [],
                     "vulnerability_mode": args.fail_on_vulnerability,
-                    "fail_on_severity": args.fail_on_risk_severity,
+                    "fail_on_severity": "none",
                 },
             )
             resolver = _resolver_from_args(args, plugin_manager=plugin_manager)
+            if not args.filename:
+                report = _scan_project_vulnerabilities(
+                    args.project,
+                    version=args.version,
+                    args=args,
+                    client=client,
+                    vulnerability_client=vulnerability_client,
+                    policy=policy,
+                    resolver=resolver,
+                    plugin_manager=plugin_manager,
+                )
+                evaluation = evaluate_policy(
+                    report,
+                    policy,
+                    plugin_manager=plugin_manager,
+                )
+                if args.format == "json":
+                    rendered = json.dumps(
+                        _render_cve_json(report),
+                        indent=2,
+                        sort_keys=True,
+                    )
+                elif args.format == "text":
+                    rendered = _render_cve_report(report)
+                else:
+                    rendered = render_export(
+                        args.format,
+                        [
+                            ExportPackage(
+                                report=report,
+                                source=SourceLocation(report.package_url),
+                                artifacts=(),
+                            )
+                        ],
+                        source_name=f"{report.project} {report.version}",
+                        plugin_manager=plugin_manager,
+                    )
+                if vulnerability_client is not None:
+                    vulnerability_client.flush_snapshots()
+                _emit_output(rendered, args.output_file)
+                return EXIT_OK if evaluation.passed else EXIT_POLICY_FAILURE
+
             targets = _load_scan_targets(
                 args.filename,
                 client,
@@ -1024,6 +1010,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 client=client,
                 vulnerability_client=vulnerability_client,
                 policy=policy,
+                include_vulnerabilities=True,
+                vulnerability_only=True,
                 progress_callback=progress_callback,
                 dependency_progress_callback=dependency_progress_callback,
                 resolver=resolver,
@@ -1084,6 +1072,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 client=client,
                 vulnerability_client=vulnerability_client,
                 policy=policy,
+                include_vulnerabilities=True,
+                vulnerability_only=False,
                 progress_callback=progress_callback,
                 dependency_progress_callback=dependency_progress_callback,
                 resolver=None,
@@ -1130,6 +1120,8 @@ def _run_scan_targets(
     client: PypiClient,
     vulnerability_client: VulnerabilityIntelligenceClient | None,
     policy: PolicySettings,
+    include_vulnerabilities: bool,
+    vulnerability_only: bool,
     progress_callback: ProgressCallback | None,
     dependency_progress_callback: DependencyProgressCallback | None,
     resolver: PipResolver | None,
@@ -1216,16 +1208,22 @@ def _run_scan_targets(
                 client=target_client,
                 progress_callback=safe_progress,
                 dependency_progress_callback=safe_dependency_progress,
-                include_dependencies=args.with_deps,
-                include_transitive_dependencies=args.with_transitive_deps,
+                include_dependencies=getattr(args, "with_deps", False),
+                include_transitive_dependencies=getattr(
+                    args,
+                    "with_transitive_deps",
+                    False,
+                ),
+                include_vulnerabilities=include_vulnerabilities,
                 include_osv=vulnerability_client is not None,
-                inspect_artifacts=args.inspect_artifacts,
+                vulnerability_only=vulnerability_only,
+                inspect_artifacts=getattr(args, "inspect_artifacts", False),
                 vulnerability_client=vulnerability_client,
                 locked_versions=target.locked_versions,
                 complete_locked_versions=target.complete_locked_versions,
                 expected_artifacts=target.artifacts,
                 dependency_confusion_indexes=target.dependency_confusion,
-                trusted_projects=args.trusted_project,
+                trusted_projects=getattr(args, "trusted_project", ()),
                 plugin_manager=plugin_manager,
             )
             evaluation = evaluate_policy(
@@ -1348,7 +1346,7 @@ def _run_scan_targets(
             source_label,
             reports,
             failures=failures,
-            cve_only=args.cve,
+            vulnerability_only=vulnerability_only,
             targets=targets,
         )
         if remediation is not None:
@@ -1363,8 +1361,8 @@ def _run_scan_targets(
             source_label,
             reports,
             failures=failures,
-            verbose=args.verbose,
-            cve_only=args.cve,
+            verbose=getattr(args, "verbose", False),
+            vulnerability_only=vulnerability_only,
         )
         if remediation is not None:
             rendered += "\n\n" + render_remediation_text(remediation)
@@ -1392,6 +1390,81 @@ def _run_scan_targets(
         )
     _emit_output(rendered, args.output_file)
     return overall_exit_code
+
+
+def _scan_project_vulnerabilities(
+    project: str,
+    *,
+    version: str | None,
+    args: argparse.Namespace,
+    client: PypiClient,
+    vulnerability_client: VulnerabilityIntelligenceClient | None,
+    policy: PolicySettings,
+    resolver: PipResolver,
+    plugin_manager: PluginManager,
+) -> TrustReport:
+    selected_version = version
+    scan_client: PypiClient | IndexBackedPackageClient = client
+    expected_artifacts: tuple[ArtifactReference, ...] = ()
+    dependency_confusion_indexes: tuple[str, ...] = ()
+    if _uses_nondefault_indexes(args):
+        root_requirement = f"{project}=={version}" if version else project
+        resolution = resolver.resolve_requirements(
+            [root_requirement],
+            target=_target_environment_from_args(args),
+            offline=client.offline,
+        )
+        root = next(
+            (
+                item
+                for item in resolution.distributions
+                if canonicalize_name(item.name) == canonicalize_name(project)
+            ),
+            None,
+        )
+        if root is None:
+            raise ResolutionError(
+                f"resolver did not return root package {project!r}"
+            )
+        selected_version = root.version
+        expected_artifacts = root.artifacts
+        dependency_confusion_indexes = next(
+            (
+                finding.indexes
+                for finding in resolution.dependency_confusion
+                if canonicalize_name(finding.project) == canonicalize_name(project)
+            ),
+            (),
+        )
+        scan_client = _client_for_target(
+            client,
+            ScanTarget(
+                requirement=f"{root.name}=={root.version}",
+                project=root.name,
+                version=root.version,
+                artifacts=root.artifacts,
+                index_url=root.index_url,
+                requires_dist=root.requires_dist,
+            ),
+            keyring_provider=args.keyring_provider,
+            plugin_manager=plugin_manager,
+        )
+    report = inspect_package(
+        project,
+        version=selected_version,
+        client=scan_client,
+        include_vulnerabilities=True,
+        include_osv=vulnerability_client is not None,
+        vulnerability_only=True,
+        vulnerability_client=vulnerability_client,
+        resolver=resolver,
+        target_environment=_target_environment_from_args(args),
+        expected_artifacts=expected_artifacts,
+        dependency_confusion_indexes=dependency_confusion_indexes,
+        plugin_manager=plugin_manager,
+    )
+    evaluate_policy(report, policy, plugin_manager=plugin_manager)
+    return report
 
 
 def _run_remediation(
@@ -2015,16 +2088,16 @@ def _build_scan_state(
             "targets": list(keys),
             "policy": asdict(policy),
             "options": {
-                "with_deps": args.with_deps,
-                "with_transitive_deps": args.with_transitive_deps,
-                "inspect_artifacts": args.inspect_artifacts,
-                "with_osv": args.with_osv,
-                "osv_urls": list(args.osv_url),
-                "with_ecosystems": args.with_ecosystems,
-                "with_kev": args.with_kev,
-                "with_epss": args.with_epss,
-                "offline": args.offline,
-                "trusted_projects": list(args.trusted_project),
+                "with_deps": getattr(args, "with_deps", False),
+                "with_transitive_deps": getattr(args, "with_transitive_deps", False),
+                "inspect_artifacts": getattr(args, "inspect_artifacts", False),
+                "with_osv": getattr(args, "with_osv", False),
+                "osv_urls": list(getattr(args, "osv_url", ())),
+                "with_ecosystems": getattr(args, "with_ecosystems", False),
+                "with_kev": getattr(args, "with_kev", False),
+                "with_epss": getattr(args, "with_epss", False),
+                "offline": getattr(args, "offline", False),
+                "trusted_projects": list(getattr(args, "trusted_project", ())),
                 "index": _index_configuration_from_args(args).redacted(),
                 "plugins": [
                     {
@@ -3842,7 +3915,7 @@ def _append_artifact_findings(
 
 
 def _render_cve_json(report: TrustReport) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "project": report.project,
         "version": report.version,
         "package_url": report.package_url,
@@ -3888,6 +3961,9 @@ def _render_cve_json(report: TrustReport) -> dict[str, object]:
             for vuln in report.vulnerabilities
         ],
     }
+    if report.remediation.status != "not-requested":
+        payload["remediation"] = asdict(report.remediation)
+    return payload
 
 
 def _render_cve_report(report: TrustReport) -> str:
@@ -3957,7 +4033,7 @@ def _render_scan_text(
     *,
     failures: list[dict[str, str]],
     verbose: bool,
-    cve_only: bool,
+    vulnerability_only: bool,
 ) -> str:
     sections = [
         f"trustcheck scan results for {filename}",
@@ -3967,7 +4043,11 @@ def _render_scan_text(
     ]
 
     rendered_reports = [
-        _render_cve_report(report) if cve_only else _render_text_report(report, verbose=verbose)
+        (
+            _render_cve_report(report)
+            if vulnerability_only
+            else _render_text_report(report, verbose=verbose)
+        )
         for report in reports
     ]
     if rendered_reports:
@@ -3988,7 +4068,7 @@ def _render_scan_json(
     reports: list[TrustReport],
     *,
     failures: list[dict[str, str]],
-    cve_only: bool,
+    vulnerability_only: bool,
     targets: Sequence[ScanTarget] = (),
 ) -> dict[str, object]:
     return {
@@ -4019,7 +4099,11 @@ def _render_scan_json(
             for target in targets
         ],
         "reports": [
-            _render_cve_json(report) if cve_only else report.to_dict()["report"]
+            (
+                _render_cve_json(report)
+                if vulnerability_only
+                else report.to_dict()["report"]
+            )
             for report in reports
         ],
         "failures": failures,

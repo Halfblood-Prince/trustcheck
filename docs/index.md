@@ -98,29 +98,29 @@ Inspect the full dependency tree:
 trustcheck inspect sampleproject --version 4.0.0 --with-transitive-deps
 ```
 
-Inspect every package listed in a requirements-style file:
+Scan every package listed in a requirements-style file for vulnerabilities:
 
 ```bash
-trustcheck scan requirements.txt
+trustcheck scan -f requirements.txt
 ```
 
-Inspect dependencies declared in a TOML project file:
+Scan dependencies declared in a TOML project file for vulnerabilities:
 
 ```bash
-trustcheck scan pyproject.toml
+trustcheck scan -f pyproject.toml
 ```
 
 Inspect exact versions from a supported lockfile:
 
 ```bash
-trustcheck scan uv.lock --with-transitive-deps
+trustcheck inspect -f uv.lock --with-transitive-deps
 ```
 
 Plan or validate a safe dependency repair:
 
 ```bash
-trustcheck scan requirements.txt --with-osv --plan-fixes
-trustcheck scan uv.lock --with-osv --fix --dry-run
+trustcheck scan -f requirements.txt --with-osv --plan-fixes
+trustcheck scan -f uv.lock --with-osv --fix --dry-run
 ```
 
 Inspect wheel and sdist contents:

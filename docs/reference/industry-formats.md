@@ -15,7 +15,7 @@ documents:
 Use `--output-file` with `inspect`, `scan`, or `environment`:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --format sarif \
   --output-file reports/trustcheck.sarif
 ```

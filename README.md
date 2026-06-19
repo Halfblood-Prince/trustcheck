@@ -169,33 +169,32 @@ trustcheck inspect sampleproject --version 4.0.0
 Show only known vulnerabilities for a release:
 
 ```bash
-trustcheck inspect sampleproject --version 4.0.0 --cve
+trustcheck scan sampleproject --version 4.0.0
 ```
 
 Enrich vulnerability intelligence with OSV and GitHub Advisory Database data:
 
 ```bash
-trustcheck inspect jinja2 --version 2.10.0 --with-osv --cve
+trustcheck scan jinja2 --version 2.10.0 --with-osv
 ```
 
 Merge OSV, Ecosyste.ms, a private OSV-compatible service, CISA KEV, and FIRST
 EPSS intelligence:
 
 ```bash
-trustcheck inspect jinja2 \
+trustcheck scan jinja2 \
   --version 2.10.0 \
   --with-osv \
   --with-ecosystems \
   --osv-url https://advisories.example.com \
   --with-kev \
-  --with-epss \
-  --cve
+  --with-epss
 ```
 
 Gate only critical, known-exploited, or fixable vulnerabilities:
 
 ```bash
-trustcheck scan pylock.toml --fail-on-vulnerability kev
+trustcheck scan -f pylock.toml --fail-on-vulnerability kev
 ```
 
 Require verified publishers to belong to an approved organization:
@@ -224,14 +223,14 @@ trustcheck inspect sampleproject --version 4.0.0 --with-transitive-deps
 Inspect every package listed in a requirements-style file:
 
 ```bash
-trustcheck scan requirements.txt
+trustcheck inspect -f requirements.txt
 ```
 
 Resolution uses `pip install --dry-run --report` and includes transitive
 packages selected by pip:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --constraint constraints.txt \
   --python-version 3.12 \
   --platform manylinux_2_28_x86_64 \
@@ -247,13 +246,13 @@ resolution is wheel-only.
 Inspect dependencies declared in a TOML project file:
 
 ```bash
-trustcheck scan pyproject.toml
+trustcheck inspect -f pyproject.toml
 ```
 
 Plan the smallest constraint-compatible secure upgrade set:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --with-osv \
   --plan-fixes \
   --remediation-output reports/trustcheck-remediation.json
@@ -262,13 +261,13 @@ trustcheck scan requirements.txt \
 Generate and validate the exact patch without changing the working tree:
 
 ```bash
-trustcheck scan pyproject.toml --with-osv --fix --dry-run
+trustcheck scan -f pyproject.toml --with-osv --fix --dry-run
 ```
 
 Apply the same transaction only after re-resolution and a complete rescan:
 
 ```bash
-trustcheck scan uv.lock --with-osv --fix
+trustcheck scan -f uv.lock --with-osv --fix
 ```
 
 Secure versions excluded by a declared range remain blocked unless
@@ -278,20 +277,20 @@ and VCS dependencies are reported as requiring human remediation.
 Select project extras and dependency groups:
 
 ```bash
-trustcheck scan pyproject.toml --extra security --group test
+trustcheck scan -f pyproject.toml --extra security --group test
 ```
 
 Inspect exact direct and transitive versions from a supported lockfile:
 
 ```bash
-trustcheck scan pylock.toml --with-transitive-deps
-trustcheck scan Pipfile.lock
+trustcheck inspect -f pylock.toml --with-transitive-deps
+trustcheck scan -f Pipfile.lock
 ```
 
 Run a bounded, resumable scan and publish an advisory snapshot:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --with-osv \
   --max-workers 8 \
   --resume-state .trustcheck/scan-state.json \
@@ -301,7 +300,7 @@ trustcheck scan requirements.txt \
 Enable an installed plugin explicitly:
 
 ```bash
-trustcheck scan requirements.txt --plugin policy:company-policy
+trustcheck scan -f requirements.txt --plugin policy:company-policy
 ```
 
 Hash-pinned pip-tools output is detected automatically. Every retained
@@ -311,7 +310,7 @@ artifact. This integrity check does not require `--inspect-artifacts`.
 Resolve and audit from a private PEP 503/691 index:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --index-url https://username@packages.example.com/simple \
   --keyring-provider subprocess
 ```
@@ -319,7 +318,7 @@ trustcheck scan requirements.txt \
 Adding a public fallback is deliberately guarded:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --index-url https://username@packages.example.com/simple \
   --extra-index-url https://pypi.org/simple
 ```
@@ -359,7 +358,7 @@ normal inspection. Add organization-specific reference names with repeatable
 `--trusted-project`:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck inspect -f requirements.txt \
   --trusted-project internal-sdk \
   --trusted-project internal-auth
 ```
@@ -384,17 +383,17 @@ trustcheck inspect sampleproject --version 4.0.0 --format json
 Emit combined JSON for a requirements-style, TOML, or lockfile scan:
 
 ```bash
-trustcheck scan requirements.txt --format json
+trustcheck scan -f requirements.txt --format json
 ```
 
 Write SARIF, SBOM, VEX, or Markdown output directly to a file:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --format sarif \
   --output-file reports/trustcheck.sarif
 
-trustcheck scan pylock.toml \
+trustcheck scan -f pylock.toml \
   --format cyclonedx-json \
   --output-file reports/trustcheck.cdx.json
 ```
@@ -407,7 +406,7 @@ policy violations.
 Emit only vulnerability records as JSON:
 
 ```bash
-trustcheck inspect sampleproject --version 4.0.0 --cve --format json
+trustcheck scan sampleproject --version 4.0.0 --format json
 ```
 
 Fail CI when full verification is missing:

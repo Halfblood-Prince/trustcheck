@@ -6,10 +6,17 @@ Primary command:
 trustcheck inspect <project>
 ```
 
-Requirements file scan:
+Package vulnerability scan:
 
 ```bash
-trustcheck scan <filename>
+trustcheck scan <project>
+```
+
+Dependency-file inspection or vulnerability scan:
+
+```bash
+trustcheck inspect -f <filename>
+trustcheck scan -f <filename>
 ```
 
 Installed environment scan:
@@ -32,7 +39,6 @@ trustcheck --version
   `cyclonedx-xml`, `spdx-json`, `openvex`, or `markdown`
 - `--output-file PATH`: write the rendered report to a file and suppress stdout
 - `--verbose`: include per-file provenance, digest, publisher, and note fields in text output
-- `--cve`: show only the known vulnerability records reported for the selected release
 - `--with-osv`: query the public OSV API
 - `--osv-url URL`: query an additional OSV-compatible API; repeatable
 - `--with-ecosystems`: query the Ecosyste.ms OSV-compatible API
@@ -48,7 +54,8 @@ trustcheck --version
 - `--policy-file PATH`: load policy settings from a JSON file
 - `--trusted-publisher-organization [PROVIDER:]ORGANIZATION`: require verified
   publishers to belong to an approved organization; repeatable
-- `scan <filename>`: read a requirements, project TOML, or supported lockfile and inspect each entry
+- `inspect -f <filename>`: inspect every package in a requirements, project TOML, or supported lockfile without vulnerability checks
+- `scan -f <filename>`: scan every package in a requirements, project TOML, or supported lockfile for vulnerabilities only
 - `environment`: inspect exact distributions installed in the active
   interpreter, or in repeatable `--path` locations
 
@@ -108,25 +115,24 @@ trustcheck inspect requests
 Show only known vulnerability records:
 
 ```bash
-trustcheck inspect sampleproject --version 4.0.0 --cve
+trustcheck scan sampleproject --version 4.0.0
 ```
 
 Query OSV in addition to PyPI and show source, severity, fixes, and advisory links:
 
 ```bash
-trustcheck inspect jinja2 --version 2.10.0 --with-osv --cve
+trustcheck scan jinja2 --version 2.10.0 --with-osv
 ```
 
 Query all built-in advisory providers and enrich CVE aliases:
 
 ```bash
-trustcheck inspect jinja2 \
+trustcheck scan jinja2 \
   --version 2.10.0 \
   --with-osv \
   --with-ecosystems \
   --with-kev \
-  --with-epss \
-  --cve
+  --with-epss
 ```
 
 The OSV-compatible providers run concurrently and merge deterministically with
@@ -170,7 +176,7 @@ trustcheck inspect sampleproject --version 4.0.0 --with-transitive-deps
 Scan every package listed in a requirements-style file:
 
 ```bash
-trustcheck scan requirements.txt
+trustcheck scan -f requirements.txt
 ```
 
 Requirements scans are resolved as complete environments with pip's
@@ -181,7 +187,7 @@ requirements use pip's own parsing and resolution behavior.
 Apply an additional constraints file and resolve for a target:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --constraint constraints.txt \
   --python-version 3.12 \
   --platform manylinux_2_28_x86_64 \
@@ -202,13 +208,13 @@ distributions for a foreign interpreter or platform.
 Scan dependencies declared in a TOML project file:
 
 ```bash
-trustcheck scan pyproject.toml
+trustcheck scan -f pyproject.toml
 ```
 
 Plan secure dependency changes without invoking writers:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --with-osv \
   --plan-fixes \
   --remediation-output reports/remediation.json
@@ -217,13 +223,13 @@ trustcheck scan requirements.txt \
 Regenerate and validate the exact patch in an isolated project mirror:
 
 ```bash
-trustcheck scan pyproject.toml --with-osv --fix --dry-run
+trustcheck scan -f pyproject.toml --with-osv --fix --dry-run
 ```
 
 Apply the validated bytes transactionally:
 
 ```bash
-trustcheck scan uv.lock --with-osv --fix
+trustcheck scan -f uv.lock --with-osv --fix
 ```
 
 `--allow-constraint-changes` permits only the minimum range change needed when
@@ -239,18 +245,18 @@ default. See [Safe remediation](../reference/remediation.md).
 Select only particular extras and dependency groups:
 
 ```bash
-trustcheck scan pyproject.toml --extra security --group test
+trustcheck scan -f pyproject.toml --extra security --group test
 ```
 
 Without `--extra` or `--group`, all statically declared extras and groups are
 included for backward compatibility. Standard dependency-group
 `include-group` entries are expanded with cycle detection.
 
-Scan a standard PEP 751 lockfile or another supported lock:
+Scan or inspect a standard PEP 751 lockfile or another supported lock:
 
 ```bash
-trustcheck scan pylock.toml --with-transitive-deps
-trustcheck scan Pipfile.lock
+trustcheck inspect -f pylock.toml --with-transitive-deps
+trustcheck scan -f Pipfile.lock
 ```
 
 Supported lock inputs are `pylock.toml`, named `pylock.<name>.toml` files,
@@ -271,7 +277,7 @@ unsupported algorithm produces a high-severity `lockfile_hash_mismatch`.
 Resolve through a private index with keyring authentication:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --index-url https://username@packages.example.com/simple \
   --keyring-provider subprocess
 ```
@@ -294,13 +300,13 @@ installations in combined JSON output.
 Scan a requirements-style file and emit JSON:
 
 ```bash
-trustcheck scan requirements.txt --format json
+trustcheck scan -f requirements.txt --format json
 ```
 
 Emit SARIF with stable fingerprints and dependency-manifest locations:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --format sarif \
   --output-file reports/trustcheck.sarif
 ```
@@ -308,15 +314,15 @@ trustcheck scan requirements.txt \
 Emit SBOM, VEX, or Markdown documents:
 
 ```bash
-trustcheck scan pylock.toml --format cyclonedx-json \
+trustcheck scan -f pylock.toml --format cyclonedx-json \
   --output-file reports/trustcheck.cdx.json
 trustcheck environment --format cyclonedx-xml \
   --output-file reports/environment.cdx.xml
-trustcheck scan requirements.txt --format spdx-json \
+trustcheck scan -f requirements.txt --format spdx-json \
   --output-file reports/trustcheck.spdx.json
-trustcheck scan requirements.txt --format openvex \
+trustcheck scan -f requirements.txt --format openvex \
   --output-file reports/trustcheck.openvex.json
-trustcheck scan requirements.txt --format markdown \
+trustcheck scan -f requirements.txt --format markdown \
   --output-file reports/trustcheck.md
 ```
 
@@ -349,15 +355,17 @@ with pip first and uses the resulting exact version map while traversing
 `--with-transitive-deps` continues recursively. The top-level result can be
 escalated if an inspected dependency is `review-required` or `high-risk`.
 
-When `scan` is used, `trustcheck` reads a requirements-style file, TOML project
-file, or supported lockfile. Requirements inputs are delegated to pip so their
-complete resolved set is audited. TOML project files support
+When `-f` is used, `trustcheck` reads a requirements-style file, TOML project
+file, or supported lockfile. `inspect -f` collects trust evidence without
+vulnerability checks; `scan -f` checks only vulnerability records.
+Requirements inputs are delegated to pip so their complete resolved set is
+audited. TOML project files support
 `[project.dependencies]`, optional dependencies, standard
 `[dependency-groups]`, Poetry dependencies, and Poetry groups. Lockfile scans
 support PEP 751 `pylock.toml`, `Pipfile.lock`, `uv.lock`, `poetry.lock`, and
 `pdm.lock`; pip-tools hashes are retained from requirements files. Exact
 resolved versions, index origins, artifact candidates, and hashes are retained
-for both direct and transitive inspection.
+in machine-readable output.
 
 Package releases and the machine-readable report schema are versioned
 independently. Deep provenance analysis is represented in report schema
@@ -377,9 +385,8 @@ Use cached responses only:
 trustcheck inspect sampleproject --version 4.0.0 --cache-dir .trustcheck-cache --offline
 ```
 
-When `--cve` is used, `trustcheck` still collects the same package metadata and
-evaluates policy settings, but the output is reduced to the vulnerability
-records only. In JSON mode, the output is a minimal object containing
+When `scan` is used without `-f`, `trustcheck` scans the named PyPI package for
+vulnerabilities only. In JSON mode, the output is a minimal object containing
 `project`, `version`, `package_url`, and `vulnerabilities`. Advisory providers
 query the exact selected package version. Records sharing a CVE or another
 alias are merged across providers.

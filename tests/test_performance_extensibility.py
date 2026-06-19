@@ -87,6 +87,7 @@ class BenchmarkPublicationTests(unittest.TestCase):
                 "-m",
                 "trustcheck",
                 "scan",
+                "-f",
                 str(requirements),
             ],
             requirements=requirements,
@@ -94,12 +95,68 @@ class BenchmarkPublicationTests(unittest.TestCase):
 
         self.assertEqual(published[0], "python")
         self.assertEqual(published[-1], "benchmarks/corpus/requirements-main.txt")
+        self.assertIn("-f", published)
         self.assertNotIn(str(root), " ".join(published))
         external = root.parent / "private-requirements.txt"
         self.assertEqual(
             namespace["_published_path"](external),
             "<external>/private-requirements.txt",
         )
+
+    def test_benchmark_table_is_inserted_before_installation(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        namespace = runpy.run_path(
+            str(root / "scripts" / "update_benchmark_table.py"),
+            run_name="trustcheck_benchmark_table_test",
+        )
+        payload = {
+            "generated_at": "2026-06-19T12:00:00+00:00",
+            "environment": {
+                "python": "3.12.0",
+                "pip_audit": "pip-audit 2.9.0",
+            },
+            "corpus": {
+                "version": "2026.06",
+                "benchmark_package_count": 123,
+            },
+            "performance": {
+                "trustcheck": {"median_seconds": 1.234, "p95_seconds": 2.345},
+                "pip_audit": {"median_seconds": 3.456, "p95_seconds": 4.567},
+            },
+            "correctness": {
+                "trustcheck_vulnerable_packages": 7,
+                "pip_audit_vulnerable_packages": 7,
+                "alias_aware_agreement": True,
+                "packages_compared": 123,
+                "matched_advisories": 9,
+            },
+        }
+
+        with TemporaryDirectory() as directory:
+            readme = Path(directory) / "README.md"
+            result = Path(directory) / "latest.json"
+            readme.write_text("# Trustcheck\n\n## Installation\n\nInstall.\n", encoding="utf-8")
+            result.write_text(json.dumps(payload), encoding="utf-8")
+
+            exit_code = namespace["main"]([str(result), "--readme", str(readme)])
+            updated = readme.read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0)
+        self.assertLess(updated.index("## Latest benchmark"), updated.index("## Installation"))
+        self.assertIn("| Trustcheck | 1.23 s | 2.35 s | 7 |", updated)
+        self.assertIn("| pip-audit | 3.46 s | 4.57 s | 7 |", updated)
+
+    def test_benchmark_workflow_commits_readme_table_and_latest_result(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github" / "workflows" / "benchmarks.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("contents: write", workflow)
+        self.assertIn("--output benchmarks/results/latest.json", workflow)
+        self.assertIn("python scripts/update_benchmark_table.py", workflow)
+        self.assertIn("git add README.md benchmarks/results/latest.json", workflow)
+        self.assertIn("git commit -m \"Update benchmark results\"", workflow)
 
 
 def _report(project: str, version: str) -> TrustReport:
@@ -1066,6 +1123,7 @@ class ResumeScanTests(unittest.TestCase):
                 first = main(
                     [
                         "scan",
+                        "-f",
                         "requirements.txt",
                         "--format",
                         "json",
@@ -1087,6 +1145,7 @@ class ResumeScanTests(unittest.TestCase):
                 second = main(
                     [
                         "scan",
+                        "-f",
                         "requirements.txt",
                         "--format",
                         "json",
@@ -1174,6 +1233,8 @@ class ResumeScanTests(unittest.TestCase):
                     client=SimpleNamespace(),
                     vulnerability_client=intelligence,  # type: ignore[arg-type]
                     policy=PolicySettings(),
+                    include_vulnerabilities=True,
+                    vulnerability_only=False,
                     progress_callback=None,
                     dependency_progress_callback=None,
                     resolver=None,
@@ -1266,6 +1327,8 @@ class ResumeScanTests(unittest.TestCase):
                 client=SimpleNamespace(),
                 vulnerability_client=None,
                 policy=PolicySettings(),
+                include_vulnerabilities=True,
+                vulnerability_only=False,
                 progress_callback=None,
                 dependency_progress_callback=None,
                 resolver=None,

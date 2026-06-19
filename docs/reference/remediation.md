@@ -6,9 +6,9 @@ installed-environment auditing remain read-only.
 ## Modes
 
 ```bash
-trustcheck scan requirements.txt --with-osv --plan-fixes
-trustcheck scan requirements.txt --with-osv --fix --dry-run
-trustcheck scan requirements.txt --with-osv --fix
+trustcheck scan -f requirements.txt --with-osv --plan-fixes
+trustcheck scan -f requirements.txt --with-osv --fix --dry-run
+trustcheck scan -f requirements.txt --with-osv --fix
 ```
 
 `--plan-fixes` resolves and rescans candidates but does not invoke lockfile
@@ -58,7 +58,7 @@ root requirements.
 ## Patch bundles
 
 ```bash
-trustcheck scan pylock.toml \
+trustcheck scan -f pylock.toml \
   --source-manifest pyproject.toml \
   --fix --dry-run \
   --remediation-output reports/remediation.json
@@ -73,7 +73,7 @@ PR metadata.
 ## Pull requests
 
 ```bash
-trustcheck scan uv.lock --with-osv --fix --create-pr \
+trustcheck scan -f uv.lock --with-osv --fix --create-pr \
   --pr-base main
 ```
 

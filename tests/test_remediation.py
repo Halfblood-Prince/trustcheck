@@ -1906,6 +1906,7 @@ class RemediationCliTests(unittest.TestCase):
         planned = parser.parse_args(
             [
                 "scan",
+                "-f",
                 "requirements.txt",
                 "--plan-fixes",
                 "--allow-constraint-changes",
@@ -1916,6 +1917,7 @@ class RemediationCliTests(unittest.TestCase):
         fixed = parser.parse_args(
             [
                 "scan",
+                "-f",
                 "requirements.txt",
                 "--fix",
                 "--dry-run",
@@ -1932,10 +1934,10 @@ class RemediationCliTests(unittest.TestCase):
 
     def test_cli_rejects_invalid_remediation_flag_combinations(self) -> None:
         for arguments in (
-            ["scan", "requirements.txt", "--dry-run"],
-            ["scan", "requirements.txt", "--create-pr"],
-            ["scan", "requirements.txt", "--fix", "--dry-run", "--create-pr"],
-            ["scan", "requirements.txt", "--plan-fixes", "--max-fix-attempts", "0"],
+            ["scan", "-f", "requirements.txt", "--dry-run"],
+            ["scan", "-f", "requirements.txt", "--create-pr"],
+            ["scan", "-f", "requirements.txt", "--fix", "--dry-run", "--create-pr"],
+            ["scan", "-f", "requirements.txt", "--plan-fixes", "--max-fix-attempts", "0"],
         ):
             with self.subTest(arguments=arguments):
                 with (
@@ -1979,6 +1981,7 @@ class RemediationCliTests(unittest.TestCase):
                 exit_code = main(
                     [
                         "scan",
+                        "-f",
                         str(target),
                         "--plan-fixes",
                         "--format",
@@ -2785,6 +2788,7 @@ class RemediationCliTests(unittest.TestCase):
                 exit_code = main(
                     [
                         "scan",
+                        "-f",
                         str(target),
                         "--plan-fixes",
                         "--remediation-output",
@@ -2826,6 +2830,7 @@ class RemediationCliTests(unittest.TestCase):
                 exit_code = main(
                     [
                         "scan",
+                        "-f",
                         str(target),
                         "--fix",
                         "--dry-run",

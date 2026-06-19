@@ -6,7 +6,7 @@ on:
     - cron: "17 4 * * 1"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   pip-audit-comparison:
@@ -14,6 +14,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: true
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -23,9 +25,24 @@ jobs:
           python benchmarks/benchmark_against_pip_audit.py
           --warmups 1
           --iterations 5
-          --output benchmarks/results/${{ github.sha }}.json
+          --output benchmarks/results/latest.json
+      - run: >-
+          python scripts/update_benchmark_table.py
+          benchmarks/results/latest.json
+          --readme README.md
+      - name: Commit benchmark result
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md benchmarks/results/latest.json
+          if git diff --cached --quiet; then
+            echo "Benchmark table is already up to date."
+          else
+            git commit -m "Update benchmark results"
+            git push
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: trustcheck-pip-audit-benchmark-${{ github.sha }}
-          path: benchmarks/results/${{ github.sha }}.json
+          path: benchmarks/results/latest.json
           if-no-files-found: error

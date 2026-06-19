@@ -1,6 +1,8 @@
 # JSON contract
 
-`trustcheck inspect --format json` is the stable machine-readable interface.
+`trustcheck inspect --format json` is the stable machine-readable interface for
+trust evidence. `trustcheck scan --format json` is the vulnerability-only
+interface for a single PyPI package.
 
 ## Stability rules
 
@@ -208,11 +210,11 @@ When dependency inspection is enabled with `--with-deps`, `--with-transitive-dep
 
 If dependency inspection is not requested, these fields are still present in the contract with empty or default values so JSON consumers can rely on a stable shape.
 
-## Combined scan resolution metadata
+## File scan resolution metadata
 
-`trustcheck scan --format json` and `trustcheck environment --format json`
-include a top-level `resolved` array alongside `reports` and `failures`. Each
-entry records:
+`trustcheck inspect -f <file> --format json`, `trustcheck scan -f <file>
+--format json`, and `trustcheck environment --format json` include a top-level
+`resolved` array alongside `reports` and `failures`. Each entry records:
 
 - the exact resolved project and version
 - whether the distribution was explicitly requested
@@ -225,7 +227,10 @@ entry records:
 - the dependency manifest path and best-effort declaration line in
   `source_file` and `source_line`
 
-This scan-level metadata does not change the per-package report schema.
+For `inspect -f` and `environment`, each item in `reports` uses the full
+per-package report schema. For `scan -f`, each item is a minimal vulnerability
+object containing `project`, `version`, `package_url`, `vulnerabilities`, and
+an optional `remediation` summary when remediation was requested.
 
 When remediation is requested, combined scan JSON also includes a top-level
 `remediation` object using

@@ -65,11 +65,6 @@ class GitHubActionTests(unittest.TestCase):
                     "github:pypa",
                     "github:example",
                 ),
-                with_osv=True,
-                osv_urls=("https://osv.internal.example",),
-                with_ecosystems=True,
-                with_kev=True,
-                with_epss=True,
                 with_transitive_deps=True,
                 inspect_artifacts=True,
                 index_url="https://packages.example/simple",
@@ -90,12 +85,6 @@ class GitHubActionTests(unittest.TestCase):
         )
         self.assertIn("github:pypa", arguments)
         self.assertIn("--policy-file", arguments)
-        self.assertIn("--with-osv", arguments)
-        self.assertIn("--osv-url", arguments)
-        self.assertIn("https://osv.internal.example", arguments)
-        self.assertIn("--with-ecosystems", arguments)
-        self.assertIn("--with-kev", arguments)
-        self.assertIn("--with-epss", arguments)
         self.assertIn("--with-transitive-deps", arguments)
         self.assertIn("--inspect-artifacts", arguments)
         self.assertIn("--index-url", arguments)
@@ -107,6 +96,28 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("--allow-dependency-confusion", arguments)
         self.assertEqual(arguments.count("--trusted-project"), 2)
         self.assertIn("internal-sdk", arguments)
+        self.assertEqual(arguments[-2:], ["--format", "json"])
+
+    def test_package_target_maps_advisory_inputs_to_scan_cli(self) -> None:
+        settings = ActionSettings(
+            target="sampleproject",
+            with_osv=True,
+            osv_urls=("https://osv.internal.example",),
+            with_ecosystems=True,
+            with_kev=True,
+            with_epss=True,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            arguments = build_cli_arguments(settings, workspace=Path(tmpdir))
+
+        self.assertEqual(arguments[:2], ["scan", "sampleproject"])
+        self.assertIn("--with-osv", arguments)
+        self.assertIn("--osv-url", arguments)
+        self.assertIn("https://osv.internal.example", arguments)
+        self.assertIn("--with-ecosystems", arguments)
+        self.assertIn("--with-kev", arguments)
+        self.assertIn("--with-epss", arguments)
         self.assertEqual(arguments[-2:], ["--format", "json"])
 
     def test_all_documented_dependency_files_use_scan_command(self) -> None:
@@ -130,7 +141,7 @@ class GitHubActionTests(unittest.TestCase):
                     workspace=workspace,
                 )
 
-                self.assertEqual(arguments[:2], ["scan", str(target.resolve())])
+                self.assertEqual(arguments[:3], ["scan", "-f", str(target.resolve())])
                 self.assertIn("--policy", arguments)
                 self.assertIn("strict", arguments)
 

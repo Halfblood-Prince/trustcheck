@@ -245,7 +245,7 @@ and declaration line when available.
 The CLI remains available for other CI systems:
 
 ```bash
-trustcheck scan requirements.txt --policy strict --format json
+trustcheck scan -f requirements.txt --policy strict --format json
 ```
 
 GitHub users should prefer the action because it handles installation, report

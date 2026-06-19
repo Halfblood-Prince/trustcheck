@@ -299,6 +299,7 @@ def _trustcheck_command(case: CorpusCase, *, max_workers: int) -> list[str]:
         "-m",
         "trustcheck",
         "scan",
+        "-f",
         str(case.path),
         "--with-osv",
         "--format",

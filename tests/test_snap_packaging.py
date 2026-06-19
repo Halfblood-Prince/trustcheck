@@ -30,7 +30,7 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertIn("icon: snap/gui/icon.png", snapcraft)
         self.assertIn("**What TrustCheck examines**", snapcraft)
         self.assertIn("**Quick start**", snapcraft)
-        self.assertIn("trustcheck scan requirements.txt --policy strict", snapcraft)
+        self.assertIn("trustcheck scan -f requirements.txt --policy strict", snapcraft)
         self.assertIn("base: core24", snapcraft)
         self.assertIn("grade: stable", snapcraft)
         self.assertIn("confinement: strict", snapcraft)

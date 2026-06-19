@@ -7,7 +7,7 @@ fetches, and enrichment work. The default is `8`; accepted values are `1`
 through `64`.
 
 ```bash
-trustcheck scan requirements.txt --with-osv --max-workers 8
+trustcheck scan -f requirements.txt --with-osv --max-workers 8
 ```
 
 Results remain in resolved-input order even when workers finish out of order.
@@ -43,11 +43,11 @@ Use a versioned snapshot to make advisory results portable and available to
 offline scans:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --with-osv \
   --write-advisory-snapshot .trustcheck/advisories.json
 
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --offline \
   --cache-dir .trustcheck/cache \
   --advisory-snapshot .trustcheck/advisories.json
@@ -66,7 +66,7 @@ artifacts still require a populated content cache.
 `scan` and `environment` accept `--resume-state PATH`:
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --with-osv \
   --resume-state .trustcheck/scan-state.json
 ```
@@ -84,7 +84,7 @@ installed Python code. Enable all installed Trustcheck plugins with
 `--plugin [KIND:]NAME`.
 
 ```bash
-trustcheck scan requirements.txt \
+trustcheck scan -f requirements.txt \
   --plugin advisory:company-osv \
   --plugin policy:company-policy \
   --plugin-config trustcheck-plugins.json

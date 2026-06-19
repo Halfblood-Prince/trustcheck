@@ -204,7 +204,9 @@ def inspect_package(
     dependency_progress_callback: DependencyProgressCallback | None = None,
     include_dependencies: bool = False,
     include_transitive_dependencies: bool = False,
+    include_vulnerabilities: bool = True,
     include_osv: bool = False,
+    vulnerability_only: bool = False,
     inspect_artifacts: bool = False,
     osv_client: OsvClient | None = None,
     vulnerability_client: VulnerabilityIntelligenceClient | None = None,
@@ -261,35 +263,60 @@ def inspect_package(
         selected_version = payload.get("info", {}).get("version") or version or "unknown"
         declared_dependencies = _extract_declared_dependencies(info.get("requires_dist"))
         declared_repository_urls = _extract_repository_urls(info.get("project_urls") or {})
-        vulnerabilities = _parse_vulnerabilities(
-            payload.get("vulnerabilities") or []
-        )
-        if include_osv and vulnerability_client is None:
-            osv_client = osv_client or OsvClient(
-                timeout=float(getattr(client, "timeout", 10.0)),
-                max_retries=int(getattr(client, "max_retries", 2)),
-                backoff_factor=float(getattr(client, "backoff_factor", 0.25)),
-                offline=bool(getattr(client, "offline", False)),
+        vulnerabilities: list[VulnerabilityRecord] = []
+        if include_vulnerabilities:
+            vulnerabilities = _parse_vulnerabilities(
+                payload.get("vulnerabilities") or []
             )
-            vulnerability_client = VulnerabilityIntelligenceClient(
-                providers=(
-                    OsvProvider(
-                        name=OSV_SOURCE,
-                        client=osv_client,
-                    ),
+            if include_osv and vulnerability_client is None:
+                osv_client = osv_client or OsvClient(
+                    timeout=float(getattr(client, "timeout", 10.0)),
+                    max_retries=int(getattr(client, "max_retries", 2)),
+                    backoff_factor=float(getattr(client, "backoff_factor", 0.25)),
+                    offline=bool(getattr(client, "offline", False)),
                 )
-            )
-        if vulnerability_client is not None:
-            with _instrument_client(
-                vulnerability_client,
-                diagnostics.on_request_event,
-            ):
-                vulnerabilities = vulnerability_client.query(
-                    project,
-                    selected_version,
-                    vulnerabilities,
+                vulnerability_client = VulnerabilityIntelligenceClient(
+                    providers=(
+                        OsvProvider(
+                            name=OSV_SOURCE,
+                            client=osv_client,
+                        ),
+                    )
                 )
+            if vulnerability_client is not None:
+                with _instrument_client(
+                    vulnerability_client,
+                    diagnostics.on_request_event,
+                ):
+                    vulnerabilities = vulnerability_client.query(
+                        project,
+                        selected_version,
+                        vulnerabilities,
+                    )
         ownership = info.get("ownership") or {}
+        package_url = (
+            client.package_url(project, selected_version)
+            if hasattr(client, "package_url")
+            else f"https://pypi.org/project/{project}/{selected_version}/"
+        )
+        if vulnerability_only:
+            report = TrustReport(
+                project=project,
+                version=selected_version,
+                summary=info.get("summary"),
+                package_url=package_url,
+                declared_dependencies=declared_dependencies,
+                declared_repository_urls=declared_repository_urls,
+                repository_urls=declared_repository_urls,
+                ownership=ownership,
+                vulnerabilities=vulnerabilities,
+                diagnostics=diagnostics.to_report_diagnostics(client),
+            )
+            report.risk_flags = _build_risk_flags(report)
+            advisory_evaluation_for(report)
+            report.diagnostics = diagnostics.to_report_diagnostics(client)
+            return report
+
         files = _collect_files(
             project,
             selected_version,
@@ -315,11 +342,7 @@ def inspect_package(
             project=project,
             version=selected_version,
             summary=info.get("summary"),
-            package_url=(
-                client.package_url(project, selected_version)
-                if hasattr(client, "package_url")
-                else f"https://pypi.org/project/{project}/{selected_version}/"
-            ),
+            package_url=package_url,
             declared_dependencies=declared_dependencies,
             declared_repository_urls=declared_repository_urls,
             repository_urls=declared_repository_urls,
@@ -358,6 +381,7 @@ def inspect_package(
                 dependency_context=dependency_context,
                 dependency_progress_callback=dependency_progress_callback,
                 recursive=include_transitive_dependencies,
+                include_vulnerabilities=include_vulnerabilities,
                 include_osv=include_osv,
                 inspect_artifacts=inspect_artifacts,
                 osv_client=osv_client,
@@ -736,6 +760,7 @@ def _inspect_dependencies(
     dependency_context: DependencyTraversalContext,
     dependency_progress_callback: DependencyProgressCallback | None = None,
     recursive: bool,
+    include_vulnerabilities: bool,
     include_osv: bool,
     inspect_artifacts: bool,
     osv_client: OsvClient | None,
@@ -765,6 +790,7 @@ def _inspect_dependencies(
             depth=depth,
             environment=environment,
             dependency_progress_callback=dependency_progress_callback,
+            include_vulnerabilities=include_vulnerabilities,
             include_osv=include_osv,
             inspect_artifacts=inspect_artifacts,
             osv_client=osv_client,
@@ -798,6 +824,7 @@ def _inspect_dependency_requirement(
     depth: int,
     environment: dict[str, str],
     dependency_progress_callback: DependencyProgressCallback | None = None,
+    include_vulnerabilities: bool,
     include_osv: bool,
     inspect_artifacts: bool,
     osv_client: OsvClient | None,
@@ -871,6 +898,7 @@ def _inspect_dependency_requirement(
             client=client,
             progress_callback=emit_dependency_artifact_progress,
             include_dependencies=False,
+            include_vulnerabilities=include_vulnerabilities,
             include_osv=include_osv,
             inspect_artifacts=inspect_artifacts,
             osv_client=osv_client,
