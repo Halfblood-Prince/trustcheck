@@ -51,13 +51,35 @@ from trustcheck.snapshots import (
 
 
 class BenchmarkPublicationTests(unittest.TestCase):
+    def test_corpus_manifest_is_versioned_and_large_enough(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        namespace = runpy.run_path(
+            str(root / "benchmarks" / "benchmark_against_pip_audit.py"),
+            run_name="trustcheck_benchmark_test",
+        )
+        corpus = namespace["_load_corpus"](
+            root / "benchmarks" / "corpus" / "corpus.json"
+        )
+        comparable = namespace["_benchmark_cases"](corpus, [])
+
+        self.assertEqual(corpus.version, "2026.06")
+        self.assertGreaterEqual(corpus.package_count, 100)
+        self.assertLessEqual(corpus.package_count, 500)
+        self.assertGreaterEqual(sum(case.package_count for case in comparable), 100)
+        self.assertIn(
+            "mixed-clean-vulnerable-pins",
+            {case.category for case in corpus.cases},
+        )
+        self.assertIn("lockfiles", {case.category for case in corpus.cases})
+        self.assertIn("malformed", {case.category for case in corpus.cases})
+
     def test_redacts_local_paths(self) -> None:
         root = Path(__file__).resolve().parents[1]
         namespace = runpy.run_path(
             str(root / "benchmarks" / "benchmark_against_pip_audit.py"),
             run_name="trustcheck_benchmark_test",
         )
-        requirements = root / "benchmarks" / "corpus" / "requirements.txt"
+        requirements = root / "benchmarks" / "corpus" / "requirements-main.txt"
 
         published = namespace["_published_command"](
             [
@@ -71,7 +93,7 @@ class BenchmarkPublicationTests(unittest.TestCase):
         )
 
         self.assertEqual(published[0], "python")
-        self.assertEqual(published[-1], "benchmarks/corpus/requirements.txt")
+        self.assertEqual(published[-1], "benchmarks/corpus/requirements-main.txt")
         self.assertNotIn(str(root), " ".join(published))
         external = root.parent / "private-requirements.txt"
         self.assertEqual(

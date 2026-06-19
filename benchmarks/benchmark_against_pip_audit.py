@@ -13,6 +13,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
+BENCHMARK_SCHEMA = "urn:trustcheck:benchmark:pip-audit:2.0.0"
+CORPUS_SCHEMA = "urn:trustcheck:benchmark-corpus:1.0.0"
+MIN_CORPUS_PACKAGES = 100
+MAX_CORPUS_PACKAGES = 500
+
+
+@dataclass(frozen=True, slots=True)
+class CorpusCase:
+    case_id: str
+    path: Path
+    kind: str
+    category: str
+    package_count: int
+    compare_with_pip_audit: bool
+    description: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Corpus:
+    manifest: Path
+    version: str
+    cases: tuple[CorpusCase, ...]
+    package_count: int
+
 
 @dataclass(frozen=True, slots=True)
 class RunResult:
@@ -23,11 +47,28 @@ class RunResult:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Benchmark trustcheck against pip-audit on one pinned corpus."
+        description=(
+            "Benchmark trustcheck against the latest installed pip-audit on a "
+            "versioned package corpus."
+        )
+    )
+    parser.add_argument(
+        "--corpus",
+        default="benchmarks/corpus/corpus.json",
+        help="Versioned benchmark corpus manifest.",
+    )
+    parser.add_argument(
+        "--case",
+        action="append",
+        default=[],
+        help="Corpus case id to benchmark; repeatable. Defaults to all comparable cases.",
     )
     parser.add_argument(
         "--requirements",
-        default="benchmarks/corpus/requirements.txt",
+        help=(
+            "Legacy single requirements input. Bypasses corpus-size validation "
+            "and is intended only for ad hoc local comparisons."
+        ),
     )
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--warmups", type=int, default=1)
@@ -41,62 +82,59 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.iterations < 1 or args.warmups < 0:
         parser.error("iterations must be positive and warmups cannot be negative")
 
-    requirements = Path(args.requirements).resolve()
-    if not requirements.is_file():
-        parser.error(f"requirements file does not exist: {requirements}")
+    corpus = (
+        _legacy_corpus(Path(args.requirements).resolve())
+        if args.requirements
+        else _load_corpus(Path(args.corpus).resolve())
+    )
+    benchmark_cases = _benchmark_cases(corpus, args.case)
+    if not benchmark_cases:
+        parser.error("no pip-audit-comparable corpus cases were selected")
 
-    trustcheck_command = [
-        sys.executable,
-        "-m",
-        "trustcheck",
-        "scan",
-        str(requirements),
-        "--with-osv",
-        "--format",
-        "json",
-        "--max-workers",
-        str(args.max_workers),
+    trustcheck_commands = [
+        _trustcheck_command(case, max_workers=args.max_workers)
+        for case in benchmark_cases
     ]
-    pip_audit_command = [
-        sys.executable,
-        "-m",
-        "pip_audit",
-        "-r",
-        str(requirements),
-        "--vulnerability-service",
-        "osv",
-        "--format",
-        "json",
-        "--progress-spinner",
-        "off",
+    pip_audit_commands = [
+        _pip_audit_command(case)
+        for case in benchmark_cases
     ]
 
     for _ in range(args.warmups):
-        _run(
-            trustcheck_command,
+        _run_suite(
+            trustcheck_commands,
             timeout=args.timeout,
             accepted_exit_codes={0, 1, 4},
         )
-        _run(pip_audit_command, timeout=args.timeout, accepted_exit_codes={0, 1})
+        _run_suite(
+            pip_audit_commands,
+            timeout=args.timeout,
+            accepted_exit_codes={0, 1},
+        )
 
     trustcheck_runs = [
-        _run(
-            trustcheck_command,
+        _run_suite(
+            trustcheck_commands,
             timeout=args.timeout,
             accepted_exit_codes={0, 1, 4},
         )
         for _ in range(args.iterations)
     ]
     pip_audit_runs = [
-        _run(pip_audit_command, timeout=args.timeout, accepted_exit_codes={0, 1})
+        _run_suite(
+            pip_audit_commands,
+            timeout=args.timeout,
+            accepted_exit_codes={0, 1},
+        )
         for _ in range(args.iterations)
     ]
     trustcheck_findings = _trustcheck_findings(trustcheck_runs[-1].payload)
     pip_audit_findings = _pip_audit_findings(pip_audit_runs[-1].payload)
     correctness = _compare_findings(trustcheck_findings, pip_audit_findings)
 
+    corpus_paths = [case.path for case in benchmark_cases]
     output = {
-        "schema": "urn:trustcheck:benchmark:pip-audit:1.0.0",
+        "schema": BENCHMARK_SCHEMA,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "environment": {
             "python": platform.python_version(),
@@ -106,27 +144,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             "trustcheck": _tool_version([sys.executable, "-m", "trustcheck", "--version"]),
             "pip_audit": _tool_version([sys.executable, "-m", "pip_audit", "--version"]),
         },
-        "corpus": {
-            "requirements": _published_path(requirements),
-            "sha256": _sha256(requirements),
-            "entries": _requirement_entries(requirements),
-        },
+        "corpus": _corpus_summary(corpus, benchmark_cases),
         "configuration": {
             "iterations": args.iterations,
             "warmups": args.warmups,
             "timeout_seconds": args.timeout,
             "max_workers": args.max_workers,
             "advisory_service": "OSV",
+            "selected_cases": [case.case_id for case in benchmark_cases],
         },
         "commands": {
-            "trustcheck": _published_command(
-                trustcheck_command,
-                requirements=requirements,
-            ),
-            "pip_audit": _published_command(
-                pip_audit_command,
-                requirements=requirements,
-            ),
+            "trustcheck": [
+                _published_command(command, paths=corpus_paths)
+                for command in trustcheck_commands
+            ],
+            "pip_audit": [
+                _published_command(command, paths=corpus_paths)
+                for command in pip_audit_commands
+            ],
         },
         "performance": {
             "trustcheck": _timing_summary(trustcheck_runs),
@@ -147,6 +182,170 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(json.dumps(output["performance"], indent=2, sort_keys=True))
     print(json.dumps(correctness, indent=2, sort_keys=True))
     return 0
+
+
+def _load_corpus(manifest: Path) -> Corpus:
+    if not manifest.is_file():
+        raise ValueError(f"benchmark corpus manifest does not exist: {manifest}")
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("benchmark corpus manifest must be a JSON object")
+    if payload.get("schema") != CORPUS_SCHEMA:
+        raise ValueError(f"unsupported benchmark corpus schema: {payload.get('schema')!r}")
+    raw_version = payload.get("version")
+    if not isinstance(raw_version, str) or not raw_version.strip():
+        raise ValueError("benchmark corpus manifest must declare a version")
+    raw_cases = payload.get("cases")
+    if not isinstance(raw_cases, list) or not raw_cases:
+        raise ValueError("benchmark corpus manifest must contain cases")
+
+    cases = tuple(_load_corpus_case(manifest.parent, item) for item in raw_cases)
+    package_count = sum(case.package_count for case in cases)
+    if not MIN_CORPUS_PACKAGES <= package_count <= MAX_CORPUS_PACKAGES:
+        raise ValueError(
+            "benchmark corpus must contain "
+            f"{MIN_CORPUS_PACKAGES}-{MAX_CORPUS_PACKAGES} package entries; "
+            f"found {package_count}"
+        )
+    return Corpus(
+        manifest=manifest,
+        version=raw_version,
+        cases=cases,
+        package_count=package_count,
+    )
+
+
+def _load_corpus_case(root: Path, payload: object) -> CorpusCase:
+    if not isinstance(payload, dict):
+        raise ValueError("benchmark corpus cases must be objects")
+    case_id = _required_string(payload, "id")
+    relative_path = _required_string(payload, "path")
+    path = (root / relative_path).resolve()
+    if not path.is_file():
+        raise ValueError(f"benchmark corpus case {case_id!r} is missing {path}")
+    kind = _required_string(payload, "kind")
+    category = _required_string(payload, "category")
+    package_count = payload.get("package_count")
+    if package_count is None and kind == "requirements":
+        package_count = len(_requirement_entries(path))
+    if not isinstance(package_count, int) or package_count < 1:
+        raise ValueError(f"benchmark corpus case {case_id!r} needs package_count")
+    compare = payload.get("compare_with_pip_audit") is True
+    if compare and kind != "requirements":
+        raise ValueError(
+            f"benchmark corpus case {case_id!r} is marked comparable but is {kind!r}"
+        )
+    description = payload.get("description", "")
+    if not isinstance(description, str):
+        raise ValueError(f"benchmark corpus case {case_id!r} has invalid description")
+    return CorpusCase(
+        case_id=case_id,
+        path=path,
+        kind=kind,
+        category=category,
+        package_count=package_count,
+        compare_with_pip_audit=compare,
+        description=description,
+    )
+
+
+def _required_string(payload: dict[str, object], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"benchmark corpus case missing {key!r}")
+    return value
+
+
+def _legacy_corpus(requirements: Path) -> Corpus:
+    if not requirements.is_file():
+        raise ValueError(f"requirements file does not exist: {requirements}")
+    case = CorpusCase(
+        case_id="legacy-requirements",
+        path=requirements,
+        kind="requirements",
+        category="legacy",
+        package_count=len(_requirement_entries(requirements)),
+        compare_with_pip_audit=True,
+        description="Ad hoc single requirements input.",
+    )
+    return Corpus(
+        manifest=requirements,
+        version="legacy",
+        cases=(case,),
+        package_count=case.package_count,
+    )
+
+
+def _benchmark_cases(
+    corpus: Corpus,
+    selected: Sequence[str],
+) -> tuple[CorpusCase, ...]:
+    requested = set(selected)
+    cases = tuple(
+        case
+        for case in corpus.cases
+        if case.compare_with_pip_audit
+        and (not requested or case.case_id in requested)
+    )
+    missing = sorted(requested.difference(case.case_id for case in corpus.cases))
+    if missing:
+        raise ValueError("unknown benchmark corpus case(s): " + ", ".join(missing))
+    return cases
+
+
+def _trustcheck_command(case: CorpusCase, *, max_workers: int) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "trustcheck",
+        "scan",
+        str(case.path),
+        "--with-osv",
+        "--format",
+        "json",
+        "--max-workers",
+        str(max_workers),
+    ]
+
+
+def _pip_audit_command(case: CorpusCase) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "pip_audit",
+        "-r",
+        str(case.path),
+        "--vulnerability-service",
+        "osv",
+        "--format",
+        "json",
+        "--progress-spinner",
+        "off",
+    ]
+
+
+def _run_suite(
+    commands: Sequence[Sequence[str]],
+    *,
+    timeout: float,
+    accepted_exit_codes: set[int],
+) -> RunResult:
+    started = time.perf_counter()
+    payloads = []
+    exit_code = 0
+    for command in commands:
+        result = _run(
+            command,
+            timeout=timeout,
+            accepted_exit_codes=accepted_exit_codes,
+        )
+        exit_code = max(exit_code, result.exit_code)
+        payloads.append(result.payload)
+    return RunResult(
+        seconds=time.perf_counter() - started,
+        exit_code=exit_code,
+        payload=payloads,
+    )
 
 
 def _run(
@@ -187,6 +386,11 @@ def _run(
 def _trustcheck_findings(
     payload: object,
 ) -> dict[tuple[str, str], list[set[str]]]:
+    if isinstance(payload, list):
+        merged: dict[tuple[str, str], list[set[str]]] = {}
+        for item in payload:
+            _merge_findings(merged, _trustcheck_findings(item))
+        return merged
     if not isinstance(payload, dict):
         raise ValueError("trustcheck benchmark payload must be an object")
     reports = payload.get("reports")
@@ -217,6 +421,11 @@ def _trustcheck_findings(
 def _pip_audit_findings(
     payload: object,
 ) -> dict[tuple[str, str], list[set[str]]]:
+    if isinstance(payload, list):
+        merged: dict[tuple[str, str], list[set[str]]] = {}
+        for item in payload:
+            _merge_findings(merged, _pip_audit_findings(item))
+        return merged
     dependencies: object = payload
     if isinstance(payload, dict):
         dependencies = payload.get("dependencies", [])
@@ -241,6 +450,16 @@ def _pip_audit_findings(
             [*findings.get(key, []), *identities]
         )
     return findings
+
+
+def _merge_findings(
+    target: dict[tuple[str, str], list[set[str]]],
+    incoming: dict[tuple[str, str], list[set[str]]],
+) -> None:
+    for package, identities in incoming.items():
+        target[package] = _dedupe_identities(
+            [*target.get(package, []), *identities]
+        )
 
 
 def _identity_set(item: dict[str, Any]) -> set[str]:
@@ -364,6 +583,36 @@ def _tool_version(command: Sequence[str]) -> str:
     return (completed.stdout or completed.stderr).strip()
 
 
+def _corpus_summary(
+    corpus: Corpus,
+    benchmark_cases: Sequence[CorpusCase],
+) -> dict[str, object]:
+    return {
+        "schema": CORPUS_SCHEMA,
+        "version": corpus.version,
+        "manifest": _published_path(corpus.manifest),
+        "sha256": _sha256(corpus.manifest),
+        "package_count": corpus.package_count,
+        "case_count": len(corpus.cases),
+        "categories": sorted({case.category for case in corpus.cases}),
+        "benchmark_case_count": len(benchmark_cases),
+        "benchmark_package_count": sum(case.package_count for case in benchmark_cases),
+        "cases": [
+            {
+                "id": case.case_id,
+                "path": _published_path(case.path),
+                "sha256": _sha256(case.path),
+                "kind": case.kind,
+                "category": case.category,
+                "package_count": case.package_count,
+                "compare_with_pip_audit": case.compare_with_pip_audit,
+                "description": case.description,
+            }
+            for case in corpus.cases
+        ],
+    }
+
+
 def _sha256(path: Path) -> str:
     import hashlib
 
@@ -374,7 +623,9 @@ def _requirement_entries(path: Path) -> list[str]:
     return [
         line.strip()
         for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
+        if line.strip()
+        and not line.lstrip().startswith("#")
+        and not line.lstrip().startswith(("-", "--"))
     ]
 
 
@@ -389,17 +640,19 @@ def _published_path(path: Path) -> str:
 def _published_command(
     command: Sequence[str],
     *,
-    requirements: Path,
+    requirements: Path | None = None,
+    paths: Sequence[Path] = (),
 ) -> list[str]:
-    requirements_path = str(requirements)
-    published_requirements = _published_path(requirements)
+    published_paths = {
+        str(path.resolve()): _published_path(path)
+        for path in ((*paths, requirements) if requirements is not None else paths)
+        if path is not None
+    }
     return [
         (
             "python"
             if index == 0
-            else published_requirements
-            if argument == requirements_path
-            else argument
+            else published_paths.get(argument, argument)
         )
         for index, argument in enumerate(command)
     ]

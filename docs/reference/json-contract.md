@@ -229,10 +229,12 @@ This scan-level metadata does not change the per-package report schema.
 
 When remediation is requested, combined scan JSON also includes a top-level
 `remediation` object using
-`urn:trustcheck:remediation:1.0.0`. It contains source digests, semantic edits,
-unified diffs, commands, selected upgrades, blocked fixes, minimality status,
-validation results, and optional pull-request metadata. The same object can be
-written independently with `--remediation-output`.
+`urn:trustcheck:remediation:1.1.0`. It contains before/after dependency graph
+digests and nodes, advisory IDs removed, source digests, semantic edits,
+unified diffs, lockfile hash validation records, post-fix reproduction
+commands and result digests, selected upgrades, blocked fixes, minimality
+status, validation results, and optional pull-request metadata. The same object
+can be written independently with `--remediation-output`.
 
 Artifact URLs and index URLs never expose embedded credentials. Lock hashes
 are represented as an algorithm-to-hex-digest object under each item in

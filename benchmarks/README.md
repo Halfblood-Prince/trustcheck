@@ -1,9 +1,17 @@
 # trustcheck versus pip-audit
 
-The benchmark resolves and audits the same pinned requirements with Trustcheck
-and `pip-audit`, using OSV for the cross-tool advisory comparison. It records
-warm-cache wall time and compares advisories by their full alias sets so a
-`PYSEC`, `GHSA`, or `CVE` primary-ID difference is not counted as disagreement.
+The benchmark resolves and audits a versioned corpus with Trustcheck and the
+latest installed `pip-audit`, using OSV for the cross-tool advisory comparison.
+The corpus manifest lives at `benchmarks/corpus/corpus.json` and currently
+contains 128 package entries across comparable PyPI pins, marker and extra
+cases, private-index examples, lockfiles, VCS/editable requirements, hash-pinned
+requirements, and intentionally malformed inputs.
+
+Only cases marked `compare_with_pip_audit` are included in timing and
+correctness samples. Non-comparable cases stay in the corpus so parser,
+lockfile, private-index, and fail-closed behavior remain visible and versioned.
+Advisories are compared by their full alias sets so a `PYSEC`, `GHSA`, or `CVE`
+primary-ID difference is not counted as disagreement.
 
 Run:
 
@@ -15,6 +23,7 @@ python benchmarks/benchmark_against_pip_audit.py \
 ```
 
 Results include exact commands, tool and platform versions, corpus digest,
-individual timing samples, median and p95 wall time, and all unmatched
-advisories. Network and advisory databases change, so compare results only
-when the corpus digest, services, and environment are equivalent.
+selected case metadata, individual timing samples, median and p95 wall time,
+and all unmatched advisories. Network, resolver behavior, and advisory
+databases change, so compare results only when the corpus digest, services, and
+environment are equivalent.

@@ -1,0 +1,5 @@
+--index-url https://pypi.org/simple
+--extra-index-url https://packages.internal.example/simple
+internal-widget==1.4.2
+acme-observability==3.2.1
+requests==2.32.3

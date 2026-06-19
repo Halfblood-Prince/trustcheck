@@ -1,0 +1,88 @@
+{
+  "schema": "urn:trustcheck:benchmark-corpus:1.0.0",
+  "version": "2026.06",
+  "description": "Trustcheck/pip-audit benchmark corpus with comparable PyPI pins and adversarial dependency-file coverage.",
+  "cases": [
+    {
+      "id": "pypi-main-100",
+      "path": "requirements-main.txt",
+      "kind": "requirements",
+      "category": "mixed-clean-vulnerable-pins",
+      "package_count": 100,
+      "compare_with_pip_audit": true,
+      "description": "One hundred real PyPI pins mixing expected-clean packages with historically vulnerable releases."
+    },
+    {
+      "id": "markers-extras",
+      "path": "requirements-markers-extras.txt",
+      "kind": "requirements",
+      "category": "markers-extras",
+      "package_count": 12,
+      "compare_with_pip_audit": true,
+      "description": "PEP 508 markers and extras that should be interpreted consistently by both tools."
+    },
+    {
+      "id": "private-indexes",
+      "path": "requirements-private-index.txt",
+      "kind": "requirements",
+      "category": "private-indexes",
+      "package_count": 3,
+      "compare_with_pip_audit": false,
+      "description": "Index directives and private-package names retained for parser and dependency-confusion coverage."
+    },
+    {
+      "id": "vcs-editable",
+      "path": "requirements-vcs-editable.txt",
+      "kind": "requirements",
+      "category": "vcs-editable",
+      "package_count": 3,
+      "compare_with_pip_audit": false,
+      "description": "VCS, direct URL, and editable dependencies that are intentionally excluded from cross-tool timing."
+    },
+    {
+      "id": "pip-tools-hashes",
+      "path": "requirements-hashed.txt",
+      "kind": "requirements",
+      "category": "lockfiles",
+      "package_count": 2,
+      "compare_with_pip_audit": false,
+      "description": "Hash-pinned pip-tools style output for lockfile hash-preservation checks."
+    },
+    {
+      "id": "pep751-pylock",
+      "path": "pylock.toml",
+      "kind": "pylock",
+      "category": "lockfiles",
+      "package_count": 2,
+      "compare_with_pip_audit": false,
+      "description": "PEP 751 lockfile with artifact hashes."
+    },
+    {
+      "id": "uv-lock",
+      "path": "uv.lock",
+      "kind": "uv-lock",
+      "category": "lockfiles",
+      "package_count": 2,
+      "compare_with_pip_audit": false,
+      "description": "uv lockfile shape with registry sources."
+    },
+    {
+      "id": "poetry-lock",
+      "path": "poetry.lock",
+      "kind": "poetry-lock",
+      "category": "lockfiles",
+      "package_count": 2,
+      "compare_with_pip_audit": false,
+      "description": "Poetry lockfile shape with file hashes."
+    },
+    {
+      "id": "malformed-inputs",
+      "path": "requirements-malformed.txt",
+      "kind": "requirements",
+      "category": "malformed",
+      "package_count": 2,
+      "compare_with_pip_audit": false,
+      "description": "Intentionally malformed requirement lines that must fail closed."
+    }
+  ]
+}

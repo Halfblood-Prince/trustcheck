@@ -198,6 +198,22 @@ class RemediationPlannerTests(unittest.TestCase):
         self.assertEqual(plan.status, "validated")
         self.assertTrue(plan.minimal)
         self.assertEqual(plan.upgrades[0].to_version, "2.0")
+        self.assertIsNotNone(plan.before_graph)
+        self.assertIsNotNone(plan.after_graph)
+        assert plan.before_graph is not None
+        assert plan.after_graph is not None
+        self.assertEqual(plan.before_graph.to_dict()["package_count"], 2)
+        self.assertEqual(plan.after_graph.to_dict()["package_count"], 2)
+        self.assertNotEqual(plan.before_graph.sha256, plan.after_graph.sha256)
+        self.assertEqual(
+            plan.advisory_ids_removed[0].to_dict(),
+            {
+                "project": "demo",
+                "from_version": "1.0",
+                "to_version": "2.0",
+                "advisory_ids": ["CVE-2026-1000"],
+            },
+        )
         self.assertIn("stable-dep==4.0", seen[0])
         self.assertTrue(plan.validation.accepted)
 
@@ -625,7 +641,10 @@ class RemediationWriterTests(unittest.TestCase):
                     "demo==1.0  # keep this comment\n",
                 )
                 patch = prepared.plan.patches[0]
+                hash_validation = prepared.plan.lockfile_hash_validation[0]
                 self.assertIn("demo==2.0", patch.diff)
+                self.assertFalse(hash_validation.applicable)
+                self.assertTrue(hash_validation.valid)
                 apply_prepared_remediation(prepared)
 
             self.assertEqual(
@@ -731,12 +750,18 @@ class RemediationWriterTests(unittest.TestCase):
             ) as prepared:
                 staged = prepared.root / "pylock.toml"
                 locked = load_lockfile(staged)
+                hash_validation = prepared.plan.lockfile_hash_validation[0]
 
             self.assertEqual(locked.versions["demo"], "2.0")
             self.assertEqual(
                 locked.packages[0].artifacts[0].hashes,
                 (("sha256", "a" * 64),),
             )
+            self.assertTrue(hash_validation.applicable)
+            self.assertTrue(hash_validation.valid)
+            self.assertEqual(hash_validation.format, "pylock.toml")
+            self.assertEqual(hash_validation.artifact_count, 1)
+            self.assertEqual(hash_validation.hashed_artifact_count, 1)
 
     def test_native_uv_writer_uses_fixed_argv_and_no_shell(self) -> None:
         calls: list[tuple[list[str], dict[str, object]]] = []
@@ -2311,6 +2336,16 @@ class RemediationCliTests(unittest.TestCase):
                         )
                     self.assertEqual(result.status, "validated")
                     self.assertEqual(apply_mock.called, not dry_run)
+                    self.assertIsNotNone(result.after_graph)
+                    self.assertIsNotNone(result.post_fix_result)
+                    assert result.after_graph is not None
+                    assert result.post_fix_result is not None
+                    self.assertTrue(result.post_fix_result.reproduced_resolution)
+                    self.assertEqual(
+                        result.post_fix_result.dependency_graph_sha256,
+                        result.after_graph.sha256,
+                    )
+                    self.assertIn("trustcheck", result.post_fix_result.command[0])
                     if dry_run:
                         self.assertIn("no project files", result.message)
 

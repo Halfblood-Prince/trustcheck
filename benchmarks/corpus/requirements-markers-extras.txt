@@ -1,0 +1,13 @@
+# Valid PEP 508 cases for marker and extra handling.
+httpx[http2]==0.27.0
+uvicorn[standard]==0.30.3
+fastapi[standard]==0.112.0 ; python_version >= "3.11"
+platformdirs==4.2.2 ; sys_platform == "win32"
+colorama==0.4.6 ; sys_platform == "win32"
+pywin32==306 ; sys_platform == "win32"
+importlib-resources==6.4.0 ; python_version < "3.12"
+requests[socks]==2.32.3
+rich[jupyter]==13.7.1
+celery[redis]==5.4.0
+pydantic[email]==2.8.2
+django[argon2]==5.0.7

@@ -1,5 +1,3 @@
-# A small, fully pinned cross-tool corpus with vulnerable and clean packages.
-flask==2.2.5
-jinja2==3.1.4
-urllib3==2.0.2
-six==1.17.0
+# Compatibility wrapper for older local invocations.
+# The versioned benchmark entry point is benchmarks/corpus/corpus.json.
+-r requirements-main.txt

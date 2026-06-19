@@ -21,10 +21,11 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 from tomlkit.items import AoT, Array, InlineTable, Table
 
+from .lockfiles import is_supported_lockfile, load_lockfile, load_pip_tools_lock
 from .models import TrustReport, VulnerabilityRecord
 from .resolver import ArtifactReference, Resolution, ResolutionError, ResolvedDistribution
 
-REMEDIATION_SCHEMA_VERSION: Final = "1.0.0"
+REMEDIATION_SCHEMA_VERSION: Final = "1.1.0"
 REMEDIATION_SCHEMA_ID: Final = (
     f"urn:trustcheck:remediation:{REMEDIATION_SCHEMA_VERSION}"
 )
@@ -118,6 +119,110 @@ class FilePatch:
 
 
 @dataclass(frozen=True, slots=True)
+class DependencyGraphNode:
+    project: str
+    normalized_name: str
+    version: str
+    requested: bool = False
+    source_type: str = "index"
+    editable: bool = False
+    vcs: str | None = None
+    vcs_commit: str | None = None
+    index_url: str | None = None
+    source_url: str | None = None
+    requirements: tuple[str, ...] = ()
+    artifacts: tuple[dict[str, object], ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "project": self.project,
+            "normalized_name": self.normalized_name,
+            "version": self.version,
+            "requested": self.requested,
+            "source_type": self.source_type,
+            "editable": self.editable,
+            "vcs": self.vcs,
+            "vcs_commit": self.vcs_commit,
+            "index_url": self.index_url,
+            "source_url": self.source_url,
+            "requirements": list(self.requirements),
+            "artifacts": list(self.artifacts),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DependencyGraphEdge:
+    parent: str
+    child: str
+    requirement: str
+    marker: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "parent": self.parent,
+            "child": self.child,
+            "requirement": self.requirement,
+            "marker": self.marker,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DependencyGraph:
+    packages: tuple[DependencyGraphNode, ...]
+    edges: tuple[DependencyGraphEdge, ...]
+    sha256: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "sha256": self.sha256,
+            "package_count": len(self.packages),
+            "edge_count": len(self.edges),
+            "packages": [package.to_dict() for package in self.packages],
+            "edges": [edge.to_dict() for edge in self.edges],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AdvisoryRemoval:
+    project: str
+    from_version: str
+    to_version: str
+    advisory_ids: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "project": self.project,
+            "from_version": self.from_version,
+            "to_version": self.to_version,
+            "advisory_ids": list(self.advisory_ids),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class LockfileHashValidation:
+    path: str
+    format: str
+    applicable: bool
+    package_count: int = 0
+    artifact_count: int = 0
+    hashed_artifact_count: int = 0
+    valid: bool = True
+    errors: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "path": self.path,
+            "format": self.format,
+            "applicable": self.applicable,
+            "package_count": self.package_count,
+            "artifact_count": self.artifact_count,
+            "hashed_artifact_count": self.hashed_artifact_count,
+            "valid": self.valid,
+            "errors": list(self.errors),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RemediationValidation:
     resolution_passed: bool = False
     rescan_passed: bool = False
@@ -156,6 +261,24 @@ class RemediationValidation:
 
 
 @dataclass(frozen=True, slots=True)
+class PostFixResult:
+    command: tuple[str, ...]
+    reproduced_resolution: bool
+    dependency_graph_sha256: str
+    reports_sha256: str
+    validation: RemediationValidation
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "command": list(self.command),
+            "reproduced_resolution": self.reproduced_resolution,
+            "dependency_graph_sha256": self.dependency_graph_sha256,
+            "reports_sha256": self.reports_sha256,
+            "validation": self.validation.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PullRequestResult:
     created: bool = False
     url: str | None = None
@@ -179,6 +302,11 @@ class RemediationPlan:
     planned_edits: list[SemanticEdit] = field(default_factory=list)
     patches: list[FilePatch] = field(default_factory=list)
     commands: list[list[str]] = field(default_factory=list)
+    before_graph: DependencyGraph | None = None
+    after_graph: DependencyGraph | None = None
+    advisory_ids_removed: list[AdvisoryRemoval] = field(default_factory=list)
+    lockfile_hash_validation: list[LockfileHashValidation] = field(default_factory=list)
+    post_fix_result: PostFixResult | None = None
     validation: RemediationValidation = field(default_factory=RemediationValidation)
     pull_request: PullRequestResult | None = None
     message: str = ""
@@ -198,6 +326,29 @@ class RemediationPlan:
             "planned_edits": [edit.to_dict() for edit in self.planned_edits],
             "patches": [patch.to_dict() for patch in self.patches],
             "commands": self.commands,
+            "dependency_graphs": {
+                "before": (
+                    self.before_graph.to_dict()
+                    if self.before_graph is not None
+                    else None
+                ),
+                "after": (
+                    self.after_graph.to_dict()
+                    if self.after_graph is not None
+                    else None
+                ),
+            },
+            "advisory_ids_removed": [
+                item.to_dict() for item in self.advisory_ids_removed
+            ],
+            "lockfile_hash_validation": [
+                item.to_dict() for item in self.lockfile_hash_validation
+            ],
+            "post_fix_result": (
+                self.post_fix_result.to_dict()
+                if self.post_fix_result is not None
+                else None
+            ),
             "validation": self.validation.to_dict(),
             "pull_request": (
                 self.pull_request.to_dict()
@@ -351,6 +502,8 @@ def plan_remediation(
     if not candidates:
         plan.status = "not-needed"
         plan.minimal = True
+        plan.before_graph = dependency_graph_from_resolution(baseline)
+        plan.after_graph = dependency_graph_from_resolution(baseline)
         plan.validation = RemediationValidation(
             resolution_passed=True,
             rescan_passed=True,
@@ -465,6 +618,8 @@ def plan_remediation(
     _, selected_resolution, selected_reports, chosen_versions_map = successful[0]
     plan.minimal = True
     plan.candidate_resolution = selected_resolution
+    plan.before_graph = dependency_graph_from_resolution(baseline)
+    plan.after_graph = dependency_graph_from_resolution(selected_resolution)
     plan.upgrades = [
         RemediationUpgrade(
             project=distributions[name].name,
@@ -478,6 +633,15 @@ def plan_remediation(
             ),
         )
         for name, version in sorted(chosen_versions_map.items())
+    ]
+    plan.advisory_ids_removed = [
+        AdvisoryRemoval(
+            project=upgrade.project,
+            from_version=upgrade.from_version,
+            to_version=upgrade.to_version,
+            advisory_ids=upgrade.advisory_ids,
+        )
+        for upgrade in plan.upgrades
     ]
     plan.planned_edits = [
         SemanticEdit(
@@ -720,8 +884,24 @@ def prepare_remediation(
         changed_files,
         plan.upgrades,
     )
+    lockfile_hash_validation = _validate_changed_lockfile_hashes(
+        source_root,
+        staged_root,
+        changed_files,
+    )
+    invalid_lockfiles = [
+        item for item in lockfile_hash_validation if not item.valid
+    ]
+    if invalid_lockfiles:
+        temporary.cleanup()
+        detail = "; ".join(
+            f"{item.path}: {', '.join(item.errors)}"
+            for item in invalid_lockfiles
+        )
+        raise RemediationError(f"lockfile hash validation failed: {detail}")
     plan.commands = commands
     plan.patches = patches
+    plan.lockfile_hash_validation = lockfile_hash_validation
     return PreparedRemediation(
         plan=plan,
         root=staged_root,
@@ -940,6 +1120,103 @@ def render_remediation_text(plan: RemediationPlan) -> str:
     if plan.pull_request and plan.pull_request.url:
         lines.append(f"pull request: {plan.pull_request.url}")
     return "\n".join(lines)
+
+
+def dependency_graph_from_resolution(resolution: Resolution) -> DependencyGraph:
+    known = {_key(distribution.name) for distribution in resolution.distributions}
+    nodes: list[DependencyGraphNode] = []
+    edges: list[DependencyGraphEdge] = []
+    for distribution in sorted(
+        resolution.distributions,
+        key=lambda item: (_key(item.name), item.version),
+    ):
+        normalized = _key(distribution.name)
+        source_type = (
+            "vcs"
+            if distribution.vcs is not None
+            else "editable"
+            if distribution.editable
+            else "direct"
+            if distribution.is_direct
+            else "index"
+        )
+        requirements = tuple(sorted(distribution.requires_dist))
+        nodes.append(
+            DependencyGraphNode(
+                project=distribution.name,
+                normalized_name=normalized,
+                version=distribution.version,
+                requested=distribution.requested,
+                source_type=source_type,
+                editable=distribution.editable,
+                vcs=distribution.vcs,
+                vcs_commit=distribution.vcs_commit,
+                index_url=distribution.index_url,
+                source_url=distribution.source_url,
+                requirements=requirements,
+                artifacts=tuple(
+                    artifact.to_dict() for artifact in distribution.artifacts
+                ),
+            )
+        )
+        for raw_requirement in requirements:
+            requirement = _parse_requirement(raw_requirement)
+            if requirement is None:
+                continue
+            child = _key(requirement.name)
+            if child not in known:
+                continue
+            edges.append(
+                DependencyGraphEdge(
+                    parent=normalized,
+                    child=child,
+                    requirement=raw_requirement,
+                    marker=(
+                        str(requirement.marker)
+                        if requirement.marker is not None
+                        else None
+                    ),
+                )
+            )
+    edges.sort(key=lambda item: (item.parent, item.child, item.requirement))
+    payload = {
+        "packages": [node.to_dict() for node in nodes],
+        "edges": [edge.to_dict() for edge in edges],
+    }
+    return DependencyGraph(
+        packages=tuple(nodes),
+        edges=tuple(edges),
+        sha256=_stable_json_sha256(payload),
+    )
+
+
+def reports_sha256(reports: Mapping[str, TrustReport]) -> str:
+    payload = [
+        report.to_dict()
+        for _name, report in sorted(
+            reports.items(),
+            key=lambda item: _key(item[0]),
+        )
+    ]
+    return _stable_json_sha256(payload)
+
+
+def post_fix_result(
+    *,
+    command: Sequence[str],
+    resolution: Resolution,
+    reports: Mapping[str, TrustReport],
+    validation: RemediationValidation,
+    expected_versions: Mapping[str, str],
+) -> PostFixResult:
+    graph = dependency_graph_from_resolution(resolution)
+    return PostFixResult(
+        command=tuple(command),
+        reproduced_resolution=resolution.versions == dict(expected_versions),
+        dependency_graph_sha256=graph.sha256,
+        reports_sha256=reports_sha256(reports),
+        validation=validation,
+    )
 
 
 def _active_fixable_vulnerabilities(
@@ -2030,8 +2307,121 @@ def _build_file_patches(
     return patches
 
 
+def _validate_changed_lockfile_hashes(
+    source_root: Path,
+    staged_root: Path,
+    changed_files: Mapping[Path, bytes],
+) -> list[LockfileHashValidation]:
+    validations: list[LockfileHashValidation] = []
+    for relative in sorted(changed_files):
+        staged = staged_root / relative
+        validations.append(
+            _validate_lockfile_hashes(
+                staged,
+                display_path=relative.as_posix(),
+                source_root=source_root,
+            )
+        )
+    return validations
+
+
+def _validate_lockfile_hashes(
+    path: Path,
+    *,
+    display_path: str,
+    source_root: Path,
+) -> LockfileHashValidation:
+    if is_supported_lockfile(path):
+        try:
+            locked = load_lockfile(path)
+        except ValueError as exc:
+            return LockfileHashValidation(
+                path=display_path,
+                format=path.name.lower(),
+                applicable=True,
+                valid=False,
+                errors=(str(exc),),
+            )
+        return _lockfile_hash_validation_from_artifacts(
+            display_path,
+            locked.format,
+            [
+                artifact
+                for package in locked.packages
+                for artifact in package.artifacts
+            ],
+            package_count=len(locked.packages),
+        )
+
+    pip_tools = load_pip_tools_lock(path)
+    if pip_tools is not None:
+        return _lockfile_hash_validation_from_artifacts(
+            display_path,
+            pip_tools.format,
+            [
+                artifact
+                for package in pip_tools.packages
+                for artifact in package.artifacts
+            ],
+            package_count=len(pip_tools.packages),
+        )
+
+    return LockfileHashValidation(
+        path=display_path,
+        format=_input_kind(source_root / display_path),
+        applicable=False,
+    )
+
+
+def _lockfile_hash_validation_from_artifacts(
+    path: str,
+    lock_format: str,
+    artifacts: Sequence[ArtifactReference],
+    *,
+    package_count: int,
+) -> LockfileHashValidation:
+    errors: list[str] = []
+    hashed = 0
+    for index, artifact in enumerate(artifacts, 1):
+        if not artifact.hashes:
+            errors.append(f"artifact {index} has no recorded hash")
+            continue
+        artifact_valid = True
+        for algorithm, digest in artifact.hashes:
+            if not algorithm.strip():
+                errors.append(f"artifact {index} has an empty hash algorithm")
+                artifact_valid = False
+            if re.fullmatch(r"[0-9a-fA-F]{32,}", digest) is None:
+                errors.append(
+                    f"artifact {index} has an invalid {algorithm or 'hash'} digest"
+                )
+                artifact_valid = False
+        if artifact_valid:
+            hashed += 1
+    return LockfileHashValidation(
+        path=path,
+        format=lock_format,
+        applicable=True,
+        package_count=package_count,
+        artifact_count=len(artifacts),
+        hashed_artifact_count=hashed,
+        valid=not errors,
+        errors=tuple(errors),
+    )
+
+
 def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def _stable_json_sha256(payload: object) -> str:
+    return _sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
 
 
 def _validate_git_identifier(value: str | None, label: str) -> None:

@@ -1,0 +1,20 @@
+lock-version = "1.0"
+created-by = "trustcheck benchmark corpus"
+
+[[packages]]
+name = "urllib3"
+version = "2.2.2"
+index = "https://pypi.org/simple"
+[[packages.wheels]]
+name = "urllib3-2.2.2-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/example/urllib3-2.2.2.whl"
+hashes = {sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+
+[[packages]]
+name = "certifi"
+version = "2024.7.4"
+index = "https://pypi.org/simple"
+[[packages.wheels]]
+name = "certifi-2024.7.4-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/example/certifi-2024.7.4.whl"
+hashes = {sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
