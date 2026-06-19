@@ -1,6 +1,9 @@
 name: Benchmarks
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
   schedule:
     - cron: "17 4 * * 1"
@@ -10,11 +13,13 @@ permissions:
 
 jobs:
   pip-audit-comparison:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
+          ref: ${{ github.ref_name }}
           persist-credentials: true
       - uses: actions/setup-python@v6
         with:

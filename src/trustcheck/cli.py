@@ -1621,7 +1621,7 @@ def _post_fix_reproduction_command(
     source_path: Path,
     args: argparse.Namespace,
 ) -> tuple[str, ...]:
-    command = ["trustcheck", "scan", str(source_path), "--format", "json"]
+    command = ["trustcheck", "scan", "-f", str(source_path), "--format", "json"]
     if getattr(args, "with_osv", False):
         command.append("--with-osv")
     for url in getattr(args, "osv_url", ()):
@@ -1632,12 +1632,6 @@ def _post_fix_reproduction_command(
         command.append("--with-kev")
     if getattr(args, "with_epss", False):
         command.append("--with-epss")
-    if getattr(args, "with_deps", False):
-        command.append("--with-deps")
-    if getattr(args, "with_transitive_deps", False):
-        command.append("--with-transitive-deps")
-    if getattr(args, "inspect_artifacts", False):
-        command.append("--inspect-artifacts")
     for extra in getattr(args, "extra", ()):
         command.extend(["--extra", extra])
     for group in getattr(args, "group", ()):
@@ -1653,23 +1647,6 @@ def _post_fix_reproduction_command(
         command.extend(["--policy-file", str(Path(args.policy_file).resolve())])
     if getattr(args, "fail_on_vulnerability", None):
         command.extend(["--fail-on-vulnerability", args.fail_on_vulnerability])
-    if getattr(args, "fail_on_risk_severity", None):
-        command.extend(["--fail-on-risk-severity", args.fail_on_risk_severity])
-    if getattr(args, "require_verified_provenance", None):
-        command.extend(
-            ["--require-verified-provenance", args.require_verified_provenance]
-        )
-    if getattr(args, "require_expected_repo_match", False):
-        command.append("--require-expected-repo-match")
-    allow_metadata_only = getattr(args, "allow_metadata_only", None)
-    if allow_metadata_only is True:
-        command.append("--allow-metadata-only")
-    elif allow_metadata_only is False:
-        command.append("--disallow-metadata-only")
-    for organization in getattr(args, "trusted_publisher_organization", ()):
-        command.extend(["--trusted-publisher-organization", organization])
-    for project in getattr(args, "trusted_project", ()):
-        command.extend(["--trusted-project", project])
     index_url = getattr(args, "index_url", DEFAULT_INDEX_URL)
     if index_url != DEFAULT_INDEX_URL:
         command.extend(["--index-url", index_url])

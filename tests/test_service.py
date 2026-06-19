@@ -20,6 +20,7 @@ from trustcheck.models import (
     RiskFlag,
     SlsaProvenance,
     TrustReport,
+    VulnerabilityRecord,
 )
 from trustcheck.policy import advisory_evaluation_for
 from trustcheck.pypi import PypiClientError
@@ -317,6 +318,64 @@ class FakeOsvClient:
 
 
 class ServiceBranchTests(unittest.TestCase):
+    def test_vulnerability_only_report_skips_artifact_and_history_collection(self) -> None:
+        class NoArtifactClient(FakeClient):
+            def get_provenance(self, project: str, version: str, filename: str):
+                del project, version, filename
+                raise AssertionError("vulnerability-only inspection should not collect files")
+
+        class Intelligence:
+            request_hook = None
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str, list[str]]] = []
+
+            def query(self, project: str, version: str, vulnerabilities):
+                self.calls.append(
+                    (project, version, [item.id for item in vulnerabilities])
+                )
+                return [
+                    *vulnerabilities,
+                    VulnerabilityRecord(
+                        id="GHSA-demo",
+                        summary="External advisory",
+                        source="OSV",
+                    ),
+                ]
+
+        client = NoArtifactClient(
+            project_payload=make_project_payload(
+                requires_dist=["dep>=1"],
+                vulnerabilities=[
+                    {
+                        "id": "PYSEC-2026-1",
+                        "summary": "Known issue",
+                        "aliases": ["CVE-2026-0001"],
+                    }
+                ],
+            )
+        )
+        intelligence = Intelligence()
+
+        report = inspect_package(
+            "gridoptim",
+            client=cast(Any, client),
+            include_vulnerabilities=True,
+            vulnerability_only=True,
+            vulnerability_client=cast(Any, intelligence),
+        )
+
+        self.assertEqual(report.project, "gridoptim")
+        self.assertEqual(report.declared_dependencies, ["dep>=1"])
+        self.assertEqual(
+            [vulnerability.id for vulnerability in report.vulnerabilities],
+            ["PYSEC-2026-1", "GHSA-demo"],
+        )
+        self.assertEqual(intelligence.calls, [("gridoptim", "2.2.0", ["PYSEC-2026-1"])])
+        self.assertEqual(report.files, [])
+        self.assertEqual(report.dependencies, [])
+        self.assertEqual(report.repository_urls, report.declared_repository_urls)
+
     def test_diagnostics_collect_request_and_artifact_failures(self) -> None:
         diagnostics = DiagnosticsCollector()
         diagnostics.on_request_event("request", {})

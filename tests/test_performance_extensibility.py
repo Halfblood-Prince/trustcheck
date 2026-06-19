@@ -152,7 +152,11 @@ class BenchmarkPublicationTests(unittest.TestCase):
             encoding="utf-8"
         )
 
+        self.assertIn("push:", workflow)
+        self.assertIn("if: github.actor != 'github-actions[bot]'", workflow)
         self.assertIn("contents: write", workflow)
+        self.assertIn("uses: actions/checkout@v6", workflow)
+        self.assertIn("ref: ${{ github.ref_name }}", workflow)
         self.assertIn("--output benchmarks/results/latest.json", workflow)
         self.assertIn("python scripts/update_benchmark_table.py", workflow)
         self.assertIn("git add README.md benchmarks/results/latest.json", workflow)

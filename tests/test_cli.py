@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from packaging.requirements import Requirement
@@ -35,6 +36,7 @@ from trustcheck.cli import (
     _merge_exit_codes,
     _parse_version_release_parts,
     _poetry_dependency_to_requirement,
+    _post_fix_reproduction_command,
     _read_requirements_file,
     _render_cve_json,
     _render_cve_report,
@@ -45,6 +47,7 @@ from trustcheck.cli import (
     _resolve_scan_target_version,
     _resolve_scan_target_version_for_scan,
     _resolver_from_args,
+    _scan_project_vulnerabilities,
     _scan_targets_from_lockfile,
     _scan_targets_from_resolution,
     _target_environment_from_args,
@@ -68,16 +71,20 @@ from trustcheck.models import (
     NativeBinaryInspection,
     PolicyViolation,
     ProvenanceConsistency,
+    ProvenanceIssue,
     PublisherIdentity,
     PublisherTrustSummary,
     ReleaseDriftSummary,
     ReportDiagnostics,
     RequestFailureDiagnostic,
     RiskFlag,
+    SlsaProvenance,
     TrustReport,
     VulnerabilityRecord,
     VulnerabilitySuppression,
 )
+from trustcheck.plugins import PluginManager
+from trustcheck.policy import PolicySettings
 from trustcheck.pypi import IndexBackedPackageClient, PypiClient, PypiClientError
 from trustcheck.resolver import (
     ArtifactReference,
@@ -173,6 +180,33 @@ def make_report() -> TrustReport:
 
 
 class CliBehaviorTests(unittest.TestCase):
+    def test_split_commands_reject_ambiguous_or_invalid_targets(self) -> None:
+        cases = [
+            ["inspect"],
+            ["inspect", "gridoptim", "-f", "requirements.txt"],
+            ["inspect", "-f", "requirements.txt", "--version", "1.0"],
+            [
+                "inspect",
+                "-f",
+                "requirements.txt",
+                "--expected-repo",
+                "https://example.com/repo",
+            ],
+            ["scan"],
+            ["scan", "gridoptim", "-f", "requirements.txt"],
+            ["scan", "gridoptim", "--fix"],
+        ]
+
+        for command in cases:
+            with self.subTest(command=command):
+                with (
+                    redirect_stdout(io.StringIO()),
+                    redirect_stderr(io.StringIO()),
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    main(command)
+                self.assertEqual(raised.exception.code, 2)
+
     def test_parser_accepts_resolver_environment_and_installed_path_options(self) -> None:
         parser = build_parser()
         scan_args = parser.parse_args(
@@ -1858,6 +1892,171 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("fixed in: 2.2.1", stdout.getvalue())
         self.assertIn("link: https://github.com/advisories/GHSA-aaaa-bbbb-cccc", stdout.getvalue())
 
+    def test_scan_project_vulnerabilities_resolves_private_index_root(self) -> None:
+        class FakeResolver:
+            def __init__(self) -> None:
+                self.calls: list[tuple[list[str], dict[str, object]]] = []
+
+            def resolve_requirements(self, requirements, **kwargs):
+                self.calls.append((list(requirements), kwargs))
+                return Resolution(
+                    distributions=[
+                        ResolvedDistribution(
+                            name="GridOptim",
+                            version="2.3.0",
+                            artifacts=(
+                                ArtifactReference(
+                                    filename="gridoptim-2.3.0.whl",
+                                    url="https://private.example/gridoptim.whl",
+                                ),
+                            ),
+                            index_url="https://private.example/simple",
+                            requires_dist=("dep>=1",),
+                        )
+                    ],
+                    dependency_confusion=(
+                        DependencyConfusionFinding(
+                            "gridoptim",
+                            ("https://private.example/simple", "https://pypi.org/simple"),
+                        ),
+                    ),
+                )
+
+        args = build_parser().parse_args(
+            [
+                "scan",
+                "gridoptim",
+                "--index-url",
+                "https://private.example/simple",
+                "--keyring-provider",
+                "disabled",
+                "--python-version",
+                "3.12",
+            ]
+        )
+        client = SimpleNamespace(offline=True)
+        resolver = FakeResolver()
+        report = make_report()
+        observed: dict[str, object] = {}
+
+        def fake_inspect_package(project: str, **kwargs):
+            observed["project"] = project
+            observed.update(kwargs)
+            return report
+
+        with (
+            patch("trustcheck.cli._client_for_target", return_value=client),
+            patch("trustcheck.cli.inspect_package", side_effect=fake_inspect_package),
+        ):
+            result = _scan_project_vulnerabilities(
+                "gridoptim",
+                version=None,
+                args=args,
+                client=client,  # type: ignore[arg-type]
+                vulnerability_client=None,
+                policy=PolicySettings(),
+                resolver=resolver,  # type: ignore[arg-type]
+                plugin_manager=PluginManager(),
+            )
+
+        self.assertIs(result, report)
+        self.assertEqual(resolver.calls[0][0], ["gridoptim"])
+        self.assertIs(resolver.calls[0][1]["offline"], True)
+        self.assertEqual(observed["project"], "gridoptim")
+        self.assertEqual(observed["version"], "2.3.0")
+        self.assertTrue(observed["vulnerability_only"])
+        self.assertEqual(
+            observed["dependency_confusion_indexes"],
+            ("https://private.example/simple", "https://pypi.org/simple"),
+        )
+
+    def test_scan_project_vulnerabilities_errors_when_resolver_omits_root(self) -> None:
+        class MissingRootResolver:
+            def resolve_requirements(self, requirements, **kwargs):
+                del requirements, kwargs
+                return Resolution(
+                    distributions=[ResolvedDistribution(name="other", version="1.0")]
+                )
+
+        args = build_parser().parse_args(
+            [
+                "scan",
+                "gridoptim",
+                "--index-url",
+                "https://private.example/simple",
+            ]
+        )
+
+        with self.assertRaisesRegex(ResolutionError, "root package"):
+            _scan_project_vulnerabilities(
+                "gridoptim",
+                version=None,
+                args=args,
+                client=SimpleNamespace(offline=False),  # type: ignore[arg-type]
+                vulnerability_client=None,
+                policy=PolicySettings(),
+                resolver=MissingRootResolver(),  # type: ignore[arg-type]
+                plugin_manager=PluginManager(),
+            )
+
+    def test_post_fix_reproduction_command_uses_current_scan_file_syntax(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "requirements.txt"
+            policy = Path(tmpdir) / "policy.json"
+            constraint = Path(tmpdir) / "constraints.txt"
+            snapshot = Path(tmpdir) / "advisories.json"
+            args = SimpleNamespace(
+                with_osv=True,
+                osv_url=["https://osv.internal.example"],
+                with_ecosystems=True,
+                with_kev=True,
+                with_epss=True,
+                with_deps=True,
+                with_transitive_deps=True,
+                inspect_artifacts=True,
+                extra=["security"],
+                group=["test"],
+                constraint=[str(constraint)],
+                strict=True,
+                policy="strict",
+                policy_file=str(policy),
+                fail_on_vulnerability="any",
+                fail_on_risk_severity="high",
+                require_verified_provenance="all",
+                require_expected_repo_match=True,
+                allow_metadata_only=False,
+                trusted_publisher_organization=["github:pypa"],
+                trusted_project=["internal-sdk"],
+                index_url="https://private.example/simple",
+                extra_index_url=["https://pypi.org/simple"],
+                allow_dependency_confusion=True,
+                python_version="3.12",
+                platform=["manylinux_2_28_x86_64"],
+                implementation="cp",
+                abi=["cp312"],
+                offline=True,
+                advisory_snapshot=[str(snapshot)],
+            )
+
+            command = _post_fix_reproduction_command(source, args)
+
+        self.assertEqual(command[:4], ("trustcheck", "scan", "-f", str(source)))
+        self.assertIn("--with-osv", command)
+        self.assertIn("--fail-on-vulnerability", command)
+        self.assertIn("--python-version", command)
+        for removed in (
+            "--with-deps",
+            "--with-transitive-deps",
+            "--inspect-artifacts",
+            "--fail-on-risk-severity",
+            "--require-verified-provenance",
+            "--require-expected-repo-match",
+            "--disallow-metadata-only",
+            "--trusted-publisher-organization",
+            "--trusted-project",
+        ):
+            self.assertNotIn(removed, command)
+
     def test_vulnerability_client_builder_supports_all_sources_and_config(self) -> None:
         parser = build_parser()
         args = parser.parse_args(
@@ -2205,6 +2404,31 @@ class CliBehaviorTests(unittest.TestCase):
             [("requests", "2.32.0"), ("urllib3", None), ("pytest", "8.3.0")],
         )
 
+    def test_extract_scan_requirements_from_toml_handles_pdm_dev_groups(self) -> None:
+        payload = {
+            "project": {"dependencies": ["requests>=2.31"]},
+            "tool": {
+                "pdm": {
+                    "dev-dependencies": {
+                        "test": ["pytest>=8"],
+                        "lint": ["ruff>=0.8"],
+                    }
+                }
+            },
+        }
+
+        self.assertEqual(
+            _extract_scan_requirements_from_toml(payload, groups=["test"]),
+            ["requests>=2.31", "pytest>=8"],
+        )
+        with self.assertRaisesRegex(ValueError, "defined more than once"):
+            _extract_scan_requirements_from_toml(
+                {
+                    "dependency-groups": {"test": ["tox>=4"]},
+                    "tool": {"pdm": {"dev-dependencies": {"test": ["pytest>=8"]}}},
+                }
+            )
+
     def test_cli_with_deps_flag_enables_dependency_inspection(self) -> None:
         stdout = io.StringIO()
 
@@ -2314,6 +2538,49 @@ class CliBehaviorTests(unittest.TestCase):
                 )
             ],
         )
+        report.files[0].slsa_provenance = [
+            SlsaProvenance(
+                source_repository="https://github.com/Halfblood-Prince/gridoptim",
+                source_commit="abc123",
+                builder_id="https://github.com/actions/runner",
+                build_type="https://slsa.dev/container-based-build/v1",
+                workflow_path=".github/workflows/release.yml",
+                workflow_ref="refs/tags/v2.2.0",
+                action_references=["actions/checkout@v6"],
+                issues=[
+                    ProvenanceIssue(
+                        code="unpinned_action",
+                        severity="medium",
+                        message="Action reference is not pinned to a digest.",
+                    )
+                ],
+            )
+        ]
+        report.vulnerabilities = [
+            VulnerabilityRecord(
+                id="PYSEC-2026-1",
+                summary="Known issue",
+                source="OSV",
+                severity="CRITICAL",
+                cvss_score=9.1,
+                cwes=["CWE-79"],
+                fixed_in=["2.2.1"],
+                withdrawn=True,
+                withdrawn_at="2026-06-01T00:00:00Z",
+                kev=True,
+                kev_due_date="2026-07-01",
+                epss_score=0.8123,
+                epss_percentile=0.9812,
+                link="https://osv.dev/vulnerability/PYSEC-2026-1",
+                suppression=VulnerabilitySuppression(
+                    vulnerability_id="PYSEC-2026-1",
+                    owner="security",
+                    justification="temporary exception",
+                    expires="2026-07-01",
+                    status="active",
+                ),
+            )
+        ]
         report.malicious_package = MaliciousPackageAssessment(
             score=58,
             level="high",
@@ -2332,6 +2599,7 @@ class CliBehaviorTests(unittest.TestCase):
                 )
             ],
         )
+        direct_rendered = _render_text_report(report, verbose=True)
         stdout = io.StringIO()
 
         with patch("trustcheck.cli.inspect_package", return_value=report):
@@ -2354,6 +2622,14 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("WINHTTP.dll", stdout.getvalue())
         self.assertIn("embedded payloads:", stdout.getvalue())
         self.assertIn("parse note:", stdout.getvalue())
+        self.assertIn("SLSA provenance:", stdout.getvalue())
+        self.assertIn("actions/checkout@v6", stdout.getvalue())
+        self.assertIn("issue: [medium] unpinned_action", stdout.getvalue())
+        self.assertIn("vulnerabilities:", stdout.getvalue())
+        self.assertIn("cvss=9.1", stdout.getvalue())
+        self.assertIn("kev_due=2026-07-01", stdout.getvalue())
+        self.assertIn("epss=0.8123", stdout.getvalue())
+        self.assertIn("suppression=active:security:2026-07-01", direct_rendered)
 
     def test_cli_non_verbose_output_is_concise(self) -> None:
         report = make_report()

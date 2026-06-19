@@ -329,6 +329,55 @@ class GitHubActionTests(unittest.TestCase):
                 dependency_file.resolve(),
             )
 
+    def test_build_cli_arguments_rejects_trust_options_in_scan_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            dependency_file = workspace / "requirements.txt"
+            dependency_file.write_text("demo==1\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ActionInputError, "expected-repo"):
+                build_cli_arguments(
+                    ActionSettings(
+                        target="sampleproject",
+                        with_osv=True,
+                        expected_repo="https://github.com/example/project",
+                        trusted_publisher_organizations=("github:pypa",),
+                        with_deps=True,
+                        with_transitive_deps=False,
+                        inspect_artifacts=True,
+                        trusted_projects=("internal-sdk",),
+                    ),
+                    workspace=workspace,
+                )
+            with self.assertRaisesRegex(ActionInputError, "with-transitive-deps"):
+                build_cli_arguments(
+                    ActionSettings(
+                        target="sampleproject",
+                        with_osv=True,
+                        with_transitive_deps=True,
+                    ),
+                    workspace=workspace,
+                )
+            with self.assertRaisesRegex(ActionInputError, "trusted-publisher"):
+                build_cli_arguments(
+                    ActionSettings(
+                        target="requirements.txt",
+                        trusted_publisher_organizations=("github:pypa",),
+                        with_deps=True,
+                        inspect_artifacts=True,
+                        trusted_projects=("internal-sdk",),
+                    ),
+                    workspace=workspace,
+                )
+            with self.assertRaisesRegex(ActionInputError, "with-transitive-deps"):
+                build_cli_arguments(
+                    ActionSettings(
+                        target="requirements.txt",
+                        with_transitive_deps=True,
+                    ),
+                    workspace=workspace,
+                )
+
     def test_cli_policy_exit_code_is_preserved_and_report_is_written(self) -> None:
         def failing_runner(arguments):
             self.assertEqual(arguments[:2], ["inspect", "blocked-package"])
