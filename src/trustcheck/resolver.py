@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import platform as platform_module
+import re
+import shlex
+import shutil
 import subprocess  # nosec B404
 import sys
+import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import Distribution, distributions
@@ -24,6 +30,13 @@ from .indexes import (
 
 # Pip is invoked with a fixed argv list and the shell explicitly disabled.
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
+ExecutableFinder = Callable[[str], str | None]
+WarningHandler = Callable[[str], None]
+SANDBOX_MODES = ("off", "warn", "auto", "container", "bubblewrap", "strict")
+VCS_PREFIXES = ("git+", "hg+", "svn+", "bzr+")
+SOURCE_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tar.bz2", ".tar.xz", ".tgz")
+# This path is mounted as a fresh private tmpfs in each enforced sandbox.
+SANDBOX_TEMP_DIRECTORY = "/tmp"  # nosec B108
 
 
 class RepositoryIndexClient(Protocol):
@@ -114,6 +127,8 @@ class Resolution:
     pip_version: str | None = None
     indexes: tuple[str, ...] = ()
     dependency_confusion: tuple[DependencyConfusionFinding, ...] = ()
+    sandbox_mode: str = "off"
+    sandbox_warnings: tuple[str, ...] = ()
 
     @property
     def versions(self) -> dict[str, str]:
@@ -133,6 +148,17 @@ class PipResolver:
     indexes: IndexConfiguration = field(default_factory=IndexConfiguration)
     index_client: RepositoryIndexClient | None = None
     allow_dependency_confusion: bool = False
+    sandbox_mode: str = "warn"
+    container_runtime: str | None = None
+    container_image: str | None = None
+    executable_finder: ExecutableFinder = shutil.which
+    warning_handler: WarningHandler | None = None
+
+    def __post_init__(self) -> None:
+        if self.sandbox_mode not in SANDBOX_MODES:
+            raise ValueError(
+                "sandbox_mode must be off, warn, auto, container, bubblewrap, or strict"
+            )
 
     def check_dependency_confusion(
         self,
@@ -185,16 +211,19 @@ class PipResolver:
         if not requirement_path.is_file():
             raise ResolutionError(f"requirements file not found: {requirement_path}")
         arguments = ["--requirement", str(requirement_path)]
+        inspected_files = [requirement_path]
         for constraint in constraints:
             constraint_path = Path(constraint).resolve()
             if not constraint_path.is_file():
                 raise ResolutionError(f"constraints file not found: {constraint_path}")
             arguments.extend(["--constraint", str(constraint_path)])
+            inspected_files.append(constraint_path)
         return self._resolve(
             arguments,
             target=target,
             cwd=requirement_path.parent,
             offline=offline,
+            risk_reasons=_requirement_file_risks(inspected_files),
         )
 
     def resolve_requirements(
@@ -208,11 +237,17 @@ class PipResolver:
         offline: bool = False,
     ) -> Resolution:
         arguments = list(requirements)
+        risk_reasons = [
+            reason
+            for requirement in requirements
+            for reason in _requirement_risks(requirement)
+        ]
         for constraint in constraints:
             constraint_path = Path(constraint).resolve()
             if not constraint_path.is_file():
                 raise ResolutionError(f"constraints file not found: {constraint_path}")
             arguments.extend(["--constraint", str(constraint_path)])
+            risk_reasons.extend(_requirement_file_risks([constraint_path]))
         for project_file, group in dependency_groups:
             path = Path(project_file).resolve()
             if path.name != "pyproject.toml" or not path.is_file():
@@ -220,6 +255,7 @@ class PipResolver:
                     f"dependency group source must be an existing pyproject.toml: {path}"
                 )
             arguments.extend(["--group", f"{path}:{group}"])
+            risk_reasons.extend(_dependency_group_risks(path, group))
         if not arguments:
             raise ResolutionError("no requirements or dependency groups were provided")
         return self._resolve(
@@ -227,6 +263,7 @@ class PipResolver:
             target=target,
             cwd=cwd,
             offline=offline,
+            risk_reasons=risk_reasons,
         )
 
     def _resolve(
@@ -236,8 +273,16 @@ class PipResolver:
         target: TargetEnvironment | None,
         cwd: str | Path | None,
         offline: bool,
+        risk_reasons: Sequence[str],
     ) -> Resolution:
         target = target or TargetEnvironment()
+        selected_mode = self._selected_sandbox_mode()
+        warnings = self._sandbox_warnings(selected_mode, risk_reasons)
+        if selected_mode == "strict" and risk_reasons:
+            raise ResolutionError(
+                "strict resolver sandbox rejected unsafe requirement input: "
+                + "; ".join(dict.fromkeys(risk_reasons))
+            )
         command = [
             self.python_executable,
             "-m",
@@ -261,16 +306,33 @@ class PipResolver:
             command.extend(["--abi", abi])
         if target.is_cross_target:
             command.extend(["--only-binary", ":all:"])
+        elif selected_mode == "strict":
+            command.extend(["--isolated", "--only-binary", ":all:"])
         if offline:
             command.append("--no-index")
         else:
             command.extend(self.indexes.pip_arguments())
         command.extend(install_arguments)
+        if selected_mode == "strict":
+            command = [
+                command[0],
+                "-m",
+                "trustcheck._resolver_guard",
+                *command[3:],
+            ]
+        run_cwd = Path(cwd).resolve() if cwd is not None else Path.cwd().resolve()
+        command, subprocess_cwd = self._sandbox_command(
+            command,
+            mode=selected_mode,
+            workspace=run_cwd,
+        )
+        if cwd is None and selected_mode in {"off", "warn", "strict"}:
+            subprocess_cwd = None
 
         try:
             completed = self.runner(
                 command,
-                cwd=str(cwd) if cwd is not None else None,
+                cwd=subprocess_cwd,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -294,9 +356,161 @@ class PipResolver:
         except json.JSONDecodeError as exc:
             raise ResolutionError("pip returned an invalid installation report") from exc
         resolution = parse_installation_report(payload)
+        resolution.sandbox_mode = selected_mode
+        resolution.sandbox_warnings = warnings
         if offline:
             return resolution
         return self.annotate_indexes(resolution)
+
+    def _selected_sandbox_mode(self) -> str:
+        if self.sandbox_mode != "auto":
+            return self.sandbox_mode
+        if platform_module.system() == "Linux" and self.executable_finder("bwrap"):
+            return "bubblewrap"
+        if self._container_executable(required=False) is not None:
+            return "container"
+        return "strict"
+
+    def _sandbox_warnings(
+        self,
+        selected_mode: str,
+        risk_reasons: Sequence[str],
+    ) -> tuple[str, ...]:
+        messages: list[str] = []
+        if selected_mode == "warn":
+            detail = (
+                " Detected: " + "; ".join(dict.fromkeys(risk_reasons)) + "."
+                if risk_reasons
+                else ""
+            )
+            messages.append(
+                "resolver sandbox is 'warn'; pip dependency resolution may execute "
+                f"build-backend metadata hooks.{detail} Use --sandbox auto, container, "
+                "bubblewrap, or strict for enforcement."
+            )
+        elif self.sandbox_mode == "auto" and selected_mode == "strict":
+            messages.append(
+                "no supported container or bubblewrap runtime was found; "
+                "--sandbox auto fell back to strict wheel-only resolution"
+            )
+        if self.warning_handler is not None:
+            for message in messages:
+                self.warning_handler(message)
+        return tuple(messages)
+
+    def _sandbox_command(
+        self,
+        command: Sequence[str],
+        *,
+        mode: str,
+        workspace: Path,
+    ) -> tuple[list[str], str | None]:
+        if mode in {"off", "warn", "strict"}:
+            return list(command), str(workspace)
+        if mode == "container":
+            return self._container_command(command, workspace), None
+        if mode == "bubblewrap":
+            return self._bubblewrap_command(command, workspace), None
+        raise ResolutionError(f"unsupported resolver sandbox mode: {mode}")
+
+    def _container_executable(self, *, required: bool) -> str | None:
+        candidates = (
+            (self.container_runtime,)
+            if self.container_runtime
+            else ("docker", "podman")
+        )
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            located = self.executable_finder(candidate)
+            if located:
+                return located
+        if required:
+            requested = self.container_runtime or "Docker or Podman"
+            raise ResolutionError(f"container resolver sandbox requires {requested}")
+        return None
+
+    def _container_command(
+        self,
+        command: Sequence[str],
+        workspace: Path,
+    ) -> list[str]:
+        runtime = self._container_executable(required=True)
+        if runtime is None:
+            raise ResolutionError("container resolver sandbox runtime is unavailable")
+        image = self.container_image or (
+            f"python:{sys.version_info.major}.{sys.version_info.minor}-slim"
+        )
+        pip_command = [
+            "python",
+            *(
+                _containerize_argument(argument, workspace)
+                for argument in command[1:]
+            ),
+        ]
+        return [
+            runtime,
+            "run",
+            "--rm",
+            "--pull=missing",
+            "--read-only",
+            "--cap-drop=ALL",
+            "--security-opt=no-new-privileges",
+            "--pids-limit=256",
+            "--network=bridge",
+            "--user=65534:65534",
+            "--tmpfs",
+            f"{SANDBOX_TEMP_DIRECTORY}:rw,nosuid,nodev,size=512m",
+            "--env",
+            f"HOME={SANDBOX_TEMP_DIRECTORY}",
+            "--env",
+            f"PIP_CACHE_DIR={SANDBOX_TEMP_DIRECTORY}/pip-cache",
+            "--mount",
+            f"type=bind,source={workspace},target=/workspace,readonly",
+            "--workdir",
+            "/workspace",
+            image,
+            *pip_command,
+        ]
+
+    def _bubblewrap_command(
+        self,
+        command: Sequence[str],
+        workspace: Path,
+    ) -> list[str]:
+        if platform_module.system() != "Linux":
+            raise ResolutionError("bubblewrap resolver sandbox is only supported on Linux")
+        executable = self.executable_finder("bwrap")
+        if executable is None:
+            raise ResolutionError("bubblewrap resolver sandbox requires bwrap")
+        binds = _bubblewrap_readonly_binds(workspace, Path(self.python_executable))
+        wrapped = [
+            executable,
+            "--die-with-parent",
+            "--new-session",
+            "--unshare-all",
+            "--share-net",
+            "--clearenv",
+            "--setenv",
+            "PATH",
+            os.defpath,
+            "--setenv",
+            "HOME",
+            f"{SANDBOX_TEMP_DIRECTORY}/home",
+            "--setenv",
+            "PIP_CACHE_DIR",
+            f"{SANDBOX_TEMP_DIRECTORY}/pip-cache",
+            "--tmpfs",
+            SANDBOX_TEMP_DIRECTORY,
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+        ]
+        for source in binds:
+            wrapped.extend(["--ro-bind", str(source), str(source)])
+        wrapped.extend(["--chdir", str(workspace), *command])
+        return wrapped
 
     def annotate_indexes(self, resolution: Resolution) -> Resolution:
         index_urls = self.indexes.all_urls
@@ -353,6 +567,203 @@ class PipResolver:
         resolution.distributions = annotated
         resolution.dependency_confusion = findings
         return resolution
+
+
+def _containerize_argument(argument: str, workspace: Path) -> str:
+    try:
+        workspace_uri = workspace.as_uri()
+    except ValueError:
+        workspace_uri = ""
+    translated = argument
+    if workspace_uri:
+        translated = translated.replace(workspace_uri, "file:///workspace")
+    translated = translated.replace(str(workspace), "/workspace")
+    translated = translated.replace(workspace.as_posix(), "/workspace")
+    lowered = translated.lower()
+    if "file://" in lowered and "file:///workspace" not in lowered:
+        raise ResolutionError(
+            "container resolver sandbox cannot mount a local dependency outside "
+            "the resolver workspace"
+        )
+    windows_absolute = re.search(
+        r"(?:^|[\s@=])[a-zA-Z]:[\\/]",
+        translated,
+    )
+    posix_absolute = re.search(r"(?:^|[\s@=])/(?!workspace(?:/|$))", translated)
+    if (
+        windows_absolute is not None
+        or posix_absolute is not None
+        or (
+            Path(translated).is_absolute()
+            and not translated.startswith("/workspace")
+        )
+    ):
+        raise ResolutionError(
+            "container resolver sandbox cannot access a path outside the resolver workspace"
+        )
+    return translated
+
+
+def _bubblewrap_readonly_binds(workspace: Path, python_executable: Path) -> tuple[Path, ...]:
+    candidates = [
+        Path("/usr"),
+        Path("/bin"),
+        Path("/lib"),
+        Path("/lib64"),
+        Path("/etc"),
+        Path(sys.base_prefix),
+        Path(sys.prefix),
+        python_executable.parent,
+        workspace,
+    ]
+    selected: list[Path] = []
+    for candidate in sorted(
+        {path.resolve() for path in candidates if path.exists()},
+        key=lambda path: len(path.parts),
+    ):
+        if any(candidate == parent or candidate.is_relative_to(parent) for parent in selected):
+            continue
+        selected.append(candidate)
+    return tuple(selected)
+
+
+def _requirement_file_risks(paths: Sequence[Path]) -> list[str]:
+    risks: list[str] = []
+    visited: set[Path] = set()
+
+    def visit(path: Path) -> None:
+        resolved = path.resolve()
+        if resolved in visited:
+            return
+        visited.add(resolved)
+        try:
+            text = resolved.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ResolutionError(f"unable to inspect requirement file {resolved}: {exc}") from exc
+        for line in _logical_requirement_lines(text):
+            nested = _nested_requirement_path(line)
+            if nested is not None:
+                nested_path = (resolved.parent / nested).resolve()
+                if not nested_path.is_file():
+                    risks.append("nested requirement file could not be inspected")
+                    continue
+                visit(nested_path)
+                continue
+            risks.extend(_requirement_risks(line))
+
+    for path in paths:
+        visit(path)
+    return risks
+
+
+def _logical_requirement_lines(text: str) -> list[str]:
+    logical: list[str] = []
+    pending = ""
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        continued = stripped.endswith("\\")
+        fragment = stripped[:-1].rstrip() if continued else stripped
+        pending = f"{pending} {fragment}".strip()
+        if not continued:
+            logical.append(pending)
+            pending = ""
+    if pending:
+        logical.append(pending)
+    return logical
+
+
+def _nested_requirement_path(line: str) -> str | None:
+    try:
+        tokens = shlex.split(line, comments=True, posix=True)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    first = tokens[0]
+    if first in {"-r", "--requirement", "-c", "--constraint"}:
+        return tokens[1] if len(tokens) > 1 else None
+    for prefix in ("-r", "-c", "--requirement=", "--constraint="):
+        if first.startswith(prefix) and len(first) > len(prefix):
+            return first[len(prefix):]
+    return None
+
+
+def _requirement_risks(raw_requirement: str) -> list[str]:
+    raw = raw_requirement.strip()
+    lowered = raw.lower()
+    if not raw or raw.startswith("#") or raw.startswith(("--hash", "--index", "--extra")):
+        return []
+    if lowered.startswith("--no-binary") or re.match(
+        r"--only-binary(?:=|\s+):none:(?:\s|$)",
+        lowered,
+    ):
+        return ["pip option overrides strict wheel-only resolution"]
+    if lowered == "-e" or lowered.startswith(
+        ("-e ", "-e=", "-e.", "-e/", "-e\\", "--editable")
+    ):
+        return ["editable requirement"]
+    if "${" in raw:
+        return ["environment-expanded requirement"]
+    if any(prefix in lowered for prefix in VCS_PREFIXES):
+        return ["VCS requirement"]
+    requirement_text = re.split(r"\s+--hash(?:=|\s)", raw, maxsplit=1)[0].strip()
+    try:
+        requirement = Requirement(requirement_text)
+    except InvalidRequirement:
+        return _path_requirement_risks(requirement_text)
+    if requirement.url is None:
+        return []
+    return _direct_url_risks(requirement.url)
+
+
+def _path_requirement_risks(value: str) -> list[str]:
+    cleaned = value.split("#", maxsplit=1)[0].strip()
+    if cleaned.lower().endswith(".whl"):
+        return []
+    if cleaned.startswith((".", "/", "~")) or Path(cleaned).is_absolute():
+        return ["local path requirement without a prebuilt wheel"]
+    if "/" in cleaned or "\\" in cleaned:
+        return ["local path requirement without a prebuilt wheel"]
+    if cleaned.lower().endswith(SOURCE_ARCHIVE_SUFFIXES):
+        return ["source archive requirement"]
+    return []
+
+
+def _direct_url_risks(url: str) -> list[str]:
+    lowered = url.lower()
+    if any(lowered.startswith(prefix) for prefix in VCS_PREFIXES):
+        return ["VCS requirement"]
+    parsed = parse.urlsplit(url)
+    path = parsed.path.lower()
+    if path.endswith(".whl"):
+        return []
+    if parsed.scheme in {"", "file"}:
+        return ["local path requirement without a prebuilt wheel"]
+    if path.endswith(SOURCE_ARCHIVE_SUFFIXES):
+        return ["source archive requirement"]
+    return ["direct URL requirement without a prebuilt wheel"]
+
+
+def _dependency_group_risks(path: Path, group: str) -> list[str]:
+    try:
+        with path.open("rb") as handle:
+            payload = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ResolutionError(f"unable to inspect dependency group source {path}: {exc}") from exc
+    groups = payload.get("dependency-groups")
+    if not isinstance(groups, dict):
+        return []
+    selected = groups.get(group)
+    if not isinstance(selected, list):
+        return []
+    return [
+        risk
+        for item in selected
+        if isinstance(item, str)
+        for risk in _requirement_risks(item)
+    ]
 
 
 def parse_installation_report(payload: object) -> Resolution:

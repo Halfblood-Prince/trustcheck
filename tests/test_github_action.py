@@ -72,6 +72,7 @@ class GitHubActionTests(unittest.TestCase):
                 keyring_provider="subprocess",
                 allow_dependency_confusion=True,
                 trusted_projects=("requests", "internal-sdk"),
+                sandbox="container",
             )
 
             arguments = build_cli_arguments(settings, workspace=workspace)
@@ -96,6 +97,8 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("--allow-dependency-confusion", arguments)
         self.assertEqual(arguments.count("--trusted-project"), 2)
         self.assertIn("internal-sdk", arguments)
+        self.assertIn("--sandbox", arguments)
+        self.assertEqual(arguments[arguments.index("--sandbox") + 1], "container")
         self.assertEqual(arguments[-2:], ["--format", "json"])
 
     def test_package_target_maps_advisory_inputs_to_scan_cli(self) -> None:
@@ -661,6 +664,7 @@ class GitHubActionTests(unittest.TestCase):
                 "TRUSTCHECK_ACTION_DRY_RUN": "true",
                 "TRUSTCHECK_ACTION_ALLOW_CONSTRAINT_CHANGES": "true",
                 "TRUSTCHECK_ACTION_MAX_FIX_ATTEMPTS": "99",
+                "TRUSTCHECK_ACTION_SANDBOX": "strict",
             }
         )
 
@@ -689,6 +693,7 @@ class GitHubActionTests(unittest.TestCase):
         self.assertTrue(settings.dry_run)
         self.assertTrue(settings.allow_constraint_changes)
         self.assertEqual(settings.max_fix_attempts, 99)
+        self.assertEqual(settings.sandbox, "strict")
 
     def test_environment_rejects_invalid_remediation_and_attempt_values(self) -> None:
         cases = (
@@ -712,6 +717,13 @@ class GitHubActionTests(unittest.TestCase):
                     "TRUSTCHECK_ACTION_MAX_FIX_ATTEMPTS": "0",
                 },
                 "at least 1",
+            ),
+            (
+                {
+                    "TRUSTCHECK_ACTION_TARGET": "requirements.txt",
+                    "TRUSTCHECK_ACTION_SANDBOX": "virtual-machine",
+                },
+                "sandbox",
             ),
         )
         for environment, message in cases:

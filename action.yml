@@ -78,6 +78,10 @@ inputs:
     description: Maximum concurrent scan, advisory, and network workers (1-64).
     required: false
     default: "8"
+  sandbox:
+    description: Resolver isolation mode (off, warn, auto, container, bubblewrap, or strict).
+    required: false
+    default: warn
   advisory-snapshots:
     description: Whitespace- or newline-separated advisory snapshot paths.
     required: false
@@ -224,6 +228,7 @@ runs:
         TRUSTCHECK_ACTION_ALLOW_DEPENDENCY_CONFUSION: ${{ inputs['allow-dependency-confusion'] }}
         TRUSTCHECK_ACTION_TRUSTED_PROJECTS: ${{ inputs['trusted-projects'] }}
         TRUSTCHECK_ACTION_MAX_WORKERS: ${{ inputs['max-workers'] }}
+        TRUSTCHECK_ACTION_SANDBOX: ${{ inputs['sandbox'] }}
         TRUSTCHECK_ACTION_ADVISORY_SNAPSHOTS: ${{ inputs['advisory-snapshots'] }}
         TRUSTCHECK_ACTION_WRITE_ADVISORY_SNAPSHOT: ${{ inputs['write-advisory-snapshot'] }}
         TRUSTCHECK_ACTION_RESUME_STATE: ${{ inputs['resume-state'] }}

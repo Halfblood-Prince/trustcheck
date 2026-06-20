@@ -245,6 +245,8 @@ class CliBehaviorTests(unittest.TestCase):
                 "--keyring-provider",
                 "subprocess",
                 "--allow-dependency-confusion",
+                "--sandbox",
+                "auto",
             ]
         )
         self.assertEqual(scan_args.constraint, ["constraints.txt"])
@@ -254,6 +256,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(scan_args.extra_index_url, ["https://pypi.org/simple"])
         self.assertEqual(scan_args.keyring_provider, "subprocess")
         self.assertTrue(scan_args.allow_dependency_confusion)
+        self.assertEqual(scan_args.sandbox, "auto")
         self.assertEqual(
             _target_environment_from_args(scan_args),
             TargetEnvironment(
@@ -289,12 +292,13 @@ class CliBehaviorTests(unittest.TestCase):
     def test_index_and_target_helpers_cover_private_source_variants(self) -> None:
         parser = build_parser()
         default_args = parser.parse_args(["scan", "-f", "requirements.txt"])
+        self.assertEqual(default_args.sandbox, "warn")
         self.assertFalse(_uses_nondefault_indexes(default_args))
         self.assertEqual(
             _index_configuration_from_args(default_args).index_url,
             "https://pypi.org/simple",
         )
-        self.assertIsInstance(_resolver_from_args(default_args), object)
+        self.assertEqual(_resolver_from_args(default_args).sandbox_mode, "warn")
 
         private_args = parser.parse_args(
             [

@@ -92,6 +92,18 @@ Pip resolves the complete dependency set before trustcheck audits it. Nested
 requirements, constraints, hashes, editable installs, and VCS references are
 supported.
 
+Resolve potentially untrusted input in Bubblewrap or Docker/Podman, with a
+wheel-only fallback when neither runtime is available:
+
+```bash
+trustcheck scan -f requirements.txt --sandbox auto
+```
+
+The compatibility default is `--sandbox warn`, which preserves host pip
+behavior and warns that source metadata hooks may execute. Use
+`--sandbox strict` in runtime-limited CI to reject editable, local non-wheel,
+VCS, direct non-wheel, and source-only requirements.
+
 ```bash
 trustcheck scan -f requirements.txt --constraint constraints.txt
 ```

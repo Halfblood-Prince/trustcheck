@@ -221,12 +221,29 @@ trustcheck scan -f requirements.txt \
 Cross-target resolution uses wheels only because pip cannot safely build source
 distributions for a foreign interpreter or platform.
 
-!!! warning
+Pip can invoke build-backend metadata hooks while resolving source, editable,
+local, or VCS requirements, including with `--dry-run`. Select an enforced
+resolver policy for untrusted inputs:
 
-    Pip can invoke build-backend metadata hooks while resolving source,
-    editable, local, or VCS requirements, including with `--dry-run`. Treat
-    resolver inputs with the same caution as installation inputs and use an
-    external sandbox for untrusted source projects.
+```bash
+trustcheck scan -f requirements.txt --sandbox auto
+```
+
+| Mode | Behavior |
+| --- | --- |
+| `warn` | Default. Run the host pip resolver and warn that metadata hooks may execute. |
+| `off` | Run the host pip resolver without a warning. |
+| `auto` | Prefer Bubblewrap on Linux, then Docker/Podman; fall back to `strict`. |
+| `container` | Run as UID/GID 65534 in a read-only Docker/Podman container with no capabilities, `no-new-privileges`, bounded PIDs, a temporary cache, and only the resolver workspace mounted read-only. |
+| `bubblewrap` | On Linux, unshare user, mount, IPC, UTS, cgroup, and PID namespaces; clear the environment; expose system paths and the resolver workspace read-only. |
+| `strict` | Reject editable, VCS, source-archive, local non-wheel, and direct non-wheel inputs; use isolated pip configuration, require wheels, and deny child-process creation so unexpected transitive source hooks fail closed. |
+
+Container and Bubblewrap keep network access because dependency resolution must
+reach configured indexes. They do not mount the user home or host pip cache.
+`strict` does not execute source metadata hooks; a source-only dependency fails
+resolution unless the configured index provides a target-compatible wheel.
+External keyring helpers are also unavailable in strict mode; use index URL
+credentials or an authenticated index endpoint.
 
 Scan dependencies declared in a TOML project file:
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,7 +21,15 @@ from trustcheck.resolver import (
     ResolvedDistribution,
     TargetEnvironment,
     _archive_hashes,
+    _bubblewrap_readonly_binds,
+    _containerize_argument,
+    _dependency_group_risks,
     _filename_from_url,
+    _logical_requirement_lines,
+    _nested_requirement_path,
+    _path_requirement_risks,
+    _requirement_file_risks,
+    _requirement_risks,
     discover_installed_distributions,
     parse_installation_report,
     validate_resolved_requirement,
@@ -268,6 +277,371 @@ class ResolverTests(unittest.TestCase):
         self.assertIn("--constraint", command)
         self.assertIn("--group", command)
         self.assertIn(f"{project.resolve()}:dev", command)
+
+    def test_resolver_warn_and_off_modes_preserve_compatibility(self) -> None:
+        calls: list[list[str]] = []
+        warnings: list[str] = []
+
+        def runner(command, **kwargs):
+            del kwargs
+            calls.append(command)
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(installation_report()),
+                stderr="",
+            )
+
+        resolution = PipResolver(
+            runner=runner,
+            warning_handler=warnings.append,
+        ).resolve_requirements(
+            ["demo @ git+https://example.com/demo.git"],
+            offline=True,
+        )
+        self.assertEqual(resolution.sandbox_mode, "warn")
+        self.assertEqual(resolution.sandbox_warnings, tuple(warnings))
+        self.assertIn("VCS requirement", warnings[0])
+        self.assertNotIn("--isolated", calls[0])
+        self.assertNotIn("--only-binary", calls[0])
+
+        warnings.clear()
+        PipResolver(
+            runner=runner,
+            sandbox_mode="off",
+            warning_handler=warnings.append,
+        ).resolve_requirements(["demo"], offline=True)
+        self.assertEqual(warnings, [])
+
+    def test_strict_mode_is_isolated_and_wheel_only(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(command, **kwargs):
+            del kwargs
+            calls.append(command)
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(installation_report()),
+                stderr="",
+            )
+
+        resolution = PipResolver(
+            runner=runner,
+            sandbox_mode="strict",
+        ).resolve_requirements(
+            ["demo>=1", "wheel-demo @ https://example.com/demo.whl"],
+            offline=True,
+        )
+        command = calls[0]
+        self.assertEqual(resolution.sandbox_mode, "strict")
+        self.assertEqual(command[1:3], ["-m", "trustcheck._resolver_guard"])
+        self.assertIn("--isolated", command)
+        self.assertEqual(
+            command[command.index("--only-binary") + 1],
+            ":all:",
+        )
+
+    def test_strict_mode_rejects_unsafe_requirement_forms(self) -> None:
+        rejected = (
+            "--editable ./demo",
+            "-e./demo",
+            "demo @ git+https://example.com/demo.git",
+            "./demo",
+            "project/demo",
+            "${PROJECT_ROOT}/demo",
+            "https://example.com/demo.tar.gz",
+            "demo @ https://example.com/download",
+            "--no-binary=:all:",
+            "--only-binary :none:",
+        )
+        resolver = PipResolver(
+            sandbox_mode="strict",
+            runner=lambda command, **kwargs: self.fail(
+                f"runner should not be called: {command!r}, {kwargs!r}"
+            ),
+        )
+        for requirement in rejected:
+            with self.subTest(requirement=requirement):
+                with self.assertRaisesRegex(ResolutionError, "strict resolver sandbox"):
+                    resolver.resolve_requirements([requirement])
+
+    def test_strict_mode_inspects_nested_files_and_dependency_groups(self) -> None:
+        resolver = PipResolver(
+            sandbox_mode="strict",
+            runner=lambda command, **kwargs: self.fail(
+                f"runner should not be called: {command!r}, {kwargs!r}"
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            requirements = root / "requirements.txt"
+            nested = root / "nested.txt"
+            project = root / "pyproject.toml"
+            requirements.write_text("-r nested.txt\n", encoding="utf-8")
+            nested.write_text("-e ./project\n", encoding="utf-8")
+            project.write_text(
+                "[dependency-groups]\n"
+                "dev = ['demo @ https://example.com/demo.zip']\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ResolutionError, "editable requirement"):
+                resolver.resolve_requirements_file(requirements)
+            with self.assertRaisesRegex(ResolutionError, "source archive requirement"):
+                resolver.resolve_requirements(
+                    [],
+                    dependency_groups=[(project, "dev")],
+                )
+
+    def test_container_mode_wraps_pip_with_read_only_runtime(self) -> None:
+        calls: list[tuple[list[str], str | None]] = []
+
+        def runner(command, **kwargs):
+            calls.append((command, kwargs["cwd"]))
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(installation_report()),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir).resolve()
+            resolution = PipResolver(
+                runner=runner,
+                sandbox_mode="container",
+                container_runtime="docker",
+                container_image="registry.example/resolver@sha256:abc",
+                executable_finder=lambda executable: (
+                    "docker-test" if executable == "docker" else None
+                ),
+            ).resolve_requirements(
+                ["demo"],
+                cwd=workspace,
+                offline=True,
+            )
+
+        command, cwd = calls[0]
+        self.assertEqual(resolution.sandbox_mode, "container")
+        self.assertEqual(command[:3], ["docker-test", "run", "--rm"])
+        self.assertIn("--read-only", command)
+        self.assertIn("--cap-drop=ALL", command)
+        self.assertIn("--security-opt=no-new-privileges", command)
+        self.assertIn("--user=65534:65534", command)
+        self.assertIn(
+            f"type=bind,source={workspace},target=/workspace,readonly",
+            command,
+        )
+        image_index = command.index("registry.example/resolver@sha256:abc")
+        self.assertEqual(command[image_index + 1 : image_index + 5], [
+            "python",
+            "-m",
+            "pip",
+            "install",
+        ])
+        self.assertIsNone(cwd)
+
+    def test_container_mode_rejects_unmounted_paths_and_missing_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            external_wheel = root / "external.whl"
+            resolver = PipResolver(
+                sandbox_mode="container",
+                executable_finder=lambda executable: "docker-test",
+            )
+            with self.assertRaisesRegex(ResolutionError, "outside the resolver workspace"):
+                resolver.resolve_requirements(
+                    [str(external_wheel.resolve())],
+                    cwd=workspace,
+                )
+
+        with self.assertRaisesRegex(ResolutionError, "requires Docker or Podman"):
+            PipResolver(
+                sandbox_mode="container",
+                executable_finder=lambda executable: None,
+            ).resolve_requirements(["demo"])
+
+    def test_auto_selects_bubblewrap_container_or_strict(self) -> None:
+        calls: list[list[str]] = []
+        warnings: list[str] = []
+
+        def runner(command, **kwargs):
+            del kwargs
+            calls.append(command)
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(installation_report()),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "trustcheck.resolver.platform_module.system",
+            return_value="Linux",
+        ):
+            workspace = Path(tmpdir).resolve()
+            bubblewrap = PipResolver(
+                python_executable="/usr/bin/python3",
+                runner=runner,
+                sandbox_mode="auto",
+                executable_finder=lambda executable: (
+                    "/usr/bin/bwrap" if executable == "bwrap" else None
+                ),
+            ).resolve_requirements(["demo"], cwd=workspace, offline=True)
+            self.assertEqual(bubblewrap.sandbox_mode, "bubblewrap")
+            self.assertEqual(calls[-1][0], "/usr/bin/bwrap")
+            self.assertIn("--clearenv", calls[-1])
+            self.assertIn("--share-net", calls[-1])
+            self.assertIn(str(workspace), calls[-1])
+
+        with patch(
+            "trustcheck.resolver.platform_module.system",
+            return_value="Windows",
+        ):
+            container = PipResolver(
+                runner=runner,
+                sandbox_mode="auto",
+                executable_finder=lambda executable: (
+                    "podman-test" if executable == "podman" else None
+                ),
+            ).resolve_requirements(["demo"], offline=True)
+            self.assertEqual(container.sandbox_mode, "container")
+            self.assertEqual(calls[-1][0], "podman-test")
+
+            strict = PipResolver(
+                runner=runner,
+                sandbox_mode="auto",
+                executable_finder=lambda executable: None,
+                warning_handler=warnings.append,
+            ).resolve_requirements(["demo"], offline=True)
+            self.assertEqual(strict.sandbox_mode, "strict")
+            self.assertIn("--isolated", calls[-1])
+            self.assertIn("fell back to strict", warnings[0])
+
+    def test_bubblewrap_requires_linux_and_runtime(self) -> None:
+        with patch(
+            "trustcheck.resolver.platform_module.system",
+            return_value="Windows",
+        ), self.assertRaisesRegex(ResolutionError, "only supported on Linux"):
+            PipResolver(sandbox_mode="bubblewrap").resolve_requirements(["demo"])
+
+        with patch(
+            "trustcheck.resolver.platform_module.system",
+            return_value="Linux",
+        ), self.assertRaisesRegex(ResolutionError, "requires bwrap"):
+            PipResolver(
+                sandbox_mode="bubblewrap",
+                executable_finder=lambda executable: None,
+            ).resolve_requirements(["demo"])
+
+    def test_invalid_sandbox_mode_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "sandbox_mode"):
+            PipResolver(sandbox_mode="invalid")
+
+    def test_sandbox_internal_guards_report_invalid_runtime_states(self) -> None:
+        resolver = PipResolver(sandbox_mode="off")
+        with self.assertRaisesRegex(ResolutionError, "unsupported resolver sandbox"):
+            resolver._sandbox_command(
+                ["python"],
+                mode="unknown",
+                workspace=Path.cwd(),
+            )
+        resolver.container_runtime = ""
+        resolver.executable_finder = lambda executable: None
+        self.assertIsNone(resolver._container_executable(required=False))
+        with patch.object(PipResolver, "_container_executable", return_value=None):
+            with self.assertRaisesRegex(ResolutionError, "runtime is unavailable"):
+                resolver._container_command(["python"], Path.cwd())
+
+    def test_container_path_translation_handles_uris_and_relative_workspaces(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir).resolve()
+            translated = _containerize_argument(
+                f"demo @ {workspace.as_uri()}/demo.whl",
+                workspace,
+            )
+            self.assertEqual(translated, "demo @ file:///workspace/demo.whl")
+            with self.assertRaisesRegex(ResolutionError, "cannot mount"):
+                _containerize_argument(
+                    "demo @ file:///outside/demo.whl",
+                    workspace,
+                )
+        self.assertEqual(_containerize_argument("demo", Path(".")), "demo")
+
+    def test_bubblewrap_bind_selection_removes_nested_paths(self) -> None:
+        binds = _bubblewrap_readonly_binds(
+            Path(sys.prefix),
+            Path(sys.executable),
+        )
+        self.assertEqual(len(binds), len(set(binds)))
+        self.assertTrue(any(Path(sys.prefix).is_relative_to(path) for path in binds))
+
+    def test_requirement_preflight_helpers_cover_malformed_and_nested_inputs(self) -> None:
+        self.assertEqual(
+            _logical_requirement_lines(
+                "# comment\n\n"
+                "demo==1 \\\n"
+                "  --hash=sha256:abc\n"
+                "unfinished \\\n"
+            ),
+            ["demo==1 --hash=sha256:abc", "unfinished"],
+        )
+        self.assertIsNone(_nested_requirement_path("'unterminated"))
+        self.assertIsNone(_nested_requirement_path(""))
+        self.assertIsNone(_nested_requirement_path("-r"))
+        self.assertEqual(_nested_requirement_path("-rnested.txt"), "nested.txt")
+        self.assertEqual(
+            _nested_requirement_path("--constraint=constraints.txt"),
+            "constraints.txt",
+        )
+        self.assertIsNone(_nested_requirement_path("demo>=1"))
+
+        self.assertEqual(_requirement_risks(""), [])
+        self.assertEqual(_requirement_risks("# ignored"), [])
+        self.assertEqual(_requirement_risks("--hash=sha256:abc"), [])
+        self.assertEqual(_requirement_risks("demo>=1"), [])
+        self.assertEqual(_path_requirement_risks("demo.whl"), [])
+        self.assertEqual(
+            _path_requirement_risks("demo.tar.gz"),
+            ["source archive requirement"],
+        )
+        self.assertEqual(
+            _requirement_risks("demo @ file:///project/demo"),
+            ["local path requirement without a prebuilt wheel"],
+        )
+
+    def test_requirement_file_preflight_handles_cycles_and_read_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            first = root / "first.txt"
+            second = root / "second.txt"
+            first.write_text("-r second.txt\n", encoding="utf-8")
+            second.write_text("-r first.txt\n", encoding="utf-8")
+            self.assertEqual(_requirement_file_risks([first]), [])
+
+            with patch.object(
+                Path,
+                "read_text",
+                side_effect=OSError("denied"),
+            ), self.assertRaisesRegex(ResolutionError, "unable to inspect"):
+                _requirement_file_risks([first])
+
+    def test_dependency_group_preflight_handles_invalid_or_missing_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir) / "pyproject.toml"
+            project.write_text("not valid = [", encoding="utf-8")
+            with self.assertRaisesRegex(ResolutionError, "unable to inspect"):
+                _dependency_group_risks(project, "dev")
+
+            project.write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+            self.assertEqual(_dependency_group_risks(project, "dev"), [])
+            project.write_text(
+                "[dependency-groups]\ndev = 'not-a-list'\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(_dependency_group_risks(project, "dev"), [])
 
     def test_pip_resolver_passes_index_and_keyring_options(self) -> None:
         calls: list[list[str]] = []

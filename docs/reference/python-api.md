@@ -159,7 +159,7 @@ installing it:
 ```python
 from trustcheck import PipResolver, TargetEnvironment
 
-resolution = PipResolver().resolve_requirements_file(
+resolution = PipResolver(sandbox_mode="auto").resolve_requirements_file(
     "requirements.txt",
     constraints=["constraints.txt"],
     target=TargetEnvironment(
@@ -175,10 +175,17 @@ print(resolution.versions)
 
 The resolver invokes pip with `--dry-run --ignore-installed --report -`.
 Cross-target resolution adds `--only-binary :all:` because source builds cannot
-be performed correctly for a foreign target.
+be performed correctly for a foreign target. `sandbox_mode` accepts `off`,
+`warn`, `auto`, `container`, `bubblewrap`, and `strict`; the default is `warn`
+for compatibility. The selected mode and any fallback warnings are available
+as `resolution.sandbox_mode` and `resolution.sandbox_warnings`.
 
-Pip may still invoke build-backend metadata hooks for source, local, editable,
-or VCS requirements. Dry-run resolution is therefore not a sandbox.
+`container` discovers Docker or Podman. `bubblewrap` requires Linux and
+`bwrap`. `auto` prefers Bubblewrap, then a container, then strict wheel-only
+resolution. Strict mode rejects requirement forms that can directly execute
+source metadata hooks, tells pip to use isolated configuration and wheels
+only, and denies pip child-process creation so transitive backend or VCS
+commands fail closed.
 
 ## Installed distributions
 

@@ -18,6 +18,7 @@ from .exports import (
     recommended_extension,
     render_payload_export,
 )
+from .resolver import SANDBOX_MODES
 
 SUPPORTED_SCAN_FILENAMES = {
     "pipfile.lock",
@@ -62,6 +63,7 @@ class ActionSettings:
     allow_dependency_confusion: bool = False
     trusted_projects: tuple[str, ...] = ()
     max_workers: int = 8
+    sandbox: str = "warn"
     advisory_snapshots: tuple[str, ...] = ()
     write_advisory_snapshot: str = ""
     resume_state: str = ""
@@ -126,6 +128,14 @@ class ActionSettings:
             raise ActionInputError("'max-workers' must be an integer") from exc
         if max_workers < 1 or max_workers > 64:
             raise ActionInputError("'max-workers' must be between 1 and 64")
+        sandbox = (
+            environment.get("TRUSTCHECK_ACTION_SANDBOX", "warn").strip()
+            or "warn"
+        )
+        if sandbox not in SANDBOX_MODES:
+            raise ActionInputError(
+                "'sandbox' must be off, warn, auto, container, bubblewrap, or strict"
+            )
         report_path = environment.get(
             "TRUSTCHECK_ACTION_REPORT_PATH", ""
         ).strip() or _default_report_path(output_format)
@@ -194,6 +204,7 @@ class ActionSettings:
                 environment.get("TRUSTCHECK_ACTION_TRUSTED_PROJECTS", "")
             ),
             max_workers=max_workers,
+            sandbox=sandbox,
             advisory_snapshots=_parse_multi_value(
                 environment.get(
                     "TRUSTCHECK_ACTION_ADVISORY_SNAPSHOTS",
@@ -310,6 +321,10 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
         raise ActionInputError("'max-fix-attempts' must be at least 1")
     if settings.max_workers < 1 or settings.max_workers > 64:
         raise ActionInputError("'max-workers' must be between 1 and 64")
+    if settings.sandbox not in SANDBOX_MODES:
+        raise ActionInputError(
+            "'sandbox' must be off, warn, auto, container, bubblewrap, or strict"
+        )
     if settings.dry_run and settings.remediation != "fix":
         raise ActionInputError("'dry-run' requires remediation mode 'fix'")
     if settings.create_pr and (
@@ -471,6 +486,7 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
         for project in settings.trusted_projects:
             arguments.extend(["--trusted-project", project])
     arguments.extend(["--max-workers", str(settings.max_workers)])
+    arguments.extend(["--sandbox", settings.sandbox])
     for snapshot in settings.advisory_snapshots:
         snapshot_path = _resolve_workspace_path(snapshot, workspace)
         if not snapshot_path.is_file():

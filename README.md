@@ -253,10 +253,30 @@ trustcheck scan -f requirements.txt \
   --abi cp312
 ```
 
-Resolver note: pip may invoke build-backend metadata hooks for source, local,
-editable, or VCS requirements even in dry-run mode. Do not resolve an
-untrusted source requirement outside an appropriate sandbox. Cross-target
-resolution is wheel-only.
+Pip may invoke build-backend metadata hooks even in dry-run mode. Trustcheck
+can isolate that resolver invocation:
+
+```bash
+trustcheck scan -f requirements.txt --sandbox auto
+```
+
+`--sandbox auto` prefers Bubblewrap on Linux, then Docker or Podman, and falls
+back to strict wheel-only resolution when no runtime is available. The full
+mode set is:
+
+- `warn` (default): preserve pip behavior and emit an execution-risk warning
+- `off`: preserve pip behavior without the warning
+- `container`: run pip as an unprivileged process in a read-only Docker/Podman
+  container with dropped capabilities and only the resolver workspace mounted
+- `bubblewrap`: run pip in low-privilege Linux namespaces with a read-only
+  workspace, read-only system paths, and a cleared environment
+- `strict`: reject editable, VCS, local non-wheel, direct non-wheel, and source
+  archive inputs, ignore user pip configuration, and require wheels for every
+  resolved package; child-process creation is denied so unexpected transitive
+  source hooks and VCS commands fail closed
+
+Container and Bubblewrap modes retain network access for package-index
+resolution. Cross-target resolution is always wheel-only.
 
 Inspect dependencies declared in a TOML project file:
 
