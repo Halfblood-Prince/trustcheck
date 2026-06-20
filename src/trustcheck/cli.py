@@ -299,6 +299,14 @@ def build_parser() -> argparse.ArgumentParser:
             "Pipfile.lock, uv.lock, poetry.lock, or pdm.lock."
         ),
     )
+    scan_parser.add_argument(
+        "--no-deps",
+        action="store_true",
+        help=(
+            "Scan only packages declared in the dependency file without "
+            "resolving transitive dependencies."
+        ),
+    )
     remediation_mode = scan_parser.add_mutually_exclusive_group()
     remediation_mode.add_argument(
         "--plan-fixes",
@@ -730,6 +738,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--create-pr cannot be combined with --dry-run")
         if args.max_fix_attempts < 1:
             parser.error("--max-fix-attempts must be at least 1")
+        if args.no_deps and not args.filename:
+            parser.error("--no-deps requires -f/--file")
+        if args.no_deps and (args.plan_fixes or args.fix):
+            parser.error("--no-deps cannot be combined with remediation")
+        if args.no_deps and args.constraint:
+            parser.error("--no-deps cannot be combined with --constraint")
 
     try:
         plugin_manager = PluginManager.from_options(
@@ -996,7 +1010,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             targets = _load_scan_targets(
                 args.filename,
                 client,
-                resolver=resolver,
+                resolver=None if args.no_deps else resolver,
                 constraints=args.constraint,
                 extras=args.extra,
                 groups=args.group,

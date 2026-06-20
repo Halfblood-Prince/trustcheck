@@ -73,6 +73,15 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertIn("lockfiles", {case.category for case in corpus.cases})
         self.assertIn("malformed", {case.category for case in corpus.cases})
 
+        trustcheck_command = namespace["_trustcheck_command"](
+            comparable[0],
+            max_workers=8,
+        )
+        pip_audit_command = namespace["_pip_audit_command"](comparable[0])
+        self.assertIn("--no-deps", trustcheck_command)
+        self.assertIn("--no-deps", pip_audit_command)
+        self.assertIn("--disable-pip", pip_audit_command)
+
     def test_redacts_local_paths(self) -> None:
         root = Path(__file__).resolve().parents[1]
         namespace = runpy.run_path(

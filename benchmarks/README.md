@@ -1,7 +1,11 @@
 # trustcheck versus pip-audit
 
-The benchmark resolves and audits a versioned corpus with Trustcheck and the
-latest installed `pip-audit`, using OSV for the cross-tool advisory comparison.
+The benchmark audits the packages declared in a versioned corpus with
+Trustcheck and the latest installed `pip-audit`, using OSV for the cross-tool
+advisory comparison. Comparable requirement cases run in direct-pin mode
+(`--no-deps`, plus pip-audit's `--disable-pip`) so historical pins are measured
+independently instead of executing their build backends or requiring them to
+form one compatible environment.
 The corpus manifest lives at `benchmarks/corpus/corpus.json` and currently
 contains 128 package entries across comparable PyPI pins, marker and extra
 cases, private-index examples, lockfiles, VCS/editable requirements, hash-pinned

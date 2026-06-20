@@ -195,6 +195,16 @@ class CliBehaviorTests(unittest.TestCase):
             ["scan"],
             ["scan", "gridoptim", "-f", "requirements.txt"],
             ["scan", "gridoptim", "--fix"],
+            ["scan", "gridoptim", "--no-deps"],
+            ["scan", "-f", "requirements.txt", "--no-deps", "--plan-fixes"],
+            [
+                "scan",
+                "-f",
+                "requirements.txt",
+                "--no-deps",
+                "--constraint",
+                "constraints.txt",
+            ],
         ]
 
         for command in cases:
@@ -253,6 +263,11 @@ class CliBehaviorTests(unittest.TestCase):
                 abis=("cp312",),
             ),
         )
+
+        direct_args = parser.parse_args(
+            ["scan", "-f", "requirements.txt", "--no-deps"]
+        )
+        self.assertTrue(direct_args.no_deps)
 
         environment_args = parser.parse_args(
             ["environment", "--path", "one", "--path", "two"]
@@ -1824,6 +1839,28 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("known vulnerabilities for gridoptim 2.2.0", stdout.getvalue())
         self.assertIn("known vulnerabilities for depalpha 1.4.0", stdout.getvalue())
         self.assertEqual(stderr.getvalue(), "")
+
+    def test_cli_scan_no_deps_bypasses_pip_resolution(self) -> None:
+        targets = [
+            ScanTarget(
+                requirement="gridoptim==2.2.0",
+                project="gridoptim",
+                version="2.2.0",
+            )
+        ]
+        with patch(
+            "trustcheck.cli._load_scan_targets",
+            return_value=targets,
+        ) as load_targets, patch(
+            "trustcheck.cli.inspect_package",
+            return_value=make_report(),
+        ), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            exit_code = main(
+                ["scan", "-f", "requirements.txt", "--no-deps"]
+            )
+
+        self.assertEqual(exit_code, EXIT_OK)
+        self.assertIsNone(load_targets.call_args.kwargs["resolver"])
 
     def test_cli_scan_json_output_contains_reports(self) -> None:
         stdout = io.StringIO()

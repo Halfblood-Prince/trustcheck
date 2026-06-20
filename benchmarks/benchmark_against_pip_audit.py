@@ -304,6 +304,7 @@ def _trustcheck_command(case: CorpusCase, *, max_workers: int) -> list[str]:
         "--with-osv",
         "--format",
         "json",
+        "--no-deps",
         "--max-workers",
         str(max_workers),
     ]
@@ -322,6 +323,8 @@ def _pip_audit_command(case: CorpusCase) -> list[str]:
         "json",
         "--progress-spinner",
         "off",
+        "--no-deps",
+        "--disable-pip",
     ]
 
 
