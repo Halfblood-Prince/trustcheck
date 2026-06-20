@@ -47,6 +47,9 @@ trustcheck --version
 - `--with-deps`: inspect direct runtime dependencies and summarize the highest-risk dependency
 - `--with-transitive-deps`: inspect direct and transitive runtime dependencies recursively
 - `--inspect-artifacts`: statically inspect downloaded wheels and sdists
+- `scan --fast`: resolve dependencies and query advisories only (default)
+- `scan --standard`: add provenance for selected or one preferred artifact
+- `scan --full`: inspect every artifact, native binary, release history, and heuristic signal
 - `--trusted-project NAME`: add a project to the typosquatting reference set;
   repeatable
 - `--strict`: apply the built-in strict policy
@@ -55,7 +58,7 @@ trustcheck --version
 - `--trusted-publisher-organization [PROVIDER:]ORGANIZATION`: require verified
   publishers to belong to an approved organization; repeatable
 - `inspect -f <filename>`: inspect every package in a requirements, project TOML, or supported lockfile without vulnerability checks
-- `scan -f <filename>`: scan every package in a requirements, project TOML, or supported lockfile for vulnerabilities only
+- `scan -f <filename>`: scan every package in a requirements, project TOML, or supported lockfile using the selected scan profile
 - `environment`: inspect exact distributions installed in the active
   interpreter, or in repeatable `--path` locations
 
@@ -115,7 +118,19 @@ trustcheck inspect requests
 Show only known vulnerability records:
 
 ```bash
-trustcheck scan sampleproject --version 4.0.0
+trustcheck scan sampleproject --version 4.0.0 --fast
+```
+
+Add selected-artifact provenance without deep archive inspection:
+
+```bash
+trustcheck scan -f requirements.txt --standard
+```
+
+Run every artifact, native-code, history, and heuristic check:
+
+```bash
+trustcheck scan sampleproject --version 4.0.0 --full --max-workers 8
 ```
 
 Query OSV in addition to PyPI and show source, severity, fixes, and advisory links:

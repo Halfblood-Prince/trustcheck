@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 from urllib import error, parse, request
 
+import urllib3
 from pydantic import ValidationError
 
 from .cache import CacheIntegrityError, ContentAddressedCache
@@ -111,6 +112,7 @@ class PypiClient:
     offline: bool = False
     request_hook: Callable[[str, dict[str, Any]], None] | None = None
     sleep: Callable[[float], None] = time.sleep
+    http_pool: urllib3.PoolManager | None = None
     _json_cache: dict[tuple[str, str], dict[str, Any]] | None = None
     _bytes_cache: dict[str, bytes] | None = None
     _content_cache: ContentAddressedCache | None = None
@@ -192,23 +194,32 @@ class PypiClient:
 
         for attempt in range(self.max_retries + 1):
             self._emit("request", url=url, attempt=attempt + 1, accept=accept)
-            req = request.Request(url, headers=headers)
+            status: int | None
             try:
-                # The URL scheme is constrained to HTTP(S) before the request is built.
-                # nosemgrep
-                with request.urlopen(  # nosec B310
-                    req,
-                    timeout=self.timeout,
-                ) as response:
-                    payload = bytes(response.read())
-                    self._emit(
-                        "response",
-                        url=url,
-                        attempt=attempt + 1,
-                        status=getattr(response, "status", None),
-                    )
-                    self._write_disk_cache(url, payload, accept=accept)
-                    return payload
+                if self.http_pool is not None:
+                    payload, status = self._request_from_pool(url, headers)
+                else:
+                    req = request.Request(url, headers=headers)
+                    # The URL scheme is constrained to HTTP(S) before the request is built.
+                    # nosemgrep
+                    with request.urlopen(  # nosec B310
+                        req,
+                        timeout=self.timeout,
+                    ) as response:
+                        payload = bytes(response.read())
+                        status = getattr(response, "status", None)
+                self._emit(
+                    "response",
+                    url=url,
+                    attempt=attempt + 1,
+                    status=status,
+                )
+                self._write_disk_cache(url, payload, accept=accept)
+                return payload
+            except PypiClientError as exc:
+                client_error = exc
+            except urllib3.exceptions.HTTPError as exc:
+                client_error = self._pool_error(exc, url)
             except (TimeoutError, socket.timeout) as exc:
                 client_error = self._timeout_error(exc, url)
             except error.HTTPError as exc:
@@ -234,6 +245,27 @@ class PypiClient:
 
         raise AssertionError("unreachable")
 
+    def _request_from_pool(
+        self,
+        url: str,
+        headers: dict[str, str],
+    ) -> tuple[bytes, int]:
+        assert self.http_pool is not None
+        response = self.http_pool.request(
+            "GET",
+            url,
+            headers=headers,
+            timeout=urllib3.Timeout(total=self.timeout),
+            retries=False,
+        )
+        try:
+            status = int(response.status)
+            if status >= 400:
+                raise self._http_status_error(status, url)
+            return bytes(response.data), status
+        finally:
+            response.release_conn()
+
     def _validate_request_url(self, url: str) -> None:
         if parse.urlparse(url).scheme not in {"http", "https"}:
             raise PypiClientError(
@@ -245,24 +277,50 @@ class PypiClient:
             )
 
     def _http_error(self, exc: error.HTTPError, url: str) -> PypiClientError:
-        if exc.code == 404:
+        return self._http_status_error(exc.code, url)
+
+    def _http_status_error(self, status: int, url: str) -> PypiClientError:
+        if status == 404:
             return PypiClientError(
                 f"resource not found: {url}; retrying is unlikely to help",
                 transient=False,
-                status_code=exc.code,
+                status_code=status,
                 url=url,
                 code="upstream",
                 subcode="http_not_found",
             )
-        transient = exc.code in TRANSIENT_HTTP_STATUS_CODES
+        transient = status in TRANSIENT_HTTP_STATUS_CODES
         retry_hint = "retrying may help" if transient else "retrying is unlikely to help"
         return PypiClientError(
-            f"PyPI returned HTTP {exc.code} for {url}; {retry_hint}",
+            f"PyPI returned HTTP {status} for {url}; {retry_hint}",
             transient=transient,
-            status_code=exc.code,
+            status_code=status,
             url=url,
             code="upstream",
             subcode="http_transient" if transient else "http_error",
+        )
+
+    def _pool_error(
+        self,
+        exc: urllib3.exceptions.HTTPError,
+        url: str,
+    ) -> PypiClientError:
+        reason = getattr(exc, "reason", exc)
+        if isinstance(
+            reason,
+            (urllib3.exceptions.TimeoutError, TimeoutError, socket.timeout),
+        ):
+            return self._timeout_error(reason, url)
+        transient = not isinstance(reason, urllib3.exceptions.SSLError)
+        return PypiClientError(
+            (
+                f"unable to reach PyPI: {reason}; "
+                f"{'retrying may help' if transient else 'retrying is unlikely to help'}"
+            ),
+            transient=transient,
+            url=url,
+            code="upstream",
+            subcode="network_transient" if transient else "network_tls",
         )
 
     def _timeout_error(self, exc: BaseException, url: str) -> PypiClientError:

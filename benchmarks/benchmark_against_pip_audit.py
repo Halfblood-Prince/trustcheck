@@ -17,6 +17,7 @@ BENCHMARK_SCHEMA = "urn:trustcheck:benchmark:pip-audit:2.0.0"
 CORPUS_SCHEMA = "urn:trustcheck:benchmark-corpus:1.0.0"
 MIN_CORPUS_PACKAGES = 100
 MAX_CORPUS_PACKAGES = 500
+TRUSTCHECK_BENCHMARK_SUBCOMMAND = "scan"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,8 +49,8 @@ class RunResult:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Benchmark trustcheck against the latest installed pip-audit on a "
-            "versioned package corpus."
+            "Benchmark trustcheck scan against the latest installed pip-audit "
+            "on a versioned package corpus."
         )
     )
     parser.add_argument(
@@ -312,7 +313,8 @@ def _trustcheck_command(case: CorpusCase, *, max_workers: int) -> list[str]:
         sys.executable,
         "-m",
         "trustcheck",
-        "scan",
+        TRUSTCHECK_BENCHMARK_SUBCOMMAND,
+        "--fast",
         "-f",
         str(case.path),
         "--with-osv",

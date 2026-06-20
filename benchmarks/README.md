@@ -1,8 +1,10 @@
-# trustcheck versus pip-audit
+# trustcheck scan versus pip-audit
 
 The benchmark audits the packages declared in a versioned corpus with
-Trustcheck and the latest installed `pip-audit`, using OSV for the cross-tool
-advisory comparison. Comparable requirement cases run in direct-pin mode
+`trustcheck scan` and the latest installed `pip-audit`, using OSV for the
+cross-tool advisory comparison. Only those two command paths contribute timing
+or correctness samples. Trustcheck always runs with `--fast` so provenance,
+artifact, history, and heuristic work is excluded. Comparable requirement cases run in direct-pin mode
 (`--no-deps`, plus pip-audit's `--disable-pip`) so historical pins are measured
 independently instead of executing their build backends or requiring them to
 form one compatible environment.

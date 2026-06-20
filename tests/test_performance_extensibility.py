@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import runpy
 import subprocess
+import sys
 import threading
 import time
 import unittest
@@ -79,6 +80,16 @@ class BenchmarkPublicationTests(unittest.TestCase):
             max_workers=8,
         )
         pip_audit_command = namespace["_pip_audit_command"](comparable[0])
+        self.assertEqual(
+            trustcheck_command[:4],
+            [sys.executable, "-m", "trustcheck", "scan"],
+        )
+        self.assertNotIn("inspect", trustcheck_command)
+        self.assertIn("--fast", trustcheck_command)
+        self.assertEqual(
+            pip_audit_command[:3],
+            [sys.executable, "-m", "pip_audit"],
+        )
         self.assertIn("--no-deps", trustcheck_command)
         self.assertIn("--no-deps", pip_audit_command)
         self.assertIn("--disable-pip", pip_audit_command)
@@ -198,7 +209,7 @@ class BenchmarkPublicationTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertLess(updated.index("## Latest benchmark"), updated.index("## Installation"))
-        self.assertIn("| Trustcheck | 1.23 s | 2.35 s | 7 |", updated)
+        self.assertIn("| trustcheck scan | 1.23 s | 2.35 s | 7 |", updated)
         self.assertIn("| pip-audit | 3.46 s | 4.57 s | 7 |", updated)
 
     def test_benchmark_workflow_publishes_results_through_pull_request(self) -> None:
@@ -223,11 +234,11 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertIn("git push --force-with-lease", workflow)
         self.assertIn("gh pr create", workflow)
         self.assertIn("gh pr edit", workflow)
+        self.assertNotIn("trustcheck inspect", workflow)
         self.assertLess(
             workflow.index("uses: actions/upload-artifact@v7"),
             workflow.index("name: Open benchmark result pull request"),
         )
-
 
 def _report(project: str, version: str) -> TrustReport:
     return TrustReport(

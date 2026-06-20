@@ -70,7 +70,7 @@ def _render_table(payload: dict[str, Any]) -> str:
             "| Tool | Median | p95 | Vulnerable packages |",
             "| --- | ---: | ---: | ---: |",
             (
-                f"| Trustcheck | {_seconds(trustcheck.get('median_seconds'))} | "
+                f"| trustcheck scan | {_seconds(trustcheck.get('median_seconds'))} | "
                 f"{_seconds(trustcheck.get('p95_seconds'))} | "
                 f"{correctness.get('trustcheck_vulnerable_packages', 'unknown')} |"
             ),

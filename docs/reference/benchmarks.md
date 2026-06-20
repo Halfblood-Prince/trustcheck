@@ -1,8 +1,11 @@
 # Benchmarks
 
-Trustcheck publishes a reproducible performance and correctness comparison
-against the latest installed `pip-audit`. The benchmark uses a versioned corpus
-manifest and the OSV advisory service for both tools.
+Trustcheck publishes a reproducible performance and correctness comparison of
+`trustcheck scan` against the latest installed `pip-audit`. The benchmark uses
+a versioned corpus manifest and the OSV advisory service for both tools. Only
+those two command paths contribute timing or correctness samples.
+The Trustcheck command explicitly uses `--fast`, limiting it to dependency
+resolution and advisory lookup for an apples-to-apples comparison.
 
 The corpus is `benchmarks/corpus/corpus.json`. Version `2026.06` contains 128
 package entries: 100 mixed clean and historically vulnerable PyPI pins, marker
@@ -23,8 +26,8 @@ result so agreement cannot hide feed or normalization differences.
 The scheduled benchmark workflow publishes each run as a workflow artifact.
 Local runs default to `benchmarks/results/latest.json`; commit or publish that
 file only when it was regenerated from the current corpus and environment.
-`pip-audit` exits `1` when it finds vulnerabilities; Trustcheck exits `0` here
-because the benchmark intentionally uses its default non-blocking policy.
+`pip-audit` exits `1` when it finds vulnerabilities; `trustcheck scan` exits
+`0` here because the benchmark intentionally uses its default non-blocking policy.
 Commands that return an accepted exit code but no output are retried twice;
 the result records this setting and includes retry time in the timing sample.
 
@@ -33,6 +36,5 @@ python benchmarks/benchmark_against_pip_audit.py
 ```
 
 Wall-time results include package metadata and advisory requests plus output
-generation. Trustcheck performs broader provenance and supply-chain analysis
-than `pip-audit`, so the benchmark reports observed performance rather than
-claiming feature-equivalent work.
+generation. The benchmark reports observed performance rather than claiming
+feature-equivalent work.

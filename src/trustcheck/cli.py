@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 from urllib import parse
 
+import urllib3
 from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
@@ -80,7 +81,12 @@ from .resolver import (
     discover_installed_distributions,
 )
 from .resume import ScanState, ScanStateError, scan_fingerprint, target_key
-from .service import DependencyProgressCallback, ProgressCallback, inspect_package
+from .service import (
+    ArtifactDigestCache,
+    DependencyProgressCallback,
+    ProgressCallback,
+    inspect_package,
+)
 from .snapshots import AdvisorySnapshotError, AdvisorySnapshotStore
 
 EXIT_OK = 0
@@ -307,6 +313,32 @@ def build_parser() -> argparse.ArgumentParser:
             "resolving transitive dependencies."
         ),
     )
+    scan_profile = scan_parser.add_mutually_exclusive_group()
+    scan_profile.add_argument(
+        "--fast",
+        action="store_const",
+        const="fast",
+        dest="scan_profile",
+        help="Resolve dependencies and query advisories only (default).",
+    )
+    scan_profile.add_argument(
+        "--standard",
+        action="store_const",
+        const="standard",
+        dest="scan_profile",
+        help="Add provenance checks for lock-selected or one preferred artifact.",
+    )
+    scan_profile.add_argument(
+        "--full",
+        action="store_const",
+        const="full",
+        dest="scan_profile",
+        help=(
+            "Inspect every release artifact, native binary, release history, "
+            "and heuristic signal."
+        ),
+    )
+    scan_parser.set_defaults(scan_profile="fast")
     remediation_mode = scan_parser.add_mutually_exclusive_group()
     remediation_mode.add_argument(
         "--plan-fixes",
@@ -893,6 +925,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dependency_confusion_indexes=dependency_confusion_indexes,
                 trusted_projects=args.trusted_project,
                 plugin_manager=plugin_manager,
+                max_workers=args.max_workers,
             )
             evaluation = evaluate_policy(
                 report,
@@ -981,14 +1014,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                     policy,
                     plugin_manager=plugin_manager,
                 )
-                if args.format == "json":
+                vulnerability_only = args.scan_profile == "fast"
+                if args.format == "json" and vulnerability_only:
                     rendered = json.dumps(
                         _render_cve_json(report),
                         indent=2,
                         sort_keys=True,
                     )
-                elif args.format == "text":
+                elif args.format == "json":
+                    rendered = json.dumps(
+                        report.to_dict(),
+                        indent=2,
+                        sort_keys=True,
+                    )
+                elif args.format == "text" and vulnerability_only:
                     rendered = _render_cve_report(report)
+                elif args.format == "text":
+                    rendered = _render_text_report(report, verbose=True)
                 else:
                     rendered = render_export(
                         args.format,
@@ -1025,7 +1067,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 vulnerability_client=vulnerability_client,
                 policy=policy,
                 include_vulnerabilities=True,
-                vulnerability_only=True,
+                vulnerability_only=args.scan_profile == "fast",
                 progress_callback=progress_callback,
                 dependency_progress_callback=dependency_progress_callback,
                 resolver=resolver,
@@ -1239,6 +1281,10 @@ def _run_scan_targets(
                 dependency_confusion_indexes=target.dependency_confusion,
                 trusted_projects=getattr(args, "trusted_project", ()),
                 plugin_manager=plugin_manager,
+                scan_profile=getattr(args, "scan_profile", None),
+                max_workers=args.max_workers,
+                artifact_cache=artifact_cache,
+                artifact_executor=artifact_executor,
             )
             evaluation = evaluate_policy(
                 report,
@@ -1275,34 +1321,42 @@ def _run_scan_targets(
                 EXIT_DATA_ERROR,
             )
 
+    artifact_cache = ArtifactDigestCache()
+    artifact_executor = ThreadPoolExecutor(
+        max_workers=max(1, args.max_workers),
+        thread_name_prefix="trustcheck-artifact",
+    )
     workers = min(max(1, args.max_workers), max(1, len(pending)))
-    if pending:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(scan_target, index, target): (index, target)
-                for index, target in pending
-            }
-            for future in as_completed(futures):
-                index, target = futures[future]
-                result_index, report, result_failure, exit_code = future.result()
-                if result_index != index:
-                    raise RuntimeError("scan worker returned an invalid target index")
-                overall_exit_code = _merge_exit_codes(
-                    overall_exit_code,
-                    exit_code,
-                )
-                if report is not None:
-                    reports_by_index[index] = report
-                    if state is not None:
-                        state.record_report(keys[index], report)
-                elif result_failure is not None:
-                    failures_by_index[index] = result_failure
-                    if state is not None:
-                        state.record_failure(
-                            keys[index],
-                            requirement=target.requirement,
-                            message=result_failure["message"],
-                        )
+    try:
+        if pending:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(scan_target, index, target): (index, target)
+                    for index, target in pending
+                }
+                for future in as_completed(futures):
+                    index, target = futures[future]
+                    result_index, report, result_failure, exit_code = future.result()
+                    if result_index != index:
+                        raise RuntimeError("scan worker returned an invalid target index")
+                    overall_exit_code = _merge_exit_codes(
+                        overall_exit_code,
+                        exit_code,
+                    )
+                    if report is not None:
+                        reports_by_index[index] = report
+                        if state is not None:
+                            state.record_report(keys[index], report)
+                    elif result_failure is not None:
+                        failures_by_index[index] = result_failure
+                        if state is not None:
+                            state.record_failure(
+                                keys[index],
+                                requirement=target.requirement,
+                                message=result_failure["message"],
+                            )
+    finally:
+        artifact_executor.shutdown(wait=True)
 
     report_indexes = sorted(reports_by_index)
     reports = [reports_by_index[index] for index in report_indexes]
@@ -1469,13 +1523,15 @@ def _scan_project_vulnerabilities(
         client=scan_client,
         include_vulnerabilities=True,
         include_osv=vulnerability_client is not None,
-        vulnerability_only=True,
+        vulnerability_only=args.scan_profile == "fast",
         vulnerability_client=vulnerability_client,
         resolver=resolver,
         target_environment=_target_environment_from_args(args),
         expected_artifacts=expected_artifacts,
         dependency_confusion_indexes=dependency_confusion_indexes,
         plugin_manager=plugin_manager,
+        scan_profile=args.scan_profile,
+        max_workers=args.max_workers,
     )
     evaluate_policy(report, policy, plugin_manager=plugin_manager)
     return report
@@ -2079,6 +2135,7 @@ def _build_scan_state(
             "targets": list(keys),
             "policy": asdict(policy),
             "options": {
+                "scan_profile": getattr(args, "scan_profile", None),
                 "with_deps": getattr(args, "with_deps", False),
                 "with_transitive_deps": getattr(args, "with_transitive_deps", False),
                 "inspect_artifacts": getattr(args, "inspect_artifacts", False),
@@ -2124,6 +2181,7 @@ def _clone_pypi_client(client: PypiClient) -> PypiClient:
         offline=client.offline,
         request_hook=client.request_hook,
         sleep=client.sleep,
+        http_pool=client.http_pool,
     )
 
 
@@ -2327,6 +2385,7 @@ def _build_client(
     if network_config is not None and not isinstance(network_config, dict):
         raise ValueError("config file field 'network' must be an object")
     network_config = network_config or {}
+    max_workers = int(getattr(args, "max_workers", None) or 8)
     return PypiClient(
         timeout=_resolve_float(
             args.timeout,
@@ -2358,6 +2417,12 @@ def _build_client(
             default=False,
         ),
         request_hook=request_hook,
+        http_pool=urllib3.PoolManager(
+            num_pools=max_workers,
+            maxsize=max_workers,
+            block=True,
+            retries=False,
+        ),
     )
 
 

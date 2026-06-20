@@ -169,7 +169,18 @@ trustcheck inspect sampleproject --version 4.0.0
 Show only known vulnerabilities for a release:
 
 ```bash
-trustcheck scan sampleproject --version 4.0.0
+trustcheck scan sampleproject --version 4.0.0 --fast
+```
+
+Scan profiles make the amount of work explicit. `--fast` (the default) performs
+dependency resolution and advisory lookup only. `--standard` adds provenance
+for lock-selected artifacts, or one preferred non-yanked wheel/sdist when no
+artifact is pinned. `--full` inspects every release artifact, including native
+binaries, release history, and malicious-package heuristics.
+
+```bash
+trustcheck scan -f requirements.txt --standard
+trustcheck scan sampleproject --version 4.0.0 --full --max-workers 8
 ```
 
 Enrich vulnerability intelligence with OSV and GitHub Advisory Database data:

@@ -4,8 +4,10 @@ import hashlib
 import re
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -31,6 +33,7 @@ from .models import (
     DependencyInspection,
     DependencySummary,
     FileProvenance,
+    MaliciousPackageAssessment,
     ProvenanceConsistency,
     PublisherIdentity,
     PublisherTrustSummary,
@@ -115,6 +118,95 @@ _RECOMMENDATION_ORDER = {
     "high-risk": 3,
 }
 
+SCAN_PROFILE_NAMES = ("fast", "standard", "full")
+
+
+@dataclass(frozen=True, slots=True)
+class ScanProfile:
+    name: str
+    collect_provenance: bool
+    selected_artifacts_only: bool
+    inspect_artifacts: bool
+    release_history: bool
+    heuristics: bool
+
+
+SCAN_PROFILES = {
+    "fast": ScanProfile(
+        name="fast",
+        collect_provenance=False,
+        selected_artifacts_only=True,
+        inspect_artifacts=False,
+        release_history=False,
+        heuristics=False,
+    ),
+    "standard": ScanProfile(
+        name="standard",
+        collect_provenance=True,
+        selected_artifacts_only=True,
+        inspect_artifacts=False,
+        release_history=False,
+        heuristics=False,
+    ),
+    "full": ScanProfile(
+        name="full",
+        collect_provenance=True,
+        selected_artifacts_only=False,
+        inspect_artifacts=True,
+        release_history=True,
+        heuristics=True,
+    ),
+}
+
+
+class ArtifactDigestCache:
+    """Share downloaded artifacts by digest and coalesce concurrent fetches."""
+
+    def __init__(self) -> None:
+        self._payloads: dict[str, bytes] = {}
+        self._pending: dict[str, Future[bytes]] = {}
+        self._lock = Lock()
+
+    def fetch(
+        self,
+        url: str,
+        expected_sha256: str | None,
+        loader: Callable[[str], bytes],
+    ) -> bytes:
+        key = (
+            f"sha256:{expected_sha256.lower()}"
+            if expected_sha256
+            else f"url:{url}"
+        )
+        with self._lock:
+            cached = self._payloads.get(key)
+            if cached is not None:
+                return cached
+            pending = self._pending.get(key)
+            owner = pending is None
+            if pending is None:
+                pending = Future()
+                self._pending[key] = pending
+        if not owner:
+            return pending.result()
+
+        try:
+            payload = loader(url)
+            observed_digest = hashlib.new("sha256", payload).hexdigest()
+            observed_key = f"sha256:{observed_digest}"
+            with self._lock:
+                self._payloads[observed_key] = payload
+                if not expected_sha256 or expected_sha256.lower() == observed_digest:
+                    self._payloads[key] = payload
+            pending.set_result(payload)
+            return payload
+        except BaseException as exc:
+            pending.set_exception(exc)
+            raise
+        finally:
+            with self._lock:
+                self._pending.pop(key, None)
+
 
 @dataclass(slots=True)
 class DependencyTraversalContext:
@@ -130,6 +222,7 @@ class PackageHistoryContext:
 
 class DiagnosticsCollector:
     def __init__(self) -> None:
+        self._lock = Lock()
         self.request_count = 0
         self.retry_count = 0
         self.cache_hit_count = 0
@@ -137,28 +230,29 @@ class DiagnosticsCollector:
         self.artifact_failures: list[ArtifactDiagnostic] = []
 
     def on_request_event(self, event: str, payload: dict[str, Any]) -> None:
-        if event == "request":
-            self.request_count += 1
-        elif event == "retry":
-            self.retry_count += 1
-        elif event == "cache_hit":
-            self.cache_hit_count += 1
-        elif event == "failure":
-            self.request_failures.append(
-                RequestFailureDiagnostic(
-                    url=str(payload.get("url") or ""),
-                    attempt=int(payload.get("attempt") or 0),
-                    code=str(payload.get("code") or "upstream"),
-                    subcode=str(payload.get("subcode") or "unknown"),
-                    message=str(payload.get("message") or ""),
-                    transient=bool(payload.get("transient")),
-                    status_code=(
-                        int(payload["status_code"])
-                        if payload.get("status_code") is not None
-                        else None
-                    ),
+        with self._lock:
+            if event == "request":
+                self.request_count += 1
+            elif event == "retry":
+                self.retry_count += 1
+            elif event == "cache_hit":
+                self.cache_hit_count += 1
+            elif event == "failure":
+                self.request_failures.append(
+                    RequestFailureDiagnostic(
+                        url=str(payload.get("url") or ""),
+                        attempt=int(payload.get("attempt") or 0),
+                        code=str(payload.get("code") or "upstream"),
+                        subcode=str(payload.get("subcode") or "unknown"),
+                        message=str(payload.get("message") or ""),
+                        transient=bool(payload.get("transient")),
+                        status_code=(
+                            int(payload["status_code"])
+                            if payload.get("status_code") is not None
+                            else None
+                        ),
+                    )
                 )
-            )
 
     def add_artifact_failure(
         self,
@@ -169,15 +263,16 @@ class DiagnosticsCollector:
         subcode: str,
         message: str,
     ) -> None:
-        self.artifact_failures.append(
-            ArtifactDiagnostic(
-                filename=filename,
-                stage=stage,
-                code=code,
-                subcode=subcode,
-                message=message,
+        with self._lock:
+            self.artifact_failures.append(
+                ArtifactDiagnostic(
+                    filename=filename,
+                    stage=stage,
+                    code=code,
+                    subcode=subcode,
+                    message=message,
+                )
             )
-        )
 
     def to_report_diagnostics(self, client: PackageClient) -> ReportDiagnostics:
         return ReportDiagnostics(
@@ -192,6 +287,17 @@ class DiagnosticsCollector:
             request_failures=self.request_failures,
             artifact_failures=self.artifact_failures,
         )
+
+
+def _resolve_scan_profile(name: str | None) -> ScanProfile | None:
+    if name is None:
+        return None
+    try:
+        return SCAN_PROFILES[name]
+    except KeyError as exc:
+        raise ValueError(
+            "scan_profile must be fast, standard, or full"
+        ) from exc
 
 
 def inspect_package(
@@ -218,8 +324,18 @@ def inspect_package(
     dependency_confusion_indexes: Sequence[str] = (),
     trusted_projects: Sequence[str] = (),
     plugin_manager: PluginManager | None = None,
+    scan_profile: str | None = None,
+    max_workers: int = 1,
+    artifact_cache: ArtifactDigestCache | None = None,
+    artifact_executor: Executor | None = None,
     _dependency_context: DependencyTraversalContext | None = None,
 ) -> TrustReport:
+    profile = _resolve_scan_profile(scan_profile)
+    if max_workers < 1:
+        raise ValueError("max_workers must be at least 1")
+    if profile is not None:
+        vulnerability_only = not profile.collect_provenance
+        inspect_artifacts = profile.inspect_artifacts
     client = client or PypiClient()
     diagnostics = DiagnosticsCollector()
     dependency_context = _dependency_context or DependencyTraversalContext()
@@ -328,10 +444,20 @@ def inspect_package(
             expected_requires_dist=declared_dependencies,
             expected_artifacts=expected_artifacts,
             plugin_manager=plugin_manager,
+            selected_artifacts_only=(
+                profile.selected_artifacts_only if profile is not None else False
+            ),
+            max_workers=max_workers,
+            artifact_cache=artifact_cache,
+            artifact_executor=artifact_executor,
         )
         if inspect_artifacts:
             compare_artifact_metadata(file.artifact for file in files)
-        history = _load_package_history(project, selected_version, client)
+        history = (
+            _load_package_history(project, selected_version, client)
+            if profile is None or profile.release_history
+            else PackageHistoryContext()
+        )
         artifact_findings = [
             finding_for_artifact(finding, file.filename)
             for file in files
@@ -359,18 +485,25 @@ def inspect_package(
                 client,
                 current_files=files,
                 history=history,
+                max_workers=max_workers,
+                artifact_cache=artifact_cache,
+                artifact_executor=artifact_executor,
             ),
-            malicious_package=assess_package(
-                project,
-                current_info=info,
-                current_ownership=ownership,
-                current_repositories=declared_repository_urls,
-                project_payload=history.project_payload,
-                previous_payload=history.previous_payload,
-                dependency_confusion_indexes=dependency_confusion_indexes,
-                artifact_findings=artifact_findings,
-                artifact_analysis=inspect_artifacts,
-                trusted_projects=trusted_projects,
+            malicious_package=(
+                assess_package(
+                    project,
+                    current_info=info,
+                    current_ownership=ownership,
+                    current_repositories=declared_repository_urls,
+                    project_payload=history.project_payload,
+                    previous_payload=history.previous_payload,
+                    dependency_confusion_indexes=dependency_confusion_indexes,
+                    artifact_findings=artifact_findings,
+                    artifact_analysis=inspect_artifacts,
+                    trusted_projects=trusted_projects,
+                )
+                if profile is None or profile.heuristics
+                else MaliciousPackageAssessment()
             ),
             diagnostics=diagnostics.to_report_diagnostics(client),
         )
@@ -390,6 +523,9 @@ def inspect_package(
                 complete_locked_versions=complete_locked_versions,
                 trusted_projects=trusted_projects,
                 plugin_manager=plugin_manager,
+                max_workers=max_workers,
+                artifact_cache=artifact_cache,
+                artifact_executor=artifact_executor,
             )
         report.dependency_summary = _build_dependency_summary(
             declared_dependencies,
@@ -414,204 +550,283 @@ def _collect_files(
     expected_requires_dist: list[str] | None = None,
     expected_artifacts: Sequence[ArtifactReference] = (),
     plugin_manager: PluginManager | None = None,
+    selected_artifacts_only: bool = False,
+    max_workers: int = 1,
+    artifact_cache: ArtifactDigestCache | None = None,
+    artifact_executor: Executor | None = None,
 ) -> list[FileProvenance]:
     urls = payload.get("urls") or []
-    selected_urls = _select_expected_artifacts(urls, expected_artifacts)
-    results: list[FileProvenance] = []
-
+    selected_urls = _select_expected_artifacts(
+        urls,
+        expected_artifacts,
+        selected_only=selected_artifacts_only,
+    )
+    cache = artifact_cache or ArtifactDigestCache()
     total_files = len(selected_urls)
     for index, (item, matched_artifacts) in enumerate(selected_urls, start=1):
-        filename = item.get("filename") or ""
         if progress_callback is not None:
-            progress_callback(filename, index, total_files)
-        provenance = FileProvenance(
-            filename=filename,
-            url=item.get("url") or "",
-            sha256=_expected_sha256(item, matched_artifacts),
-            has_provenance=False,
-        )
-        artifact_bytes: bytes | None = None
-        download_error: PypiClientError | None = None
-        if any(
-            artifact.hashes or artifact.size is not None
-            for artifact in matched_artifacts
-        ):
-            try:
-                artifact_bytes = client.download_distribution(provenance.url)
-                _verify_locked_artifact(
-                    provenance,
-                    artifact_bytes,
-                    matched_artifacts,
-                )
-            except (PypiClientError, VerificationError) as exc:
-                provenance.error = str(exc)
-                if diagnostics is not None:
-                    diagnostics.add_artifact_failure(
-                        filename=filename,
-                        stage="lockfile-hash",
-                        code=(
-                            exc.code
-                            if isinstance(exc, PypiClientError)
-                            else "verification"
-                        ),
-                        subcode=(
-                            exc.subcode
-                            if isinstance(exc, PypiClientError)
-                            else "lockfile_hash_mismatch"
-                        ),
-                        message=str(exc),
-                    )
-        if inspect_artifacts:
-            try:
-                if artifact_bytes is None:
-                    artifact_bytes = client.download_distribution(provenance.url)
-                provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
-                provenance.artifact = inspect_artifact(
-                    filename,
-                    artifact_bytes,
-                    expected_project=project,
-                    expected_version=version,
-                    expected_requires_dist=expected_requires_dist,
-                )
-                if plugin_manager is not None:
-                    provenance.artifact.heuristic_findings.extend(
-                        plugin_manager.analyze_artifact(
-                            filename=filename,
-                            payload=artifact_bytes,
-                            project=project,
-                            version=version,
-                            inspection=provenance.artifact,
-                        )
-                    )
-                if provenance.artifact.error and diagnostics is not None:
-                    diagnostics.add_artifact_failure(
-                        filename=filename,
-                        stage="artifact-inspection",
-                        code="artifact",
-                        subcode="archive_invalid",
-                        message=provenance.artifact.error,
-                    )
-            except PypiClientError as exc:
-                download_error = exc
-                provenance.artifact.inspected = True
-                if _is_wheel(filename):
-                    provenance.artifact.kind = "wheel"
-                elif _is_sdist(filename):
-                    provenance.artifact.kind = "sdist"
-                provenance.artifact.error = str(exc)
-                if diagnostics is not None:
-                    diagnostics.add_artifact_failure(
-                        filename=filename,
-                        stage="artifact-download",
-                        code=exc.code,
-                        subcode=exc.subcode,
-                        message=str(exc),
-                    )
-        try:
-            prov_payload = client.get_provenance(project, version, filename)
-            attestation_provenance = Provenance.model_validate(prov_payload)
-            bundles = attestation_provenance.attestation_bundles
-            provenance.has_provenance = bool(bundles)
-            provenance.attestation_count = sum(len(bundle.attestations) for bundle in bundles)
-            provenance.publisher_identities = _parse_publisher_identities(bundles)
+            progress_callback(item.get("filename") or "", index, total_files)
 
-            if bundles:
-                if artifact_bytes is None:
-                    if download_error is not None:
-                        raise download_error
-                    artifact_bytes = client.download_distribution(provenance.url)
-                provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
-                if provenance.sha256 and provenance.observed_sha256 != provenance.sha256:
-                    raise VerificationError(
-                        "downloaded artifact digest does not match PyPI metadata"
-                    )
-
-                dist = AttestedDistribution(
-                    name=filename,
-                    digest=provenance.observed_sha256,
-                )
-                for bundle in bundles:
-                    for attestation in bundle.attestations:
-                        predicate_type, predicate = attestation.verify(
-                            bundle.publisher,
-                            dist,
-                        )
-                        if (
-                            predicate_type == SLSA_PROVENANCE_V1
-                            and predicate is not None
-                        ):
-                            provenance.slsa_provenance.append(
-                                analyze_slsa_provenance(
-                                    predicate,
-                                    publisher_kind=bundle.publisher.kind,
-                                    publisher_repository=getattr(
-                                        bundle.publisher,
-                                        "repository",
-                                        None,
-                                    ),
-                                    publisher_workflow=(
-                                        getattr(bundle.publisher, "workflow", None)
-                                        or getattr(
-                                            bundle.publisher,
-                                            "workflow_filepath",
-                                            None,
-                                        )
-                                    ),
-                                )
-                            )
-                        provenance.verified_attestation_count += 1
-
-            provenance.verified = (
-                provenance.has_provenance
-                and provenance.attestation_count > 0
-                and provenance.verified_attestation_count
-                == provenance.attestation_count
+    def submit(executor: Executor) -> list[Future[FileProvenance]]:
+        return [
+            executor.submit(
+                _collect_file,
+                project,
+                version,
+                item,
+                matched_artifacts,
+                client,
+                diagnostics=diagnostics,
+                inspect_artifacts=inspect_artifacts,
+                expected_requires_dist=expected_requires_dist,
+                plugin_manager=plugin_manager,
+                artifact_cache=cache,
             )
-            if provenance.has_provenance and not provenance.verified:
-                raise VerificationError("no attestations were successfully verified")
-        except PypiClientError as exc:
-            if provenance.error is None:
-                provenance.error = str(exc)
+            for item, matched_artifacts in selected_urls
+        ]
+
+    if artifact_executor is not None:
+        return [future.result() for future in submit(artifact_executor)]
+    workers = min(max_workers, max(1, total_files))
+    if workers == 1:
+        return [
+            _collect_file(
+                project,
+                version,
+                item,
+                matched_artifacts,
+                client,
+                diagnostics=diagnostics,
+                inspect_artifacts=inspect_artifacts,
+                expected_requires_dist=expected_requires_dist,
+                plugin_manager=plugin_manager,
+                artifact_cache=cache,
+            )
+            for item, matched_artifacts in selected_urls
+        ]
+    with ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="trustcheck-artifact",
+    ) as executor:
+        return [future.result() for future in submit(executor)]
+
+
+def _collect_file(
+    project: str,
+    version: str,
+    item: Mapping[str, Any],
+    matched_artifacts: Sequence[ArtifactReference],
+    client: PackageClient,
+    *,
+    diagnostics: DiagnosticsCollector | None,
+    inspect_artifacts: bool,
+    expected_requires_dist: list[str] | None,
+    plugin_manager: PluginManager | None,
+    artifact_cache: ArtifactDigestCache,
+) -> FileProvenance:
+    filename = str(item.get("filename") or "")
+    provenance = FileProvenance(
+        filename=filename,
+        url=str(item.get("url") or ""),
+        sha256=_expected_sha256(item, matched_artifacts),
+        has_provenance=False,
+    )
+
+    def download() -> bytes:
+        return artifact_cache.fetch(
+            provenance.url,
+            provenance.sha256,
+            client.download_distribution,
+        )
+
+    artifact_bytes: bytes | None = None
+    download_error: PypiClientError | None = None
+    if any(
+        artifact.hashes or artifact.size is not None
+        for artifact in matched_artifacts
+    ):
+        try:
+            artifact_bytes = download()
+            _verify_locked_artifact(
+                provenance,
+                artifact_bytes,
+                matched_artifacts,
+            )
+        except (PypiClientError, VerificationError) as exc:
+            provenance.error = str(exc)
             if diagnostics is not None:
                 diagnostics.add_artifact_failure(
                     filename=filename,
-                    stage="provenance-fetch",
+                    stage="lockfile-hash",
+                    code=(
+                        exc.code
+                        if isinstance(exc, PypiClientError)
+                        else "verification"
+                    ),
+                    subcode=(
+                        exc.subcode
+                        if isinstance(exc, PypiClientError)
+                        else "lockfile_hash_mismatch"
+                    ),
+                    message=str(exc),
+                )
+    if inspect_artifacts:
+        try:
+            if artifact_bytes is None:
+                artifact_bytes = download()
+            provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+            provenance.artifact = inspect_artifact(
+                filename,
+                artifact_bytes,
+                expected_project=project,
+                expected_version=version,
+                expected_requires_dist=expected_requires_dist,
+            )
+            if plugin_manager is not None:
+                provenance.artifact.heuristic_findings.extend(
+                    plugin_manager.analyze_artifact(
+                        filename=filename,
+                        payload=artifact_bytes,
+                        project=project,
+                        version=version,
+                        inspection=provenance.artifact,
+                    )
+                )
+            if provenance.artifact.error and diagnostics is not None:
+                diagnostics.add_artifact_failure(
+                    filename=filename,
+                    stage="artifact-inspection",
+                    code="artifact",
+                    subcode="archive_invalid",
+                    message=provenance.artifact.error,
+                )
+        except PypiClientError as exc:
+            download_error = exc
+            provenance.artifact.inspected = True
+            if _is_wheel(filename):
+                provenance.artifact.kind = "wheel"
+            elif _is_sdist(filename):
+                provenance.artifact.kind = "sdist"
+            provenance.artifact.error = str(exc)
+            if diagnostics is not None:
+                diagnostics.add_artifact_failure(
+                    filename=filename,
+                    stage="artifact-download",
                     code=exc.code,
                     subcode=exc.subcode,
                     message=str(exc),
                 )
-        except VerificationError as exc:
-            if provenance.error is None:
-                provenance.error = str(exc)
-            if diagnostics is not None:
-                diagnostics.add_artifact_failure(
-                    filename=filename,
-                    stage="verification",
-                    code="verification",
-                    subcode="attestation_verification_failed",
-                    message=str(exc),
+    try:
+        prov_payload = client.get_provenance(project, version, filename)
+        attestation_provenance = Provenance.model_validate(prov_payload)
+        bundles = attestation_provenance.attestation_bundles
+        provenance.has_provenance = bool(bundles)
+        provenance.attestation_count = sum(len(bundle.attestations) for bundle in bundles)
+        provenance.publisher_identities = _parse_publisher_identities(bundles)
+
+        if bundles:
+            if artifact_bytes is None:
+                if download_error is not None:
+                    raise download_error
+                artifact_bytes = download()
+            provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+            if provenance.sha256 and provenance.observed_sha256 != provenance.sha256:
+                raise VerificationError(
+                    "downloaded artifact digest does not match PyPI metadata"
                 )
-        except Exception as exc:
-            if provenance.error is None:
-                provenance.error = f"attestation verification failed: {exc}"
-            if diagnostics is not None:
-                diagnostics.add_artifact_failure(
-                    filename=filename,
-                    stage="verification",
-                    code="verification",
-                    subcode="unexpected_verification_error",
-                    message=str(exc),
-                )
-        results.append(provenance)
-    return results
+
+            dist = AttestedDistribution(
+                name=filename,
+                digest=provenance.observed_sha256,
+            )
+            for bundle in bundles:
+                for attestation in bundle.attestations:
+                    predicate_type, predicate = attestation.verify(
+                        bundle.publisher,
+                        dist,
+                    )
+                    if (
+                        predicate_type == SLSA_PROVENANCE_V1
+                        and predicate is not None
+                    ):
+                        provenance.slsa_provenance.append(
+                            analyze_slsa_provenance(
+                                predicate,
+                                publisher_kind=bundle.publisher.kind,
+                                publisher_repository=getattr(
+                                    bundle.publisher,
+                                    "repository",
+                                    None,
+                                ),
+                                publisher_workflow=(
+                                    getattr(bundle.publisher, "workflow", None)
+                                    or getattr(
+                                        bundle.publisher,
+                                        "workflow_filepath",
+                                        None,
+                                    )
+                                ),
+                            )
+                        )
+                    provenance.verified_attestation_count += 1
+
+        provenance.verified = (
+            provenance.has_provenance
+            and provenance.attestation_count > 0
+            and provenance.verified_attestation_count
+            == provenance.attestation_count
+        )
+        if provenance.has_provenance and not provenance.verified:
+            raise VerificationError("no attestations were successfully verified")
+    except PypiClientError as exc:
+        if provenance.error is None:
+            provenance.error = str(exc)
+        if diagnostics is not None:
+            diagnostics.add_artifact_failure(
+                filename=filename,
+                stage="provenance-fetch",
+                code=exc.code,
+                subcode=exc.subcode,
+                message=str(exc),
+            )
+    except VerificationError as exc:
+        if provenance.error is None:
+            provenance.error = str(exc)
+        if diagnostics is not None:
+            diagnostics.add_artifact_failure(
+                filename=filename,
+                stage="verification",
+                code="verification",
+                subcode="attestation_verification_failed",
+                message=str(exc),
+            )
+    except Exception as exc:
+        if provenance.error is None:
+            provenance.error = f"attestation verification failed: {exc}"
+        if diagnostics is not None:
+            diagnostics.add_artifact_failure(
+                filename=filename,
+                stage="verification",
+                code="verification",
+                subcode="unexpected_verification_error",
+                message=str(exc),
+            )
+    return provenance
 
 
 def _select_expected_artifacts(
     urls: Sequence[dict[str, Any]],
     expected_artifacts: Sequence[ArtifactReference],
+    *,
+    selected_only: bool = False,
 ) -> list[tuple[dict[str, Any], tuple[ArtifactReference, ...]]]:
     if not expected_artifacts:
-        return [(item, ()) for item in urls]
+        available: list[
+            tuple[dict[str, Any], tuple[ArtifactReference, ...]]
+        ] = [(item, ()) for item in urls]
+        if not selected_only or not available:
+            return available
+        return [min(available, key=lambda candidate: _artifact_preference(candidate[0]))]
     selected: list[tuple[dict[str, Any], tuple[ArtifactReference, ...]]] = []
     for item in urls:
         filename = item.get("filename")
@@ -644,6 +859,18 @@ def _select_expected_artifacts(
             "recorded by the lockfile"
         )
     return selected
+
+
+def _artifact_preference(item: Mapping[str, Any]) -> tuple[bool, int, str]:
+    filename = str(item.get("filename") or "")
+    package_type = str(item.get("packagetype") or "")
+    if package_type == "bdist_wheel" or filename.endswith(".whl"):
+        kind = 0
+    elif package_type == "sdist" or _is_sdist(filename):
+        kind = 1
+    else:
+        kind = 2
+    return bool(item.get("yanked")), kind, filename
 
 
 def _artifact_matches_release_file(
@@ -769,6 +996,9 @@ def _inspect_dependencies(
     complete_locked_versions: bool,
     trusted_projects: Sequence[str],
     plugin_manager: PluginManager | None,
+    max_workers: int,
+    artifact_cache: ArtifactDigestCache | None,
+    artifact_executor: Executor | None,
 ) -> list[DependencyInspection]:
     inspections: list[DependencyInspection] = []
     environment: dict[str, str] = {
@@ -799,6 +1029,9 @@ def _inspect_dependencies(
             complete_locked_versions=complete_locked_versions,
             trusted_projects=trusted_projects,
             plugin_manager=plugin_manager,
+            max_workers=max_workers,
+            artifact_cache=artifact_cache,
+            artifact_executor=artifact_executor,
         )
         if inspection is None:
             continue
@@ -833,6 +1066,9 @@ def _inspect_dependency_requirement(
     complete_locked_versions: bool,
     trusted_projects: Sequence[str],
     plugin_manager: PluginManager | None,
+    max_workers: int,
+    artifact_cache: ArtifactDigestCache | None,
+    artifact_executor: Executor | None,
 ) -> tuple[DependencyInspection | None, list[str]]:
     try:
         requirement = Requirement(requirement_text)
@@ -908,6 +1144,9 @@ def _inspect_dependency_requirement(
             complete_locked_versions=complete_locked_versions,
             trusted_projects=trusted_projects,
             plugin_manager=plugin_manager,
+            max_workers=max_workers,
+            artifact_cache=artifact_cache,
+            artifact_executor=artifact_executor,
         )
         if dependency_progress_callback is not None and not nested_report.files:
             dependency_progress_callback(project_name, depth, 100, True)
@@ -2109,6 +2348,9 @@ def _build_release_drift_summary(
     *,
     current_files: list[FileProvenance],
     history: PackageHistoryContext,
+    max_workers: int = 1,
+    artifact_cache: ArtifactDigestCache | None = None,
+    artifact_executor: Executor | None = None,
 ) -> ReleaseDriftSummary:
     previous_version = history.previous_version
     if not previous_version:
@@ -2122,6 +2364,9 @@ def _build_release_drift_summary(
             previous_version,
             dict(history.previous_payload),
             client,
+            max_workers=max_workers,
+            artifact_cache=artifact_cache,
+            artifact_executor=artifact_executor,
         )
     except PypiClientError:
         return ReleaseDriftSummary(compared_to_version=previous_version)
