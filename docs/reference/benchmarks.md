@@ -7,12 +7,12 @@ those two command paths contribute timing or correctness samples.
 The Trustcheck command explicitly uses `--fast`, limiting it to dependency
 resolution and advisory lookup for an apples-to-apples comparison.
 
-The corpus is `benchmarks/corpus/corpus.json`. Version `2026.06` contains 128
+The corpus is `benchmarks/corpus/corpus.json`. Version `2026.06` contains 133
 package entries: 100 mixed clean and historically vulnerable PyPI pins, marker
 and extra cases, private-index inputs, pip-tools and TOML lockfiles, VCS and
-editable dependencies, and intentionally malformed requirements. Timing and
-correctness runs use only cases marked `compare_with_pip_audit`; the remaining
-cases are kept as versioned parser and fail-closed coverage.
+editable dependencies, intentionally malformed requirements, and dedicated
+resolution/profile evidence cases. Direct timing and correctness use only cases
+marked `compare_with_pip_audit`.
 
 Comparable requirements cases audit their declared pins directly. Trustcheck
 and pip-audit both use `--no-deps`, and pip-audit also uses `--disable-pip`, so
@@ -23,7 +23,18 @@ Correctness is alias-aware: advisories match when any normalized `CVE`, `GHSA`,
 `PYSEC`, or provider ID overlaps. The raw unmatched records remain in the JSON
 result so agreement cannot hide feed or normalization differences.
 
-The scheduled benchmark workflow publishes each run as a workflow artifact.
+Separate evidence suites publish complete dependency resolution and Trustcheck
+`standard`/`full` profile results. Every suite records cold-cache and warm-cache
+p50/p95, peak RSS, request samples where the tool reports them, and exact
+commands. Resolution evidence compares complete package/version sets. Advisory
+recall uses the alias-aware union of both tools' findings as its stated
+reference. Profile evidence records how many artifacts had provenance,
+verification, static inspection, native analysis, and heuristic findings.
+Trustcheck request counts come from report diagnostics; `pip-audit` request
+counts are `null` because the tool does not expose that measurement.
+
+The scheduled benchmark workflow publishes the raw JSON as a retained workflow
+artifact and proposes the generated README evidence table through a pull request.
 Local runs default to `benchmarks/results/latest.json`; commit or publish that
 file only when it was regenerated from the current corpus and environment.
 `pip-audit` exits `1` when it finds vulnerabilities; `trustcheck scan` exits

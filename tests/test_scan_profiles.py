@@ -28,6 +28,7 @@ from trustcheck.models import TrustReport
 from trustcheck.plugins import PluginManager
 from trustcheck.policy import PolicySettings
 from trustcheck.pypi import JSON_ACCEPT, PypiClient
+from trustcheck.resolver import TargetEnvironment
 from trustcheck.service import ArtifactDigestCache, inspect_package
 
 
@@ -115,6 +116,13 @@ class ScanProfileTests(unittest.TestCase):
             parser.parse_args(["scan", "demo", "--full"]).scan_profile,
             "full",
         )
+        self.assertEqual(parser.parse_args(["scan", "demo"]).artifact_scope, "target")
+        self.assertEqual(
+            parser.parse_args(
+                ["scan", "demo", "--full", "--artifact-scope", "all"]
+            ).artifact_scope,
+            "all",
+        )
         with self.assertRaises(SystemExit):
             parser.parse_args(["scan", "demo", "--fast", "--full"])
 
@@ -138,8 +146,8 @@ class ScanProfileTests(unittest.TestCase):
         client = ProfileClient(
             [
                 ("demo-1.0.0.tar.gz", self.sdist, False),
-                ("demo-1.0.0.whl", self.wheel, False),
-                ("demo-1.0.0-yanked.whl", self.wheel, True),
+                ("demo-1.0.0-py3-none-any.whl", self.wheel, False),
+                ("demo-1.0.0-py2-none-any.whl", self.wheel, True),
             ]
         )
 
@@ -153,8 +161,14 @@ class ScanProfileTests(unittest.TestCase):
                 artifact_executor=executor,
             )
 
-        self.assertEqual([item.filename for item in report.files], ["demo-1.0.0.whl"])
-        self.assertEqual(client.provenance_calls, ["demo-1.0.0.whl"])
+        self.assertEqual(
+            [item.filename for item in report.files],
+            ["demo-1.0.0-py3-none-any.whl"],
+        )
+        self.assertEqual(
+            client.provenance_calls,
+            ["demo-1.0.0-py3-none-any.whl"],
+        )
         self.assertEqual(client.downloads, [])
         self.assertEqual(client.history_calls, 0)
         self.assertFalse(report.files[0].artifact.inspected)
@@ -173,6 +187,7 @@ class ScanProfileTests(unittest.TestCase):
             version="1.0.0",
             client=client,  # type: ignore[arg-type]
             scan_profile="full",
+            artifact_scope="all",
             max_workers=2,
         )
 
@@ -219,6 +234,7 @@ class ScanProfileTests(unittest.TestCase):
             version="1.0.0",
             client=client,  # type: ignore[arg-type]
             scan_profile="full",
+            artifact_scope="all",
             max_workers=2,
         )
 
@@ -233,6 +249,8 @@ class ScanProfileTests(unittest.TestCase):
             inspect_package("demo", scan_profile="turbo")
         with self.assertRaisesRegex(ValueError, "max_workers"):
             inspect_package("demo", max_workers=0)
+        with self.assertRaisesRegex(ValueError, "artifact_scope"):
+            inspect_package("demo", scan_profile="full", artifact_scope="wheels")
 
         cache = ArtifactDigestCache()
 
@@ -268,6 +286,56 @@ class ScanProfileTests(unittest.TestCase):
 
         self.assertEqual(cache.fetch("three", digest, load), payload)
         self.assertEqual(calls, 1)
+
+    def test_artifact_scopes_filter_for_cross_target_and_sdist_review(self) -> None:
+        client = ProfileClient(
+            [
+                ("demo-1.0.0-cp312-cp312-manylinux_2_28_x86_64.whl", self.wheel, False),
+                ("demo-1.0.0-cp311-cp311-manylinux_2_28_x86_64.whl", self.wheel, False),
+                ("demo-1.0.0.tar.gz", self.sdist, False),
+            ]
+        )
+        target = TargetEnvironment(
+            python_version="3.12",
+            platforms=("manylinux_2_28_x86_64",),
+            implementation="cp",
+            abis=("cp312",),
+        )
+
+        target_report = inspect_package(
+            "demo",
+            version="1.0.0",
+            client=client,  # type: ignore[arg-type]
+            scan_profile="standard",
+            artifact_scope="target",
+            target_environment=target,
+        )
+        sdist_report = inspect_package(
+            "demo",
+            version="1.0.0",
+            client=client,  # type: ignore[arg-type]
+            scan_profile="standard",
+            artifact_scope="sdist",
+            target_environment=target,
+        )
+        all_report = inspect_package(
+            "demo",
+            version="1.0.0",
+            client=client,  # type: ignore[arg-type]
+            scan_profile="standard",
+            artifact_scope="all",
+            target_environment=target,
+        )
+
+        self.assertEqual(
+            [item.filename for item in target_report.files],
+            ["demo-1.0.0-cp312-cp312-manylinux_2_28_x86_64.whl"],
+        )
+        self.assertEqual(
+            [item.filename for item in sdist_report.files],
+            ["demo-1.0.0.tar.gz"],
+        )
+        self.assertEqual(len(all_report.files), 3)
 
     def test_standard_and_full_package_cli_render_complete_reports(self) -> None:
         report = TrustReport(
@@ -365,6 +433,10 @@ class PoolReuseTests(unittest.TestCase):
         self.assertIs(clone.http_pool, pool)
         self.assertEqual(pool.calls[0][1], "https://pypi.org/pypi/demo/json")
         self.assertEqual(JSON_ACCEPT, "application/json")
+
+        without_pool = PypiClient(http_pool=None)
+        with self.assertRaisesRegex(RuntimeError, "not configured"):
+            without_pool._request_from_pool("https://example", {})
 
     def test_pool_http_and_transport_errors_keep_retry_semantics(self) -> None:
         client = PypiClient(max_retries=0)

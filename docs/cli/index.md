@@ -48,8 +48,10 @@ trustcheck --version
 - `--with-transitive-deps`: inspect direct and transitive runtime dependencies recursively
 - `--inspect-artifacts`: statically inspect downloaded wheels and sdists
 - `scan --fast`: resolve dependencies and query advisories only (default)
-- `scan --standard`: add provenance for selected or one preferred artifact
-- `scan --full`: inspect every artifact, native binary, release history, and heuristic signal
+- `scan --standard`: add provenance for artifacts in the selected scope
+- `scan --full`: add static, native-binary, release-history, and heuristic analysis
+- `scan --artifact-scope target|sdist|all`: inspect the best target-compatible
+  install artifact (default), source distributions, or the complete release
 - `--trusted-project NAME`: add a project to the typosquatting reference set;
   repeatable
 - `--strict`: apply the built-in strict policy
@@ -127,10 +129,16 @@ Add selected-artifact provenance without deep archive inspection:
 trustcheck scan -f requirements.txt --standard
 ```
 
-Run every artifact, native-code, history, and heuristic check:
+Run full analysis on the target-compatible install artifact:
 
 ```bash
 trustcheck scan sampleproject --version 4.0.0 --full --max-workers 8
+```
+
+Review the complete release under strict policy:
+
+```bash
+trustcheck scan sampleproject --full --artifact-scope all --strict
 ```
 
 Query OSV in addition to PyPI and show source, severity, fixes, and advisory links:

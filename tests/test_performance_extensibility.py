@@ -93,6 +93,63 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertIn("--no-deps", trustcheck_command)
         self.assertIn("--no-deps", pip_audit_command)
         self.assertIn("--disable-pip", pip_audit_command)
+        resolution_case = namespace["_case_for_role"](corpus, "resolution")
+        profiles_case = namespace["_case_for_role"](corpus, "profiles")
+        self.assertIsNotNone(resolution_case)
+        self.assertIsNotNone(profiles_case)
+        resolution_command = namespace["_trustcheck_command"](
+            resolution_case,
+            max_workers=8,
+            resolve_dependencies=True,
+        )
+        self.assertNotIn("--no-deps", resolution_command)
+
+    def test_benchmark_reports_memory_requests_recall_and_resolver_correctness(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        namespace = runpy.run_path(
+            str(root / "benchmarks" / "benchmark_against_pip_audit.py"),
+            run_name="trustcheck_benchmark_metrics_test",
+        )
+        memory, stderr = namespace["_extract_memory_measurement"](
+            "warning\n__trustcheck_max_rss_kib__=2048\n"
+        )
+        self.assertEqual(memory, 2 * 1024 * 1024)
+        self.assertEqual(stderr, "warning")
+
+        trust_payload = {
+            "reports": [
+                {
+                    "project": "demo",
+                    "version": "1.0",
+                    "diagnostics": {"request_count": 4},
+                    "files": [
+                        {
+                            "has_provenance": True,
+                            "verified": True,
+                            "artifact": {
+                                "inspected": True,
+                                "native_binaries": [{}],
+                                "heuristic_findings": [{}, {}],
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        pip_payload = {"dependencies": [{"name": "demo", "version": "1.0"}]}
+        self.assertEqual(namespace["_reported_request_count"](trust_payload), 4)
+        self.assertTrue(
+            namespace["_compare_resolutions"](trust_payload, pip_payload)["exact_match"]
+        )
+        work = namespace["_profile_work_summary"](trust_payload)
+        self.assertEqual(work["inspected_artifacts"], 1)
+        self.assertEqual(work["native_binaries"], 1)
+        self.assertEqual(work["heuristic_findings"], 2)
+
+        findings = {("demo", "1.0"): [{"GHSA-DEMO", "CVE-2026-1"}]}
+        correctness = namespace["_compare_findings"](findings, {})
+        self.assertEqual(correctness["advisory_recall"]["trustcheck"], 1.0)
+        self.assertEqual(correctness["advisory_recall"]["pip_audit"], 0.0)
 
     def test_benchmark_retries_empty_output_and_reports_stderr(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -186,8 +243,20 @@ class BenchmarkPublicationTests(unittest.TestCase):
                 "benchmark_package_count": 123,
             },
             "performance": {
-                "trustcheck": {"median_seconds": 1.234, "p95_seconds": 2.345},
-                "pip_audit": {"median_seconds": 3.456, "p95_seconds": 4.567},
+                "trustcheck": {
+                    "cold": {"p50_seconds": 2.0},
+                    "p50_seconds": 1.234,
+                    "p95_seconds": 2.345,
+                    "peak_memory_bytes": 104857600,
+                    "request_count_p50": 12,
+                },
+                "pip_audit": {
+                    "cold": {"p50_seconds": 5.0},
+                    "p50_seconds": 3.456,
+                    "p95_seconds": 4.567,
+                    "peak_memory_bytes": 209715200,
+                    "request_count_p50": None,
+                },
             },
             "correctness": {
                 "trustcheck_vulnerable_packages": 7,
@@ -195,6 +264,16 @@ class BenchmarkPublicationTests(unittest.TestCase):
                 "alias_aware_agreement": True,
                 "packages_compared": 123,
                 "matched_advisories": 9,
+                "advisory_recall": {"trustcheck": 1.0, "pip_audit": 0.9},
+            },
+            "evidence": {
+                "dependency_resolution": {
+                    "resolver_correctness": {
+                        "exact_match": True,
+                        "trustcheck_package_count": 14,
+                        "pip_audit_package_count": 14,
+                    }
+                }
             },
         }
 
@@ -209,8 +288,17 @@ class BenchmarkPublicationTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertLess(updated.index("## Latest benchmark"), updated.index("## Installation"))
-        self.assertIn("| trustcheck scan | 1.23 s | 2.35 s | 7 |", updated)
-        self.assertIn("| pip-audit | 3.46 s | 4.57 s | 7 |", updated)
+        self.assertIn(
+            "| trustcheck scan --fast | 2.00 s | 1.23 s | 2.35 s | "
+            "100.0 MiB | 12 | 1 |",
+            updated,
+        )
+        self.assertIn(
+            "| pip-audit | 5.00 s | 3.46 s | 4.57 s | 200.0 MiB | "
+            "unknown | 0.9 |",
+            updated,
+        )
+        self.assertIn("Resolver exact match: `True`", updated)
 
     def test_benchmark_workflow_publishes_results_through_pull_request(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -227,6 +315,8 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertIn("uses: actions/checkout@v6", workflow)
         self.assertIn("ref: ${{ github.ref_name }}", workflow)
         self.assertIn("--output benchmarks/results/latest.json", workflow)
+        self.assertIn("--evidence-iterations 3", workflow)
+        self.assertIn("retention-days: 90", workflow)
         self.assertIn("python scripts/update_benchmark_table.py", workflow)
         self.assertIn("git add README.md benchmarks/results/latest.json", workflow)
         self.assertIn("git commit -m \"Update benchmark results\"", workflow)

@@ -49,6 +49,16 @@ def _render_table(payload: dict[str, Any]) -> str:
     trustcheck = _tool_performance(performance, "trustcheck")
     pip_audit = _tool_performance(performance, "pip_audit")
     agreement = correctness.get("alias_aware_agreement")
+    recall = correctness.get("advisory_recall")
+    recall = recall if isinstance(recall, dict) else {}
+    evidence = payload.get("evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    resolution = evidence.get("dependency_resolution")
+    resolution = resolution if isinstance(resolution, dict) else {}
+    resolver_correctness = resolution.get("resolver_correctness")
+    resolver_correctness = (
+        resolver_correctness if isinstance(resolver_correctness, dict) else {}
+    )
     matched = correctness.get("matched_advisories")
     packages = correctness.get("packages_compared")
     corpus_version = corpus.get("version") or "unknown"
@@ -67,22 +77,35 @@ def _render_table(payload: dict[str, Any]) -> str:
                 "package entries."
             ),
             "",
-            "| Tool | Median | p95 | Vulnerable packages |",
-            "| --- | ---: | ---: | ---: |",
+            "| Tool | Cold p50 | Warm p50 | Warm p95 | Peak RSS | Requests p50 | Recall |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
             (
-                f"| trustcheck scan | {_seconds(trustcheck.get('median_seconds'))} | "
+                f"| trustcheck scan --fast | "
+                f"{_seconds(_cold_value(trustcheck, 'p50_seconds'))} | "
+                f"{_seconds(trustcheck.get('p50_seconds') or trustcheck.get('median_seconds'))} | "
                 f"{_seconds(trustcheck.get('p95_seconds'))} | "
-                f"{correctness.get('trustcheck_vulnerable_packages', 'unknown')} |"
+                f"{_memory(trustcheck.get('peak_memory_bytes'))} | "
+                f"{_number(trustcheck.get('request_count_p50'))} | "
+                f"{_number(recall.get('trustcheck'))} |"
             ),
             (
-                f"| pip-audit | {_seconds(pip_audit.get('median_seconds'))} | "
+                f"| pip-audit | {_seconds(_cold_value(pip_audit, 'p50_seconds'))} | "
+                f"{_seconds(pip_audit.get('p50_seconds') or pip_audit.get('median_seconds'))} | "
                 f"{_seconds(pip_audit.get('p95_seconds'))} | "
-                f"{correctness.get('pip_audit_vulnerable_packages', 'unknown')} |"
+                f"{_memory(pip_audit.get('peak_memory_bytes'))} | "
+                f"{_number(pip_audit.get('request_count_p50'))} | "
+                f"{_number(recall.get('pip_audit'))} |"
             ),
             "",
             (
                 f"Alias-aware agreement: `{agreement}` across `{packages}` compared "
                 f"packages and `{matched}` matched advisories."
+            ),
+            (
+                "Resolver exact match: "
+                f"`{resolver_correctness.get('exact_match', 'not measured')}` "
+                f"(trustcheck `{resolver_correctness.get('trustcheck_package_count', 'unknown')}`, "
+                f"pip-audit `{resolver_correctness.get('pip_audit_package_count', 'unknown')}`)."
             ),
             END_MARKER,
             "",
@@ -103,6 +126,23 @@ def _tool_performance(
 def _seconds(value: object) -> str:
     if isinstance(value, (int, float)):
         return f"{value:.2f} s"
+    return "unknown"
+
+
+def _cold_value(performance: dict[str, Any], key: str) -> object:
+    cold = performance.get("cold")
+    return cold.get(key) if isinstance(cold, dict) else None
+
+
+def _memory(value: object) -> str:
+    if isinstance(value, (int, float)):
+        return f"{value / (1024 * 1024):.1f} MiB"
+    return "unknown"
+
+
+def _number(value: object) -> str:
+    if isinstance(value, (int, float)):
+        return f"{value:.3f}".rstrip("0").rstrip(".")
     return "unknown"
 
 

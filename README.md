@@ -172,16 +172,20 @@ Show only known vulnerabilities for a release:
 trustcheck scan sampleproject --version 4.0.0 --fast
 ```
 
-Scan profiles make the amount of work explicit. `--fast` (the default) performs
-dependency resolution and advisory lookup only. `--standard` adds provenance
-for lock-selected artifacts, or one preferred non-yanked wheel/sdist when no
-artifact is pinned. `--full` inspects every release artifact, including native
-binaries, release history, and malicious-package heuristics.
+Scan profiles make the analysis depth explicit. `--fast` (the default) performs
+dependency resolution and advisory lookup only. `--standard` adds provenance,
+while `--full` adds static archives, native binaries, release history, and
+malicious-package heuristics. Artifact breadth defaults to the best compatible
+wheel for the requested target, with an sdist fallback.
 
 ```bash
 trustcheck scan -f requirements.txt --standard
 trustcheck scan sampleproject --version 4.0.0 --full --max-workers 8
+trustcheck scan sampleproject --full --artifact-scope all --strict
 ```
+
+Use `--artifact-scope sdist` for source review or `--artifact-scope all` for a
+strict whole-release review.
 
 Enrich vulnerability intelligence with OSV and GitHub Advisory Database data:
 

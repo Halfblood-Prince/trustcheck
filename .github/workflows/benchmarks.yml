@@ -23,7 +23,7 @@ jobs:
   pip-audit-comparison:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
         with:
@@ -38,6 +38,7 @@ jobs:
           python benchmarks/benchmark_against_pip_audit.py
           --warmups 1
           --iterations 5
+          --evidence-iterations 3
           --output benchmarks/results/latest.json
       - run: >-
           python scripts/update_benchmark_table.py
@@ -48,6 +49,7 @@ jobs:
           name: trustcheck-pip-audit-benchmark-${{ github.sha }}
           path: benchmarks/results/latest.json
           if-no-files-found: error
+          retention-days: 90
       - name: Open benchmark result pull request
         env:
           GH_TOKEN: ${{ github.token }}

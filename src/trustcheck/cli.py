@@ -326,7 +326,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_const",
         const="standard",
         dest="scan_profile",
-        help="Add provenance checks for lock-selected or one preferred artifact.",
+        help="Add provenance checks for artifacts in the selected scope.",
     )
     scan_profile.add_argument(
         "--full",
@@ -334,11 +334,20 @@ def build_parser() -> argparse.ArgumentParser:
         const="full",
         dest="scan_profile",
         help=(
-            "Inspect every release artifact, native binary, release history, "
-            "and heuristic signal."
+            "Add static archives, native binaries, release history, and "
+            "heuristic analysis for artifacts in the selected scope."
         ),
     )
     scan_parser.set_defaults(scan_profile="fast")
+    scan_parser.add_argument(
+        "--artifact-scope",
+        choices=("target", "sdist", "all"),
+        default="target",
+        help=(
+            "Choose target-compatible install artifact (default), source "
+            "distributions, or every release artifact."
+        ),
+    )
     remediation_mode = scan_parser.add_mutually_exclusive_group()
     remediation_mode.add_argument(
         "--plan-fixes",
@@ -1282,9 +1291,11 @@ def _run_scan_targets(
                 trusted_projects=getattr(args, "trusted_project", ()),
                 plugin_manager=plugin_manager,
                 scan_profile=getattr(args, "scan_profile", None),
+                artifact_scope=getattr(args, "artifact_scope", None),
                 max_workers=args.max_workers,
                 artifact_cache=artifact_cache,
                 artifact_executor=artifact_executor,
+                target_environment=_target_environment_from_args(args),
             )
             evaluation = evaluate_policy(
                 report,
@@ -1531,6 +1542,7 @@ def _scan_project_vulnerabilities(
         dependency_confusion_indexes=dependency_confusion_indexes,
         plugin_manager=plugin_manager,
         scan_profile=args.scan_profile,
+        artifact_scope=args.artifact_scope,
         max_workers=args.max_workers,
     )
     evaluate_policy(report, policy, plugin_manager=plugin_manager)
@@ -2136,6 +2148,7 @@ def _build_scan_state(
             "policy": asdict(policy),
             "options": {
                 "scan_profile": getattr(args, "scan_profile", None),
+                "artifact_scope": getattr(args, "artifact_scope", None),
                 "with_deps": getattr(args, "with_deps", False),
                 "with_transitive_deps": getattr(args, "with_transitive_deps", False),
                 "inspect_artifacts": getattr(args, "inspect_artifacts", False),

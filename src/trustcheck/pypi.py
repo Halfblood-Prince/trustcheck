@@ -250,8 +250,10 @@ class PypiClient:
         url: str,
         headers: dict[str, str],
     ) -> tuple[bytes, int]:
-        assert self.http_pool is not None
-        response = self.http_pool.request(
+        pool = self.http_pool
+        if pool is None:
+            raise RuntimeError("HTTP connection pool is not configured")
+        response = pool.request(
             "GET",
             url,
             headers=headers,

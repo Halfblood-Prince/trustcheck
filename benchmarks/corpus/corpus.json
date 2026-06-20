@@ -22,6 +22,26 @@
       "description": "PEP 508 markers and extras that should be interpreted consistently by both tools."
     },
     {
+      "id": "dependency-resolution",
+      "path": "requirements-resolution.txt",
+      "kind": "requirements",
+      "category": "dependency-resolution",
+      "package_count": 3,
+      "compare_with_pip_audit": false,
+      "benchmark_roles": ["resolution"],
+      "description": "Compatible modern roots used for complete resolver correctness and performance evidence."
+    },
+    {
+      "id": "scan-profiles",
+      "path": "requirements-profiles.txt",
+      "kind": "requirements",
+      "category": "profile-evidence",
+      "package_count": 2,
+      "compare_with_pip_audit": false,
+      "benchmark_roles": ["profiles"],
+      "description": "Small direct-pin workload for selected-artifact provenance and static inspection evidence."
+    },
+    {
       "id": "private-indexes",
       "path": "requirements-private-index.txt",
       "kind": "requirements",

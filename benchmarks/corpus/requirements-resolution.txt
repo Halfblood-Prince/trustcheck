@@ -1,0 +1,4 @@
+# Compatible roots used to compare complete pip dependency resolution.
+requests[socks]==2.32.3
+flask==3.0.3
+httpx[http2]==0.27.0

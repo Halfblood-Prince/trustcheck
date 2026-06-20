@@ -24,6 +24,16 @@ The same setting is available as `TRUSTCHECK_MAX_WORKERS`,
 `performance.max_workers` in the JSON config file, and the GitHub Action
 `max-workers` input.
 
+## Artifact scope
+
+`scan` defaults to `--artifact-scope target`. Trustcheck ranks wheel tags for
+the requested Python, ABI, implementation, and platform, inspects the best
+compatible non-yanked wheel, and falls back to one sdist when no compatible
+wheel exists. This avoids downloading artifacts the target cannot install.
+
+Use `--artifact-scope sdist` for source-only review. Use
+`--full --artifact-scope all` when reviewing every file published for a release.
+
 ## OSV batch queries
 
 Multi-package scans use OSV `/v1/querybatch` in chunks of at most 1,000

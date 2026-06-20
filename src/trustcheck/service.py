@@ -13,7 +13,16 @@ from urllib.parse import urlparse
 
 from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
-from packaging.utils import canonicalize_name
+from packaging.tags import (
+    Tag,
+    compatible_tags,
+    cpython_tags,
+    generic_tags,
+    interpreter_name,
+    interpreter_version,
+    sys_tags,
+)
+from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 from packaging.version import InvalidVersion, Version
 
 from .advisories import (
@@ -125,7 +134,6 @@ SCAN_PROFILE_NAMES = ("fast", "standard", "full")
 class ScanProfile:
     name: str
     collect_provenance: bool
-    selected_artifacts_only: bool
     inspect_artifacts: bool
     release_history: bool
     heuristics: bool
@@ -135,7 +143,6 @@ SCAN_PROFILES = {
     "fast": ScanProfile(
         name="fast",
         collect_provenance=False,
-        selected_artifacts_only=True,
         inspect_artifacts=False,
         release_history=False,
         heuristics=False,
@@ -143,7 +150,6 @@ SCAN_PROFILES = {
     "standard": ScanProfile(
         name="standard",
         collect_provenance=True,
-        selected_artifacts_only=True,
         inspect_artifacts=False,
         release_history=False,
         heuristics=False,
@@ -151,7 +157,6 @@ SCAN_PROFILES = {
     "full": ScanProfile(
         name="full",
         collect_provenance=True,
-        selected_artifacts_only=False,
         inspect_artifacts=True,
         release_history=True,
         heuristics=True,
@@ -300,6 +305,13 @@ def _resolve_scan_profile(name: str | None) -> ScanProfile | None:
         ) from exc
 
 
+def _resolve_artifact_scope(scope: str | None, profile: ScanProfile | None) -> str:
+    resolved = scope or ("target" if profile is not None else "all")
+    if resolved not in {"target", "sdist", "all"}:
+        raise ValueError("artifact_scope must be target, sdist, or all")
+    return resolved
+
+
 def inspect_package(
     project: str,
     *,
@@ -325,12 +337,14 @@ def inspect_package(
     trusted_projects: Sequence[str] = (),
     plugin_manager: PluginManager | None = None,
     scan_profile: str | None = None,
+    artifact_scope: str | None = None,
     max_workers: int = 1,
     artifact_cache: ArtifactDigestCache | None = None,
     artifact_executor: Executor | None = None,
     _dependency_context: DependencyTraversalContext | None = None,
 ) -> TrustReport:
     profile = _resolve_scan_profile(scan_profile)
+    resolved_artifact_scope = _resolve_artifact_scope(artifact_scope, profile)
     if max_workers < 1:
         raise ValueError("max_workers must be at least 1")
     if profile is not None:
@@ -444,9 +458,8 @@ def inspect_package(
             expected_requires_dist=declared_dependencies,
             expected_artifacts=expected_artifacts,
             plugin_manager=plugin_manager,
-            selected_artifacts_only=(
-                profile.selected_artifacts_only if profile is not None else False
-            ),
+            artifact_scope=resolved_artifact_scope,
+            target_environment=target_environment,
             max_workers=max_workers,
             artifact_cache=artifact_cache,
             artifact_executor=artifact_executor,
@@ -488,6 +501,8 @@ def inspect_package(
                 max_workers=max_workers,
                 artifact_cache=artifact_cache,
                 artifact_executor=artifact_executor,
+                artifact_scope=resolved_artifact_scope,
+                target_environment=target_environment,
             ),
             malicious_package=(
                 assess_package(
@@ -550,7 +565,8 @@ def _collect_files(
     expected_requires_dist: list[str] | None = None,
     expected_artifacts: Sequence[ArtifactReference] = (),
     plugin_manager: PluginManager | None = None,
-    selected_artifacts_only: bool = False,
+    artifact_scope: str = "all",
+    target_environment: TargetEnvironment | None = None,
     max_workers: int = 1,
     artifact_cache: ArtifactDigestCache | None = None,
     artifact_executor: Executor | None = None,
@@ -559,7 +575,8 @@ def _collect_files(
     selected_urls = _select_expected_artifacts(
         urls,
         expected_artifacts,
-        selected_only=selected_artifacts_only,
+        artifact_scope=artifact_scope,
+        target_environment=target_environment,
     )
     cache = artifact_cache or ArtifactDigestCache()
     total_files = len(selected_urls)
@@ -818,47 +835,135 @@ def _select_expected_artifacts(
     urls: Sequence[dict[str, Any]],
     expected_artifacts: Sequence[ArtifactReference],
     *,
-    selected_only: bool = False,
+    artifact_scope: str = "all",
+    target_environment: TargetEnvironment | None = None,
 ) -> list[tuple[dict[str, Any], tuple[ArtifactReference, ...]]]:
     if not expected_artifacts:
         available: list[
             tuple[dict[str, Any], tuple[ArtifactReference, ...]]
         ] = [(item, ()) for item in urls]
-        if not selected_only or not available:
-            return available
-        return [min(available, key=lambda candidate: _artifact_preference(candidate[0]))]
-    selected: list[tuple[dict[str, Any], tuple[ArtifactReference, ...]]] = []
-    for item in urls:
-        filename = item.get("filename")
-        url = item.get("url")
-        digests = item.get("digests")
-        release_hashes = (
-            {
-                str(algorithm).lower(): str(digest).lower()
-                for algorithm, digest in digests.items()
-                if digest is not None
-            }
-            if isinstance(digests, dict)
-            else {}
-        )
-        matches = tuple(
-            artifact
-            for artifact in expected_artifacts
-            if _artifact_matches_release_file(
-                artifact,
-                filename=filename,
-                url=url,
-                release_hashes=release_hashes,
+    else:
+        available = []
+        for item in urls:
+            filename = item.get("filename")
+            url = item.get("url")
+            digests = item.get("digests")
+            release_hashes = (
+                {
+                    str(algorithm).lower(): str(digest).lower()
+                    for algorithm, digest in digests.items()
+                    if digest is not None
+                }
+                if isinstance(digests, dict)
+                else {}
             )
+            matches = tuple(
+                artifact
+                for artifact in expected_artifacts
+                if _artifact_matches_release_file(
+                    artifact,
+                    filename=filename,
+                    url=url,
+                    release_hashes=release_hashes,
+                )
+            )
+            if matches:
+                available.append((item, matches))
+        if not available:
+            raise ValueError(
+                "none of the release artifacts match the filenames, URLs, or hashes "
+                "recorded by the lockfile"
+            )
+    return _artifacts_in_scope(
+        available,
+        artifact_scope=artifact_scope,
+        target_environment=target_environment,
+    )
+
+
+def _artifacts_in_scope(
+    available: list[tuple[dict[str, Any], tuple[ArtifactReference, ...]]],
+    *,
+    artifact_scope: str,
+    target_environment: TargetEnvironment | None,
+) -> list[tuple[dict[str, Any], tuple[ArtifactReference, ...]]]:
+    if artifact_scope == "all":
+        return available
+    sdists = [candidate for candidate in available if _is_sdist(_filename(candidate[0]))]
+    if artifact_scope == "sdist":
+        return sdists
+
+    tag_order = {
+        tag: index
+        for index, tag in enumerate(_target_compatible_tags(target_environment))
+    }
+    compatible_wheels = [
+        (candidate, _wheel_compatibility_rank(_filename(candidate[0]), tag_order))
+        for candidate in available
+        if _is_wheel(_filename(candidate[0]))
+    ]
+    compatible_wheels = [
+        (candidate, rank)
+        for candidate, rank in compatible_wheels
+        if rank is not None
+    ]
+    if compatible_wheels:
+        candidate, _ = min(
+            compatible_wheels,
+            key=lambda ranked: (
+                bool(ranked[0][0].get("yanked")),
+                ranked[1],
+                _filename(ranked[0][0]),
+            ),
         )
-        if matches:
-            selected.append((item, matches))
-    if not selected:
-        raise ValueError(
-            "none of the release artifacts match the filenames, URLs, or hashes "
-            "recorded by the lockfile"
-        )
-    return selected
+        return [candidate]
+    if sdists:
+        return [min(sdists, key=lambda candidate: _artifact_preference(candidate[0]))]
+    return []
+
+
+def _target_compatible_tags(target: TargetEnvironment | None) -> tuple[Tag, ...]:
+    if target is None or not target.is_cross_target:
+        return tuple(sys_tags())
+    version_text = target.python_version or interpreter_version()
+    version_parts = version_text.split(".")
+    python_version = tuple(int(part) for part in version_parts[:2])
+    implementation = target.implementation or interpreter_name()
+    interpreter = f"{implementation}{''.join(str(part) for part in python_version)}"
+    platforms = target.platforms or None
+    abis = target.abis or None
+    primary = (
+        cpython_tags(python_version, abis=abis, platforms=platforms)
+        if implementation == "cp"
+        else generic_tags(interpreter, abis=abis, platforms=platforms)
+    )
+    ordered: list[Tag] = []
+    seen: set[Tag] = set()
+    for tag in (
+        *primary,
+        *compatible_tags(
+            python_version,
+            interpreter=interpreter,
+            platforms=platforms,
+        ),
+    ):
+        if tag not in seen:
+            ordered.append(tag)
+            seen.add(tag)
+    return tuple(ordered)
+
+
+def _wheel_compatibility_rank(filename: str, tag_order: Mapping[Tag, int]) -> int | None:
+    try:
+        _, _, _, wheel_tags = parse_wheel_filename(filename)
+    except InvalidWheelFilename:
+        return None
+    ranks = [tag_order[tag] for tag in wheel_tags if tag in tag_order]
+    return min(ranks) if ranks else None
+
+
+def _filename(item: Mapping[str, Any]) -> str:
+    return str(item.get("filename") or "")
 
 
 def _artifact_preference(item: Mapping[str, Any]) -> tuple[bool, int, str]:
@@ -2351,6 +2456,8 @@ def _build_release_drift_summary(
     max_workers: int = 1,
     artifact_cache: ArtifactDigestCache | None = None,
     artifact_executor: Executor | None = None,
+    artifact_scope: str = "all",
+    target_environment: TargetEnvironment | None = None,
 ) -> ReleaseDriftSummary:
     previous_version = history.previous_version
     if not previous_version:
@@ -2367,6 +2474,8 @@ def _build_release_drift_summary(
             max_workers=max_workers,
             artifact_cache=artifact_cache,
             artifact_executor=artifact_executor,
+            artifact_scope=artifact_scope,
+            target_environment=target_environment,
         )
     except PypiClientError:
         return ReleaseDriftSummary(compared_to_version=previous_version)
