@@ -201,7 +201,7 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertIn("| Trustcheck | 1.23 s | 2.35 s | 7 |", updated)
         self.assertIn("| pip-audit | 3.46 s | 4.57 s | 7 |", updated)
 
-    def test_benchmark_workflow_commits_readme_table_and_latest_result(self) -> None:
+    def test_benchmark_workflow_publishes_results_through_pull_request(self) -> None:
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github" / "workflows" / "benchmarks.yml").read_text(
             encoding="utf-8"
@@ -210,12 +210,23 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertIn("push:", workflow)
         self.assertIn("if: github.actor != 'github-actions[bot]'", workflow)
         self.assertIn("contents: write", workflow)
+        self.assertIn("pull-requests: write", workflow)
+        self.assertIn("paths-ignore:", workflow)
+        self.assertIn("group: benchmark-results", workflow)
         self.assertIn("uses: actions/checkout@v6", workflow)
         self.assertIn("ref: ${{ github.ref_name }}", workflow)
         self.assertIn("--output benchmarks/results/latest.json", workflow)
         self.assertIn("python scripts/update_benchmark_table.py", workflow)
         self.assertIn("git add README.md benchmarks/results/latest.json", workflow)
         self.assertIn("git commit -m \"Update benchmark results\"", workflow)
+        self.assertIn('branch="automation/benchmark-results"', workflow)
+        self.assertIn("git push --force-with-lease", workflow)
+        self.assertIn("gh pr create", workflow)
+        self.assertIn("gh pr edit", workflow)
+        self.assertLess(
+            workflow.index("uses: actions/upload-artifact@v7"),
+            workflow.index("name: Open benchmark result pull request"),
+        )
 
 
 def _report(project: str, version: str) -> TrustReport:

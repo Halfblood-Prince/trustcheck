@@ -4,12 +4,20 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - README.md
+      - benchmarks/results/latest.json
   workflow_dispatch:
   schedule:
     - cron: "17 4 * * 1"
 
 permissions:
   contents: write
+  pull-requests: write
+
+concurrency:
+  group: benchmark-results
+  cancel-in-progress: false
 
 jobs:
   pip-audit-comparison:
@@ -35,7 +43,14 @@ jobs:
           python scripts/update_benchmark_table.py
           benchmarks/results/latest.json
           --readme README.md
-      - name: Commit benchmark result
+      - uses: actions/upload-artifact@v7
+        with:
+          name: trustcheck-pip-audit-benchmark-${{ github.sha }}
+          path: benchmarks/results/latest.json
+          if-no-files-found: error
+      - name: Open benchmark result pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -43,11 +58,29 @@ jobs:
           if git diff --cached --quiet; then
             echo "Benchmark table is already up to date."
           else
+            branch="automation/benchmark-results"
+            git fetch --no-tags origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" || true
+            git switch -c "$branch"
             git commit -m "Update benchmark results"
-            git push
+            git push --force-with-lease origin "HEAD:refs/heads/${branch}"
+
+            title="Update benchmark results"
+            body="Automated benchmark results generated from commit ${GITHUB_SHA}."
+            pr_number="$(
+              gh pr list \
+                --base main \
+                --head "$branch" \
+                --state open \
+                --json number \
+                --jq '.[0].number'
+            )"
+            if [[ -n "$pr_number" ]]; then
+              gh pr edit "$pr_number" --title "$title" --body "$body"
+            else
+              gh pr create \
+                --base main \
+                --head "$branch" \
+                --title "$title" \
+                --body "$body"
+            fi
           fi
-      - uses: actions/upload-artifact@v7
-        with:
-          name: trustcheck-pip-audit-benchmark-${{ github.sha }}
-          path: benchmarks/results/latest.json
-          if-no-files-found: error
