@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import runpy
+import subprocess
 import threading
 import time
 import unittest
@@ -81,6 +82,51 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertIn("--no-deps", trustcheck_command)
         self.assertIn("--no-deps", pip_audit_command)
         self.assertIn("--disable-pip", pip_audit_command)
+
+    def test_benchmark_retries_empty_output_and_reports_stderr(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        namespace = runpy.run_path(
+            str(root / "benchmarks" / "benchmark_against_pip_audit.py"),
+            run_name="trustcheck_benchmark_test",
+        )
+        command = ["python", "-m", "trustcheck"]
+        empty = subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr="OSV temporarily unavailable",
+        )
+        success = subprocess.CompletedProcess(
+            command,
+            0,
+            stdout='{"ok": true}',
+            stderr="",
+        )
+
+        with patch("subprocess.run", side_effect=[empty, success]) as run, patch(
+            "time.sleep"
+        ) as sleep:
+            result = namespace["_run"](
+                command,
+                timeout=1,
+                accepted_exit_codes={0, 1},
+                command_retries=1,
+            )
+
+        self.assertEqual(result.payload, {"ok": True})
+        self.assertEqual(run.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+        with patch("subprocess.run", return_value=empty), self.assertRaisesRegex(
+            RuntimeError,
+            "OSV temporarily unavailable",
+        ):
+            namespace["_run"](
+                command,
+                timeout=1,
+                accepted_exit_codes={0, 1},
+                command_retries=0,
+            )
 
     def test_redacts_local_paths(self) -> None:
         root = Path(__file__).resolve().parents[1]

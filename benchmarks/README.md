@@ -28,6 +28,7 @@ python benchmarks/benchmark_against_pip_audit.py \
 
 Results include exact commands, tool and platform versions, corpus digest,
 selected case metadata, individual timing samples, median and p95 wall time,
-and all unmatched advisories. Network, resolver behavior, and advisory
-databases change, so compare results only when the corpus digest, services, and
-environment are equivalent.
+and all unmatched advisories. Commands that return an accepted exit code but
+no output are retried twice by default; retry time remains part of the timing
+sample. Network, resolver behavior, and advisory databases change, so compare
+results only when the corpus digest, services, and environment are equivalent.

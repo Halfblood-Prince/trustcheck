@@ -73,14 +73,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=300.0)
+    parser.add_argument(
+        "--command-retries",
+        type=int,
+        default=2,
+        help="Retry accepted-exit commands that emit no output.",
+    )
     parser.add_argument("--max-workers", type=int, default=8)
     parser.add_argument(
         "--output",
         default="benchmarks/results/latest.json",
     )
     args = parser.parse_args(argv)
-    if args.iterations < 1 or args.warmups < 0:
-        parser.error("iterations must be positive and warmups cannot be negative")
+    if args.iterations < 1 or args.warmups < 0 or args.command_retries < 0:
+        parser.error(
+            "iterations must be positive; warmups and command retries "
+            "cannot be negative"
+        )
 
     corpus = (
         _legacy_corpus(Path(args.requirements).resolve())
@@ -105,11 +114,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             trustcheck_commands,
             timeout=args.timeout,
             accepted_exit_codes={0, 1, 4},
+            command_retries=args.command_retries,
         )
         _run_suite(
             pip_audit_commands,
             timeout=args.timeout,
             accepted_exit_codes={0, 1},
+            command_retries=args.command_retries,
         )
 
     trustcheck_runs = [
@@ -117,6 +128,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             trustcheck_commands,
             timeout=args.timeout,
             accepted_exit_codes={0, 1, 4},
+            command_retries=args.command_retries,
         )
         for _ in range(args.iterations)
     ]
@@ -125,6 +137,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             pip_audit_commands,
             timeout=args.timeout,
             accepted_exit_codes={0, 1},
+            command_retries=args.command_retries,
         )
         for _ in range(args.iterations)
     ]
@@ -149,6 +162,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "iterations": args.iterations,
             "warmups": args.warmups,
             "timeout_seconds": args.timeout,
+            "command_retries": args.command_retries,
             "max_workers": args.max_workers,
             "advisory_service": "OSV",
             "selected_cases": [case.case_id for case in benchmark_cases],
@@ -333,6 +347,7 @@ def _run_suite(
     *,
     timeout: float,
     accepted_exit_codes: set[int],
+    command_retries: int,
 ) -> RunResult:
     started = time.perf_counter()
     payloads = []
@@ -342,6 +357,7 @@ def _run_suite(
             command,
             timeout=timeout,
             accepted_exit_codes=accepted_exit_codes,
+            command_retries=command_retries,
         )
         exit_code = max(exit_code, result.exit_code)
         payloads.append(result.payload)
@@ -357,34 +373,47 @@ def _run(
     *,
     timeout: float,
     accepted_exit_codes: set[int],
+    command_retries: int,
 ) -> RunResult:
     started = time.perf_counter()
-    completed = subprocess.run(  # nosec B603
-        list(command),
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=timeout,
-        env={**os.environ, "PYTHONUTF8": "1"},
-    )
-    elapsed = time.perf_counter() - started
-    if completed.returncode not in accepted_exit_codes:
-        raise RuntimeError(
-            f"command failed with exit code {completed.returncode}: "
-            f"{' '.join(command)}\n{completed.stderr.strip()}"
+    for attempt in range(command_retries + 1):
+        completed = subprocess.run(  # nosec B603
+            list(command),
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout,
+            env={**os.environ, "PYTHONUTF8": "1"},
         )
-    try:
-        payload = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
+        if completed.returncode not in accepted_exit_codes:
+            raise RuntimeError(
+                f"command failed with exit code {completed.returncode}: "
+                f"{' '.join(command)}\n{completed.stderr.strip()}"
+            )
+        if completed.stdout.strip():
+            try:
+                payload = json.loads(completed.stdout)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    "command emitted invalid JSON with exit code "
+                    f"{completed.returncode}: {' '.join(command)}\n"
+                    f"stdout:\n{completed.stdout[:500]}\n"
+                    f"stderr:\n{completed.stderr[:500]}"
+                ) from exc
+            return RunResult(
+                seconds=time.perf_counter() - started,
+                exit_code=completed.returncode,
+                payload=payload,
+            )
+        if attempt < command_retries:
+            time.sleep(2**attempt)
+            continue
         raise RuntimeError(
-            f"command did not emit JSON: {' '.join(command)}\n"
-            f"{completed.stdout[:500]}"
-        ) from exc
-    return RunResult(
-        seconds=elapsed,
-        exit_code=completed.returncode,
-        payload=payload,
-    )
+            f"command emitted no JSON after {attempt + 1} attempt(s) "
+            f"with exit code {completed.returncode}: {' '.join(command)}\n"
+            f"stderr:\n{completed.stderr[:2000]}"
+        )
+    raise AssertionError("unreachable")
 
 
 def _trustcheck_findings(

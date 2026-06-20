@@ -25,6 +25,8 @@ Local runs default to `benchmarks/results/latest.json`; commit or publish that
 file only when it was regenerated from the current corpus and environment.
 `pip-audit` exits `1` when it finds vulnerabilities; Trustcheck exits `0` here
 because the benchmark intentionally uses its default non-blocking policy.
+Commands that return an accepted exit code but no output are retried twice;
+the result records this setting and includes retry time in the timing sample.
 
 ```bash
 python benchmarks/benchmark_against_pip_audit.py
