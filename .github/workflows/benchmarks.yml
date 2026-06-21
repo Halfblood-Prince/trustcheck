@@ -33,7 +33,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install . pip-audit psutil
+      - run: python -m pip install . pip-audit==2.10.1 psutil
       - name: Verify published benchmark signature
         run: >-
           python scripts/benchmark_signature.py
@@ -44,7 +44,7 @@ jobs:
           python benchmarks/benchmark_against_pip_audit.py
           --warmups 1
           --iterations 5
-          --evidence-iterations 3
+          --evidence-iterations 5
           --output benchmarks/results/latest.json
       - run: >-
           python scripts/update_benchmark_table.py

@@ -1,7 +1,7 @@
 # trustcheck scan versus pip-audit
 
 The benchmark audits the packages declared in a versioned corpus with
-`trustcheck scan` and the latest installed `pip-audit`, using OSV for the
+`trustcheck scan` and the workflow-pinned `pip-audit 2.10.1`, using OSV for the
 cross-tool advisory comparison. Only those two command paths contribute timing
 or correctness samples. Trustcheck always runs with `--fast` so provenance,
 artifact, history, and heuristic work is excluded. Comparable requirement cases
@@ -44,7 +44,8 @@ Run:
 ```bash
 python benchmarks/benchmark_against_pip_audit.py \
   --warmups 1 \
-  --iterations 3 \
+  --iterations 5 \
+  --evidence-iterations 5 \
   --output benchmarks/results/latest.json
 ```
 
@@ -59,5 +60,7 @@ results only when the corpus digest, services, and environment are equivalent.
 The latest raw result is committed at `benchmarks/results/latest.json` with a
 detached `latest.json.sig` verified by `benchmark-public-key.pem`. It records
 exact tool versions, OS, Python, cold/warm cache phases, timings, peak RSS,
-corpus hashes, and every advisory disagreement. Published tables report the
+corpus hashes, and every advisory disagreement. Published tables require at
+least five warm samples per tool, complete signed truth coverage for every
+comparable package entry, and a recall gate of `1.0`. They report the
 measurements without making a blanket performance claim.

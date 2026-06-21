@@ -8,6 +8,8 @@ from typing import Any, Sequence
 START_MARKER = "<!-- trustcheck-benchmark:start -->"
 END_MARKER = "<!-- trustcheck-benchmark:end -->"
 INSTALLATION_HEADING = "## Installation"
+MIN_PUBLISHED_WARM_SAMPLES = 5
+PUBLISHED_PIP_AUDIT_VERSION = "pip-audit 2.10.1"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -24,11 +26,66 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not isinstance(payload, dict):
         raise ValueError("benchmark result must be a JSON object")
 
+    _validate_publishable(payload)
     table = _render_table(payload)
     original = readme_path.read_text(encoding="utf-8")
     updated = _replace_block(original, table)
     readme_path.write_text(updated, encoding="utf-8")
     return 0
+
+
+def _validate_publishable(payload: dict[str, Any]) -> None:
+    environment = payload.get("environment")
+    if (
+        not isinstance(environment, dict)
+        or environment.get("pip_audit") != PUBLISHED_PIP_AUDIT_VERSION
+    ):
+        raise ValueError(
+            f"published benchmark must use {PUBLISHED_PIP_AUDIT_VERSION}"
+        )
+
+    configuration = payload.get("configuration")
+    if (
+        not isinstance(configuration, dict)
+        or configuration.get("iterations", 0) < MIN_PUBLISHED_WARM_SAMPLES
+    ):
+        raise ValueError("published benchmark requires at least five warm iterations")
+
+    performance = payload.get("performance")
+    if not isinstance(performance, dict):
+        raise ValueError("benchmark result is missing performance data")
+    for tool in ("trustcheck", "pip_audit"):
+        summary = performance.get(tool)
+        samples = summary.get("samples_seconds") if isinstance(summary, dict) else None
+        if not isinstance(samples, list) or len(samples) < MIN_PUBLISHED_WARM_SAMPLES:
+            raise ValueError(f"published benchmark requires five warm {tool} samples")
+
+    corpus = payload.get("corpus")
+    truth = payload.get("truth_corpus")
+    if not isinstance(corpus, dict) or not isinstance(truth, dict):
+        raise ValueError("published benchmark requires corpus and truth summaries")
+    comparable_packages = corpus.get("benchmark_package_count")
+    truth_cases = truth.get("case_count")
+    complete_cases = truth.get("complete_case_count")
+    if (
+        not isinstance(comparable_packages, int)
+        or not isinstance(truth_cases, int)
+        or truth_cases < comparable_packages
+    ):
+        raise ValueError("signed truth corpus must cover every comparable package entry")
+    if complete_cases != truth_cases:
+        raise ValueError("signed truth corpus must not contain incomplete advisory sets")
+    gates = truth.get("gates")
+    if not isinstance(gates, dict) or gates.get("min_recall") != 1.0:
+        raise ValueError("signed truth corpus must require recall of 1.0")
+
+    correctness = payload.get("correctness")
+    if not isinstance(correctness, dict):
+        raise ValueError("published benchmark requires correctness evidence")
+    if correctness.get("alias_aware_agreement") != 1.0:
+        raise ValueError("published benchmark requires complete advisory agreement")
+    if correctness.get("trustcheck_only") or correctness.get("pip_audit_only"):
+        raise ValueError("published benchmark contains one-sided advisory findings")
 
 
 def _render_table(payload: dict[str, Any]) -> str:

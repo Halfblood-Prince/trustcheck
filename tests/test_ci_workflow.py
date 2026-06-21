@@ -7,6 +7,36 @@ ROOT = Path(__file__).parents[1]
 
 
 class CoverageBadgeWorkflowTests(unittest.TestCase):
+    def test_workflows_reject_unknown_or_mismatched_source_versions(self) -> None:
+        project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        source_workflow = (ROOT / ".github/workflows/source-build.yml").read_text(
+            encoding="utf-8"
+        )
+        release_workflow = (ROOT / ".github/workflows/publish.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('fallback_version = "0.0.0+source"', project)
+        self.assertNotIn('fallback_version = "0+unknown"', project)
+        self.assertIn("SETUPTOOLS_SCM_PRETEND_VERSION: 0.0.0+source", source_workflow)
+        self.assertIn(
+            "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK: 0.0.0+source",
+            source_workflow,
+        )
+        self.assertIn("--expected 0.0.0+source", source_workflow)
+        self.assertIn(
+            "SETUPTOOLS_SCM_PRETEND_VERSION: ${{ github.ref_name }}",
+            release_workflow,
+        )
+        self.assertIn(
+            "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK: ${{ github.ref_name }}",
+            release_workflow,
+        )
+        self.assertGreaterEqual(
+            release_workflow.count("scripts/verify_release_version.py"), 2
+        )
+        self.assertIn('--tag "$GITHUB_REF_NAME"', release_workflow)
+
     def test_ci_verifies_published_benchmark_signature(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"

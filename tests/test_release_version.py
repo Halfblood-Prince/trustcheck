@@ -39,40 +39,5 @@ class ReleaseVersionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "normalized"):
             _expected_version(tag="v01.10.0", expected=None)
 
-    def test_workflows_reject_unknown_or_mismatched_source_versions(self) -> None:
-        project = Path("pyproject.toml").read_text(encoding="utf-8")
-        source_workflow = Path(".github/workflows/source-build.yml").read_text(
-            encoding="utf-8"
-        )
-        release_workflow = Path(".github/workflows/publish.yml").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn('fallback_version = "0.0.0+source"', project)
-        self.assertNotIn('fallback_version = "0+unknown"', project)
-        self.assertIn(
-            "SETUPTOOLS_SCM_PRETEND_VERSION: 0.0.0+source",
-            source_workflow,
-        )
-        self.assertIn(
-            "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK: 0.0.0+source",
-            source_workflow,
-        )
-        self.assertIn("--expected 0.0.0+source", source_workflow)
-        self.assertIn(
-            "SETUPTOOLS_SCM_PRETEND_VERSION: ${{ github.ref_name }}",
-            release_workflow,
-        )
-        self.assertIn(
-            "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK: ${{ github.ref_name }}",
-            release_workflow,
-        )
-        self.assertGreaterEqual(
-            release_workflow.count("scripts/verify_release_version.py"),
-            2,
-        )
-        self.assertIn('--tag "$GITHUB_REF_NAME"', release_workflow)
-
-
 if __name__ == "__main__":
     unittest.main()

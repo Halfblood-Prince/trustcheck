@@ -54,6 +54,105 @@ from trustcheck.snapshots import (
 
 
 class BenchmarkPublicationTests(unittest.TestCase):
+    def test_committed_findings_normalize_to_complete_agreement(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        namespace = runpy.run_path(
+            str(root / "benchmarks" / "benchmark_against_pip_audit.py"),
+            run_name="trustcheck_benchmark_committed_findings_test",
+        )
+        published = json.loads(
+            (root / "benchmarks" / "results" / "latest.json").read_text(
+                encoding="utf-8"
+            )
+        )["findings"]
+
+        def vulnerability(aliases: list[str]) -> dict[str, object]:
+            return {"id": aliases[0], "aliases": aliases[1:]}
+
+        trustcheck_payload = {
+            "reports": [
+                {
+                    "project": item["project"],
+                    "version": item["version"],
+                    "vulnerabilities": [
+                        vulnerability(aliases) for aliases in item["advisories"]
+                    ],
+                }
+                for item in published["trustcheck"]
+            ]
+        }
+        pip_audit_payload = {
+            "dependencies": [
+                {
+                    "name": item["project"],
+                    "version": item["version"],
+                    "vulns": [
+                        vulnerability(aliases) for aliases in item["advisories"]
+                    ],
+                }
+                for item in published["pip_audit"]
+            ]
+        }
+        comparison = namespace["_compare_findings"](
+            namespace["_trustcheck_findings"](trustcheck_payload),
+            namespace["_pip_audit_findings"](pip_audit_payload),
+        )
+
+        self.assertEqual(comparison["matched_advisories"], 263)
+        self.assertEqual(comparison["trustcheck_only"], [])
+        self.assertEqual(comparison["pip_audit_only"], [])
+        self.assertEqual(comparison["alias_aware_agreement"], 1.0)
+
+    def test_package_and_version_keys_are_canonicalized_across_tools(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        namespace = runpy.run_path(
+            str(root / "benchmarks" / "benchmark_against_pip_audit.py"),
+            run_name="trustcheck_benchmark_normalization_test",
+        )
+        trustcheck_payload = {
+            "reports": [
+                {
+                    "project": "django",
+                    "version": "2.2",
+                    "vulnerabilities": [{"id": "CVE-2026-1"}],
+                },
+                {
+                    "project": "jaraco.context",
+                    "version": "5.3.0",
+                    "vulnerabilities": [{"id": "CVE-2026-2"}],
+                },
+            ]
+        }
+        pip_audit_payload = {
+            "dependencies": [
+                {
+                    "name": "Django",
+                    "version": "2.2.0",
+                    "vulns": [{"id": "CVE-2026-1"}],
+                },
+                {
+                    "name": "jaraco-context",
+                    "version": "5.3",
+                    "vulns": [{"id": "CVE-2026-2"}],
+                },
+            ]
+        }
+
+        trustcheck = namespace["_trustcheck_findings"](trustcheck_payload)
+        pip_audit = namespace["_pip_audit_findings"](pip_audit_payload)
+        comparison = namespace["_compare_findings"](trustcheck, pip_audit)
+
+        self.assertEqual(trustcheck, pip_audit)
+        self.assertEqual(comparison["matched_advisories"], 2)
+        self.assertEqual(comparison["trustcheck_only"], [])
+        self.assertEqual(comparison["pip_audit_only"], [])
+        self.assertEqual(comparison["alias_aware_agreement"], 1.0)
+        self.assertTrue(
+            namespace["_compare_resolutions"](
+                trustcheck_payload, pip_audit_payload
+            )["exact_match"]
+        )
+
     def test_corpus_manifest_is_versioned_and_large_enough(self) -> None:
         root = Path(__file__).resolve().parents[1]
         namespace = runpy.run_path(
@@ -155,7 +254,11 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertEqual(work["native_binaries"], 1)
         self.assertEqual(work["heuristic_findings"], 2)
 
-        findings = {("demo", "1.0"): [{"GHSA-DEMO", "CVE-2026-1"}]}
+        findings = {
+            namespace["_package_key"]("demo", "1.0"): [
+                {"GHSA-DEMO", "CVE-2026-1"}
+            ]
+        }
         truth_case = namespace["TruthCase"](
             case_id="test",
             project="demo",
@@ -286,15 +389,22 @@ class BenchmarkPublicationTests(unittest.TestCase):
             "generated_at": "2026-06-19T12:00:00+00:00",
             "environment": {
                 "python": "3.12.0",
-                "pip_audit": "pip-audit 2.9.0",
+                "pip_audit": "pip-audit 2.10.1",
             },
             "corpus": {
                 "version": "2026.06",
                 "benchmark_package_count": 123,
             },
+            "truth_corpus": {
+                "case_count": 123,
+                "complete_case_count": 123,
+                "gates": {"min_recall": 1.0, "max_false_positives": 0},
+            },
+            "configuration": {"iterations": 5},
             "performance": {
                 "trustcheck": {
                     "cold": {"p50_seconds": 2.0},
+                    "samples_seconds": [1.1, 1.2, 1.3, 1.4, 1.5],
                     "p50_seconds": 1.234,
                     "p95_seconds": 2.345,
                     "peak_memory_bytes": 104857600,
@@ -302,6 +412,7 @@ class BenchmarkPublicationTests(unittest.TestCase):
                 },
                 "pip_audit": {
                     "cold": {"p50_seconds": 5.0},
+                    "samples_seconds": [3.1, 3.2, 3.3, 3.4, 3.5],
                     "p50_seconds": 3.456,
                     "p95_seconds": 4.567,
                     "peak_memory_bytes": 209715200,
@@ -311,9 +422,11 @@ class BenchmarkPublicationTests(unittest.TestCase):
             "correctness": {
                 "trustcheck_vulnerable_packages": 7,
                 "pip_audit_vulnerable_packages": 7,
-                "alias_aware_agreement": True,
+                "alias_aware_agreement": 1.0,
                 "packages_compared": 123,
                 "matched_advisories": 9,
+                "trustcheck_only": [],
+                "pip_audit_only": [],
                 "advisory_recall": {"trustcheck": 1.0, "pip_audit": 0.9},
             },
             "evidence": {
@@ -350,6 +463,11 @@ class BenchmarkPublicationTests(unittest.TestCase):
         )
         self.assertIn("Resolver exact match: `True`", updated)
 
+        weak = json.loads(json.dumps(payload))
+        weak["performance"]["trustcheck"]["samples_seconds"] = [1.0]
+        with self.assertRaisesRegex(ValueError, "five warm trustcheck samples"):
+            namespace["_validate_publishable"](weak)
+
     def test_benchmark_workflow_publishes_results_through_pull_request(self) -> None:
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github" / "workflows" / "benchmarks.yml").read_text(
@@ -366,7 +484,9 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertIn("pull_request:", workflow)
         self.assertIn("if: github.event_name != 'pull_request'", workflow)
         self.assertIn("--output benchmarks/results/latest.json", workflow)
-        self.assertIn("--evidence-iterations 3", workflow)
+        self.assertIn("pip-audit==2.10.1", workflow)
+        self.assertIn("--iterations 5", workflow)
+        self.assertIn("--evidence-iterations 5", workflow)
         self.assertIn("retention-days: 90", workflow)
         self.assertIn("python scripts/update_benchmark_table.py", workflow)
         self.assertIn("git add README.md benchmarks/results/latest.json", workflow)

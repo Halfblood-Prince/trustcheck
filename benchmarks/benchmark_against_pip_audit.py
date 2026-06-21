@@ -21,6 +21,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from packaging.markers import Marker, default_environment
 from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 
 BENCHMARK_SCHEMA = "urn:trustcheck:benchmark:pip-audit:4.0.0"
 CORPUS_SCHEMA = "urn:trustcheck:benchmark-corpus:1.0.0"
@@ -28,6 +29,7 @@ TRUTH_SCHEMA = "urn:trustcheck:benchmark-truth:1.0.0"
 MIN_CORPUS_PACKAGES = 100
 MAX_CORPUS_PACKAGES = 500
 TRUSTCHECK_BENCHMARK_SUBCOMMAND = "scan"
+PackageKey = tuple[str, Version]
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,11 +115,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "and is intended only for ad hoc local comparisons."
         ),
     )
-    parser.add_argument("--iterations", type=int, default=3)
+    parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument(
         "--evidence-iterations",
         type=int,
-        default=3,
+        default=5,
         help="Warm-cache samples for resolution and profile evidence suites.",
     )
     parser.add_argument("--warmups", type=int, default=1)
@@ -452,8 +454,11 @@ def _load_truth_case(payload: object) -> TruthCase:
     if not isinstance(payload, dict):
         raise ValueError("truth corpus cases must be objects")
     case_id = _required_string(payload, "case")
-    project = canonicalize_name(_required_string(payload, "project"))
-    version = _required_string(payload, "version")
+    project, parsed_version = _package_key(
+        _required_string(payload, "project"),
+        _required_string(payload, "version"),
+    )
+    version = str(parsed_version)
     vulnerable = payload.get("vulnerable")
     if not isinstance(vulnerable, bool):
         raise ValueError(f"truth case {project}=={version} needs vulnerable boolean")
@@ -863,9 +868,9 @@ def _phase_summary(cold: RunResult, warm: Sequence[RunResult]) -> dict[str, Any]
     return summary
 
 
-def _resolved_packages(payload: object, *, tool: str) -> set[tuple[str, str]]:
+def _resolved_packages(payload: object, *, tool: str) -> set[PackageKey]:
     if isinstance(payload, list):
-        packages: set[tuple[str, str]] = set()
+        packages: set[PackageKey] = set()
         for item in payload:
             packages.update(_resolved_packages(item, tool=tool))
         return packages
@@ -877,7 +882,7 @@ def _resolved_packages(payload: object, *, tool: str) -> set[tuple[str, str]]:
             report = payload.get("report")
             reports = [report] if isinstance(report, dict) else []
         return {
-            (str(report["project"]).lower(), str(report["version"]))
+            _package_key(str(report["project"]), str(report["version"]))
             for report in reports
             if isinstance(report, dict)
             and isinstance(report.get("project"), str)
@@ -885,7 +890,7 @@ def _resolved_packages(payload: object, *, tool: str) -> set[tuple[str, str]]:
         }
     dependencies = payload.get("dependencies", [])
     return {
-        (str(item["name"]).lower(), str(item["version"]))
+        _package_key(str(item["name"]), str(item["version"]))
         for item in dependencies
         if isinstance(item, dict)
         and isinstance(item.get("name"), str)
@@ -963,9 +968,9 @@ def _profile_work_summary(payload: object) -> dict[str, int]:
 
 def _trustcheck_findings(
     payload: object,
-) -> dict[tuple[str, str], list[set[str]]]:
+) -> dict[PackageKey, list[set[str]]]:
     if isinstance(payload, list):
-        merged: dict[tuple[str, str], list[set[str]]] = {}
+        merged: dict[PackageKey, list[set[str]]] = {}
         for item in payload:
             _merge_findings(merged, _trustcheck_findings(item))
         return merged
@@ -975,7 +980,7 @@ def _trustcheck_findings(
     if not isinstance(reports, list):
         report = payload.get("report")
         reports = [report] if isinstance(report, dict) else []
-    findings: dict[tuple[str, str], list[set[str]]] = {}
+    findings: dict[PackageKey, list[set[str]]] = {}
     for report in reports:
         if not isinstance(report, dict):
             continue
@@ -988,7 +993,7 @@ def _trustcheck_findings(
             or not isinstance(vulnerabilities, list)
         ):
             continue
-        findings[(project.lower(), version)] = _dedupe_identities([
+        findings[_package_key(project, version)] = _dedupe_identities([
             _identity_set(item)
             for item in vulnerabilities
             if isinstance(item, dict)
@@ -998,9 +1003,9 @@ def _trustcheck_findings(
 
 def _pip_audit_findings(
     payload: object,
-) -> dict[tuple[str, str], list[set[str]]]:
+) -> dict[PackageKey, list[set[str]]]:
     if isinstance(payload, list):
-        merged: dict[tuple[str, str], list[set[str]]] = {}
+        merged: dict[PackageKey, list[set[str]]] = {}
         for item in payload:
             _merge_findings(merged, _pip_audit_findings(item))
         return merged
@@ -1009,7 +1014,7 @@ def _pip_audit_findings(
         dependencies = payload.get("dependencies", [])
     if not isinstance(dependencies, list):
         raise ValueError("pip-audit benchmark payload must contain dependencies")
-    findings: dict[tuple[str, str], list[set[str]]] = {}
+    findings: dict[PackageKey, list[set[str]]] = {}
     for dependency in dependencies:
         if not isinstance(dependency, dict):
             continue
@@ -1023,7 +1028,7 @@ def _pip_audit_findings(
             for item in vulnerabilities
             if isinstance(item, dict)
         ] if isinstance(vulnerabilities, list) else []
-        key = (name.lower(), version)
+        key = _package_key(name, version)
         findings[key] = _dedupe_identities(
             [*findings.get(key, []), *identities]
         )
@@ -1031,13 +1036,23 @@ def _pip_audit_findings(
 
 
 def _merge_findings(
-    target: dict[tuple[str, str], list[set[str]]],
-    incoming: dict[tuple[str, str], list[set[str]]],
+    target: dict[PackageKey, list[set[str]]],
+    incoming: dict[PackageKey, list[set[str]]],
 ) -> None:
     for package, identities in incoming.items():
         target[package] = _dedupe_identities(
             [*target.get(package, []), *identities]
         )
+
+
+def _package_key(project: str, version: str) -> PackageKey:
+    try:
+        normalized_version = Version(version)
+    except InvalidVersion as exc:
+        raise ValueError(
+            f"benchmark package {project!r} has invalid version {version!r}"
+        ) from exc
+    return canonicalize_name(project), normalized_version
 
 
 def _identity_set(item: dict[str, Any]) -> set[str]:
@@ -1073,8 +1088,8 @@ def _dedupe_identities(identities: Sequence[set[str]]) -> list[set[str]]:
 
 
 def _compare_findings(
-    left: dict[tuple[str, str], list[set[str]]],
-    right: dict[tuple[str, str], list[set[str]]],
+    left: dict[PackageKey, list[set[str]]],
+    right: dict[PackageKey, list[set[str]]],
     *,
     truth: TruthCorpus | None = None,
     selected_cases: set[str] | None = None,
@@ -1131,7 +1146,9 @@ def _compare_findings(
         and not case.private_index
     ]
     expected = {
-        (case.project, case.version): [set(identity) for identity in case.advisories]
+        _package_key(case.project, case.version): [
+            set(identity) for identity in case.advisories
+        ]
         for case in active_cases
     }
     trust_metrics = _truth_metrics(left, active_cases)
@@ -1164,17 +1181,19 @@ def _compare_findings(
 
 
 def _truth_metrics(
-    observed: dict[tuple[str, str], list[set[str]]],
+    observed: dict[PackageKey, list[set[str]]],
     cases: Sequence[TruthCase],
 ) -> dict[str, Any]:
     expected = {
-        (case.project, case.version): [set(identity) for identity in case.advisories]
+        _package_key(case.project, case.version): [
+            set(identity) for identity in case.advisories
+        ]
         for case in cases
     }
     false_negatives: list[dict[str, Any]] = []
     false_positives: list[dict[str, Any]] = []
     for case in cases:
-        package = (case.project, case.version)
+        package = _package_key(case.project, case.version)
         observed_identities = observed.get(package, [])
         for identity in expected[package]:
             if not any(identity & candidate for candidate in observed_identities):
@@ -1195,8 +1214,8 @@ def _truth_metrics(
 
 
 def _advisory_recall(
-    observed: dict[tuple[str, str], list[set[str]]],
-    expected: dict[tuple[str, str], list[set[str]]],
+    observed: dict[PackageKey, list[set[str]]],
+    expected: dict[PackageKey, list[set[str]]],
 ) -> float:
     expected_count = sum(len(identities) for identities in expected.values())
     if expected_count == 0:
@@ -1211,23 +1230,23 @@ def _advisory_recall(
 
 
 def _finding_summary(
-    package: tuple[str, str],
+    package: PackageKey,
     identity: set[str],
 ) -> dict[str, Any]:
     return {
         "project": package[0],
-        "version": package[1],
+        "version": str(package[1]),
         "identifiers": sorted(identity),
     }
 
 
 def _json_findings(
-    findings: dict[tuple[str, str], list[set[str]]],
+    findings: dict[PackageKey, list[set[str]]],
 ) -> list[dict[str, Any]]:
     return [
         {
             "project": project,
-            "version": version,
+            "version": str(version),
             "advisories": [sorted(identity) for identity in identities],
         }
         for (project, version), identities in sorted(findings.items())
@@ -1318,6 +1337,7 @@ def _truth_summary(truth: TruthCorpus | None) -> dict[str, object] | None:
         "sha256": _sha256(truth.manifest),
         "signature": _published_path(truth.manifest.with_suffix(".json.sig")),
         "case_count": len(truth.cases),
+        "complete_case_count": sum(case.advisories_complete for case in truth.cases),
         "gates": {
             "min_recall": truth.min_recall,
             "max_false_positives": truth.max_false_positives,

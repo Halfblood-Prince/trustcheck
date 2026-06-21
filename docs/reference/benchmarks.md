@@ -1,7 +1,7 @@
 # Benchmarks
 
 Trustcheck publishes a reproducible performance and correctness comparison of
-`trustcheck scan` against the latest installed `pip-audit`. The benchmark uses
+`trustcheck scan` against the workflow-pinned `pip-audit 2.10.1`. The benchmark uses
 a versioned corpus manifest and the OSV advisory service for both tools. Only
 those two command paths contribute timing or correctness samples.
 The Trustcheck command explicitly uses `--fast`, limiting it to dependency
@@ -41,6 +41,9 @@ counts are `null` because the tool does not expose that measurement.
 
 The scheduled benchmark workflow publishes the raw JSON as a retained workflow
 artifact and proposes the generated README evidence table through a pull request.
+Publication requires at least five warm samples per tool, a complete signed
+truth case for every comparable package entry, no incomplete advisory sets,
+and a minimum recall gate of `1.0`.
 Local runs default to `benchmarks/results/latest.json`; commit or publish that
 file only when it was regenerated from the current corpus and environment.
 `pip-audit` exits `1` when it finds vulnerabilities; `trustcheck scan` exits
