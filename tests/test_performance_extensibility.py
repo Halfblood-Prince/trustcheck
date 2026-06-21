@@ -63,6 +63,9 @@ class BenchmarkPublicationTests(unittest.TestCase):
         corpus = namespace["_load_corpus"](
             root / "benchmarks" / "corpus" / "corpus.json"
         )
+        truth = namespace["_load_truth_corpus"](
+            root / "benchmarks" / "corpus" / "truth.json"
+        )
         comparable = namespace["_benchmark_cases"](corpus, [])
 
         self.assertEqual(corpus.version, "2026.06")
@@ -75,6 +78,11 @@ class BenchmarkPublicationTests(unittest.TestCase):
         )
         self.assertIn("lockfiles", {case.category for case in corpus.cases})
         self.assertIn("malformed", {case.category for case in corpus.cases})
+        self.assertEqual(truth.version, "2026.06.1")
+        self.assertTrue(any(case.withdrawn for case in truth.cases))
+        self.assertTrue(any(case.extras for case in truth.cases))
+        self.assertTrue(any(case.marker for case in truth.cases))
+        self.assertTrue(any(case.private_index for case in truth.cases))
 
         trustcheck_command = namespace["_trustcheck_command"](
             comparable[0],
@@ -148,9 +156,50 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertEqual(work["heuristic_findings"], 2)
 
         findings = {("demo", "1.0"): [{"GHSA-DEMO", "CVE-2026-1"}]}
-        correctness = namespace["_compare_findings"](findings, {})
+        truth_case = namespace["TruthCase"](
+            case_id="test",
+            project="demo",
+            version="1.0",
+            vulnerable=True,
+            advisories=(frozenset({"GHSA-DEMO", "CVE-2026-1"}),),
+            withdrawn=(),
+            fixed_versions=("1.1",),
+        )
+        truth = namespace["TruthCorpus"](
+            manifest=Path("truth.json"),
+            version="test",
+            cases=(truth_case,),
+            min_recall=1.0,
+            max_false_positives=0,
+        )
+        correctness = namespace["_compare_findings"](
+            findings,
+            {},
+            truth=truth,
+            selected_cases={"test"},
+        )
         self.assertEqual(correctness["advisory_recall"]["trustcheck"], 1.0)
         self.assertEqual(correctness["advisory_recall"]["pip_audit"], 0.0)
+        self.assertEqual(
+            correctness["advisory_recall"]["reference"],
+            "signed-curated-truth-corpus",
+        )
+        self.assertEqual(correctness["regressions"], [])
+
+    def test_truth_corpus_signature_rejects_tampering(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        namespace = runpy.run_path(
+            str(root / "benchmarks" / "benchmark_against_pip_audit.py"),
+            run_name="trustcheck_benchmark_signature_test",
+        )
+        source = root / "benchmarks" / "corpus"
+        with TemporaryDirectory() as directory:
+            target = Path(directory)
+            for name in ("truth.json", "truth.json.sig", "truth-public-key.pem"):
+                (target / name).write_bytes((source / name).read_bytes())
+            (target / "truth.json").write_text("{}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "signature is invalid"):
+                namespace["_load_truth_corpus"](target / "truth.json")
 
     def test_benchmark_retries_empty_output_and_reports_stderr(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -314,7 +363,8 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertIn("paths-ignore:", workflow)
         self.assertIn("group: benchmark-results", workflow)
         self.assertIn("uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10", workflow)
-        self.assertIn("ref: ${{ github.ref_name }}", workflow)
+        self.assertIn("pull_request:", workflow)
+        self.assertIn("if: github.event_name != 'pull_request'", workflow)
         self.assertIn("--output benchmarks/results/latest.json", workflow)
         self.assertIn("--evidence-iterations 3", workflow)
         self.assertIn("retention-days: 90", workflow)
@@ -808,6 +858,108 @@ class AdvisoryBatchAndSnapshotTests(unittest.TestCase):
                 AdvisorySnapshotStore(inputs=[path])
             AdvisorySnapshotStore(inputs=[path], allow_unsigned=True)
 
+    def test_snapshot_security_validation_and_signer_failures(self) -> None:
+        now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        records: dict[str, object] = {}
+        digest = snapshots_module._records_digest(records)
+
+        def payload() -> dict[str, object]:
+            return {
+                "schema": ADVISORY_SNAPSHOT_SCHEMA,
+                "generated_at": now.isoformat(),
+                "expires_at": (now + timedelta(hours=1)).isoformat(),
+                "digests": {"records_sha256": digest},
+                "source_manifest": {"sources": [], "records_sha256": digest},
+                "records": records,
+            }
+
+        with self.assertRaisesRegex(AdvisorySnapshotError, "positive"):
+            AdvisorySnapshotStore(max_age=timedelta(0))
+        with self.assertRaisesRegex(AdvisorySnapshotError, "unable to read"):
+            AdvisorySnapshotStore(inputs=["missing-snapshot.json"], allow_unsigned=True)
+        with self.assertRaisesRegex(AdvisorySnapshotError, "timezone"):
+            snapshots_module._utc(datetime(2030, 1, 1))
+        with self.assertRaisesRegex(AdvisorySnapshotError, "ISO-8601"):
+            snapshots_module._snapshot_datetime(None, Path("snapshot.json"), "generated_at")
+        with self.assertRaisesRegex(AdvisorySnapshotError, "invalid"):
+            snapshots_module._snapshot_datetime("bad", Path("snapshot.json"), "generated_at")
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "snapshot.json"
+
+            for mutate, message in (
+                (
+                    lambda value: value.update(
+                        {
+                            "generated_at": (now + timedelta(minutes=6)).isoformat(),
+                            "expires_at": (now + timedelta(hours=1)).isoformat(),
+                        }
+                    ),
+                    "future",
+                ),
+                (
+                    lambda value: value.update(
+                        {
+                            "generated_at": (now - timedelta(hours=2)).isoformat(),
+                            "expires_at": (now - timedelta(hours=1)).isoformat(),
+                        }
+                    ),
+                    "expired",
+                ),
+                (
+                    lambda value: value["source_manifest"].update({"sources": {}}),
+                    "sources must be an array",
+                ),
+                (
+                    lambda value: value["source_manifest"].update(
+                        {"records_sha256": "0" * 64}
+                    ),
+                    "source manifest digest mismatch",
+                ),
+                (
+                    lambda value: value["source_manifest"].update(
+                        {"sources": [{"url": ""}]}
+                    ),
+                    "source URL",
+                ),
+            ):
+                value = payload()
+                mutate(value)
+                path.write_text(json.dumps(value), encoding="utf-8")
+                with self.subTest(message=message), self.assertRaisesRegex(
+                    AdvisorySnapshotError, message
+                ):
+                    AdvisorySnapshotStore(
+                        inputs=[path], allow_unsigned=True, clock=lambda: now
+                    )
+
+            legacy = {
+                "schema": "urn:trustcheck:advisory-snapshot:1.0.0",
+                "records": {},
+            }
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+            bundle = path.with_name(f"{path.name}.sigstore.json")
+            bundle.write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(AdvisorySnapshotError, "identity"):
+                AdvisorySnapshotStore(inputs=[path])
+            with patch(
+                "trustcheck.snapshots.Bundle.from_json", side_effect=ValueError("bad")
+            ), self.assertRaisesRegex(AdvisorySnapshotError, "verification failed"):
+                AdvisorySnapshotStore(inputs=[path], sigstore_identity="trusted")
+
+            with self.assertRaisesRegex(AdvisorySnapshotError, "unable to start"):
+                snapshots_module._sign_snapshot(
+                    path, runner=Mock(side_effect=OSError("missing"))
+                )
+            bundle.unlink()
+            failed = subprocess.CompletedProcess([], 1, stdout="", stderr="denied")
+            with self.assertRaisesRegex(AdvisorySnapshotError, "denied"):
+                snapshots_module._sign_snapshot(path, runner=Mock(return_value=failed))
+            succeeded = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            with self.assertRaisesRegex(AdvisorySnapshotError, "did not create"):
+                snapshots_module._sign_snapshot(path, runner=Mock(return_value=succeeded))
+
     def test_prefetch_populates_snapshot_and_uses_it_offline(self) -> None:
         class Provider:
             request_hook = None
@@ -996,6 +1148,8 @@ class PluginManagerTests(unittest.TestCase):
             selected=selected,
             config={"policy-demo": {"message": "blocked"}},
             entry_point_loader=lambda *, group: plugins.get(group, []),
+            require_signed=False,
+            isolate=False,
         )
 
     def test_discovers_and_executes_every_plugin_category(self) -> None:
@@ -1124,6 +1278,8 @@ class PluginManagerTests(unittest.TestCase):
             entry_point_loader=lambda *, group: (
                 [Raises()] if group == "trustcheck.renderers" else []
             ),
+            require_signed=False,
+            isolate=False,
         )
         with self.assertRaisesRegex(PluginError, "unable to load"):
             manager.descriptors()
@@ -1138,6 +1294,8 @@ class PluginManagerTests(unittest.TestCase):
                 if group == "trustcheck.renderers"
                 else []
             ),
+            require_signed=False,
+            isolate=False,
         )
         with self.assertRaisesRegex(PluginError, "no valid name"):
             manager.descriptors()
@@ -1152,6 +1310,8 @@ class PluginManagerTests(unittest.TestCase):
             entry_point_loader=lambda *, group: (
                 [entry] if group == "trustcheck.renderers" else []
             ),
+            require_signed=False,
+            isolate=False,
         )
         self.assertEqual(manager.descriptors()[0].distribution, "distribution")
 

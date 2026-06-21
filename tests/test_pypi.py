@@ -17,12 +17,23 @@ from trustcheck.resolver import ArtifactReference
 
 
 class FakeResponse:
-    def __init__(self, payload: bytes, *, status: int = 200) -> None:
+    def __init__(
+        self,
+        payload: bytes,
+        *,
+        status: int = 200,
+        content_length: int | None = None,
+    ) -> None:
         self._io = BytesIO(payload)
         self.status = status
+        self.headers = (
+            {"Content-Length": str(content_length)}
+            if content_length is not None
+            else {}
+        )
 
-    def read(self) -> bytes:
-        return self._io.read()
+    def read(self, size: int = -1) -> bytes:
+        return self._io.read(size)
 
     def __enter__(self) -> FakeResponse:
         return self
@@ -250,6 +261,45 @@ class PypiClientTests(unittest.TestCase):
         self.assertEqual(second, b"wheel-bytes")
         self.assertEqual(calls, ["hit"])
 
+    def test_download_rejects_streams_and_declared_lengths_over_cap(self) -> None:
+        url = "https://files.pythonhosted.org/packages/large.whl"
+        for response in (
+            FakeResponse(b"12345"),
+            FakeResponse(b"", content_length=5),
+        ):
+            client = pypi_module.PypiClient(
+                max_download_bytes=4,
+                max_retries=0,
+                enable_cache=False,
+            )
+            with self.subTest(response=response), patch(
+                "urllib.request.urlopen",
+                return_value=response,
+            ):
+                with self.assertRaises(pypi_module.PypiClientError) as ctx:
+                    client.download_distribution(url)
+            self.assertEqual(ctx.exception.subcode, "response_too_large")
+
+        malformed_length = FakeResponse(b"ok")
+        malformed_length.headers["Content-Length"] = "unknown"
+        with patch("urllib.request.urlopen", return_value=malformed_length):
+            self.assertEqual(
+                pypi_module.PypiClient(enable_cache=False).download_distribution(url),
+                b"ok",
+            )
+
+        class UnboundedResponse(FakeResponse):
+            def read(self, size: int = -1) -> bytes:
+                if size != -1:
+                    raise TypeError("size unsupported")
+                return super().read()
+
+        with patch("urllib.request.urlopen", return_value=UnboundedResponse(b"ok")):
+            self.assertEqual(
+                pypi_module.PypiClient(enable_cache=False).download_distribution(url),
+                b"ok",
+            )
+
     def test_request_hook_receives_retry_events(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
 
@@ -377,6 +427,14 @@ class PypiClientTests(unittest.TestCase):
             payload = client.download_distribution("https://example.com/demo.whl")
 
         self.assertEqual(payload, b"cached-wheel")
+
+        bounded = pypi_module.PypiClient(offline=True, max_download_bytes=1)
+        with patch.object(
+            pypi_module.PypiClient,
+            "_read_disk_cache",
+            return_value=b"cached-wheel",
+        ), self.assertRaisesRegex(pypi_module.PypiClientError, "download limit"):
+            bounded.download_distribution("https://example.com/demo.whl")
 
     def test_disk_cached_json_populates_memory_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -530,6 +588,9 @@ class PypiClientTests(unittest.TestCase):
                 client.download_distribution(artifact_path.as_uri()),
                 b"local",
             )
+            client.base_client.max_download_bytes = 1
+            with self.assertRaisesRegex(pypi_module.PypiClientError, "download limit"):
+                client.download_distribution(artifact_path.as_uri())
 
         with self.assertRaisesRegex(pypi_module.PypiClientError, "scoped"):
             client.get_project("other")

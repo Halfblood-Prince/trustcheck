@@ -415,7 +415,7 @@ in machine-readable output.
 
 Package releases and the machine-readable report schema are versioned
 independently. Deep provenance analysis is represented in report schema
-`1.9.0`.
+`1.10.0`.
 
 For top-level package analysis, a complete absence of published provenance is typically surfaced as `review-required`. Stronger negative evidence such as failed verification, inconsistent provenance, or known vulnerabilities still drives `high-risk` outcomes.
 

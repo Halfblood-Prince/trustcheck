@@ -10,20 +10,25 @@ from collections.abc import Mapping
 from unittest.mock import Mock, patch
 
 from trustcheck.artifacts import (
+    MAX_ARCHIVE_MEMBERS,
+    MAX_ARCHIVE_UNCOMPRESSED_BYTES,
     MAX_DEEP_INSPECTION_BYTES,
     MAX_METADATA_BYTES,
     MAX_NATIVE_ANALYSIS_BYTES,
     MAX_SOURCE_AST_BYTES,
     OVERSIZED_FILE_BYTES,
+    _bounded_tar_members,
     _canonical_requirements,
     _inspect_tar_payloads,
     _inspect_wheel_contents,
     _inspect_zip_payloads,
     _inspect_zip_structure,
     _read_tar_member,
+    _read_zip_member,
     _record_sdist_file_findings,
     compare_artifact_metadata,
     inspect_artifact,
+    inspect_artifact_isolated,
 )
 from trustcheck.models import ArtifactInspection
 
@@ -108,6 +113,161 @@ def build_sdist(
 
 
 class WheelArtifactInspectionTests(unittest.TestCase):
+    def test_artifact_payload_caps_apply_in_process_and_isolated(self) -> None:
+        with patch("trustcheck.artifacts.MAX_ARTIFACT_BYTES", 1):
+            direct = inspect_artifact(
+                "demo.whl",
+                b"12",
+                expected_project="demo",
+                expected_version="1.0",
+            )
+            isolated = inspect_artifact_isolated(
+                "demo.tar.gz",
+                b"12",
+                expected_project="demo",
+                expected_version="1.0",
+            )
+        self.assertIn("download limit", direct.error or "")
+        self.assertEqual(direct.record_valid, False)
+        self.assertIn("download limit", isolated.error or "")
+        self.assertIsNone(isolated.record_valid)
+
+    def test_isolated_inspection_handles_timeout_eof_invalid_result_and_start_error(self) -> None:
+        cases = (
+            (False, None, None, "time limit"),
+            (True, EOFError(), None, "without a result"),
+            (True, None, object(), "invalid data"),
+        )
+        for ready, receive_error, received, message in cases:
+            receiver = Mock()
+            sender = Mock()
+            process = Mock()
+            receiver.poll.return_value = ready
+            receiver.recv.side_effect = receive_error
+            if receive_error is None:
+                receiver.recv.return_value = received
+            process.is_alive.return_value = False
+            context = Mock()
+            context.Pipe.return_value = (receiver, sender)
+            context.Process.return_value = process
+            with self.subTest(message=message), patch(
+                "trustcheck.artifacts.multiprocessing.get_context",
+                return_value=context,
+            ):
+                result = inspect_artifact_isolated(
+                    "demo.whl",
+                    b"x",
+                    expected_project="demo",
+                    expected_version="1.0",
+                    timeout=0.01,
+                )
+            self.assertIn(message, result.error or "")
+
+        receiver = Mock()
+        sender = Mock()
+        process = Mock()
+        process.start.side_effect = RuntimeError("denied")
+        process.is_alive.return_value = True
+        context = Mock()
+        context.Pipe.return_value = (receiver, sender)
+        context.Process.return_value = process
+        with patch(
+            "trustcheck.artifacts.multiprocessing.get_context",
+            return_value=context,
+        ):
+            failed = inspect_artifact_isolated(
+                "demo.whl",
+                b"x",
+                expected_project="demo",
+                expected_version="1.0",
+            )
+        self.assertIn("unable to isolate", failed.error or "")
+        self.assertEqual(process.terminate.call_count, 1)
+
+    def test_archive_member_total_expansion_and_ratio_limits(self) -> None:
+        payload = build_wheel(extra_files={"demo/extra.py": b"pass\n"})
+        cases = (
+            ("MAX_ARCHIVE_MEMBERS", 1, "members"),
+            ("MAX_ARCHIVE_UNCOMPRESSED_BYTES", 1, "expands"),
+        )
+        for setting, value, message in cases:
+            with self.subTest(setting=setting), patch(
+                f"trustcheck.artifacts.{setting}", value
+            ):
+                result = inspect_artifact(
+                    "demo-1.0.0-py3-none-any.whl",
+                    payload,
+                    expected_project="demo",
+                    expected_version="1.0.0",
+                )
+            self.assertFalse(result.archive_valid)
+            self.assertIn(message, result.error or "")
+
+        ratio_payload = build_wheel(extra_files={"demo/repeated.txt": b"0" * 20_000})
+        with patch("trustcheck.artifacts.MIN_COMPRESSION_RATIO_BYTES", 1), patch(
+            "trustcheck.artifacts.MAX_COMPRESSION_RATIO", 2.0
+        ):
+            ratio_result = inspect_artifact(
+                "demo-1.0.0-py3-none-any.whl",
+                ratio_payload,
+                expected_project="demo",
+                expected_version="1.0.0",
+            )
+        self.assertFalse(ratio_result.archive_valid)
+        self.assertIn("compression ratio", ratio_result.error or "")
+
+        self.assertEqual(MAX_ARCHIVE_MEMBERS, 10_000)
+        self.assertEqual(MAX_ARCHIVE_UNCOMPRESSED_BYTES, 256 * 1024 * 1024)
+
+    def test_tar_archive_limits_reject_member_count_size_and_ratio(self) -> None:
+        member = tarfile.TarInfo("demo/data")
+        member.size = 2
+        for setting, value, compressed, message in (
+            ("MAX_ARCHIVE_MEMBERS", 0, 100, "members"),
+            ("MAX_ARCHIVE_UNCOMPRESSED_BYTES", 1, 100, "expands"),
+        ):
+            with self.subTest(setting=setting), patch(
+                f"trustcheck.artifacts.{setting}", value
+            ):
+                with self.assertRaisesRegex(ValueError, message):
+                    _bounded_tar_members(iter([member]), compressed)  # type: ignore[arg-type]
+
+        negative = tarfile.TarInfo("demo/negative")
+        negative.size = -1
+        with self.assertRaisesRegex(ValueError, "negative"):
+            _bounded_tar_members(iter([negative]), 100)  # type: ignore[arg-type]
+
+        with patch("trustcheck.artifacts.MIN_COMPRESSION_RATIO_BYTES", 1), patch(
+            "trustcheck.artifacts.MAX_COMPRESSION_RATIO", 1.0
+        ):
+            with self.assertRaisesRegex(ValueError, "aggregate compression ratio"):
+                _bounded_tar_members(iter([member]), 1)  # type: ignore[arg-type]
+
+    def test_member_readers_reject_streams_larger_than_declared_size(self) -> None:
+        zip_member = zipfile.ZipInfo("demo/data")
+        zip_member.file_size = 1
+        zip_archive = Mock()
+        zip_archive.open.return_value = io.BytesIO(b"12")
+        with self.assertRaisesRegex(ValueError, "inspection limit"):
+            _read_zip_member(zip_archive, zip_member, limit=1)
+
+        tar_member = tarfile.TarInfo("demo/data")
+        tar_member.size = 1
+        tar_archive = Mock()
+        tar_archive.extractfile.return_value = io.BytesIO(b"12")
+        with self.assertRaisesRegex(ValueError, "inspection limit"):
+            _read_tar_member(tar_archive, tar_member, limit=1)
+
+    def test_isolated_inspection_returns_serialized_result(self) -> None:
+        result = inspect_artifact_isolated(
+            "demo-1.0.0-py3-none-any.whl",
+            build_wheel(),
+            expected_project="demo",
+            expected_version="1.0.0",
+        )
+        self.assertTrue(result.archive_valid, result.error)
+        self.assertEqual(result.metadata_name, "demo")
+
     def test_ast_and_native_heuristics_are_recorded_in_artifact_results(self) -> None:
         payload = build_wheel(
             extra_files={

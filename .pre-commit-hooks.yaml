@@ -1,0 +1,8 @@
+- id: trustcheck
+  name: Trustcheck dependency audit
+  description: Fast, hash-aware vulnerability checks for changed Python dependency files.
+  entry: trustcheck-pre-commit
+  language: python
+  pass_filenames: true
+  files: >-
+    (?x)(^|/)(pyproject\.toml|Pipfile\.lock|uv\.lock|poetry\.lock|pdm\.lock|pylock(?:\.[^.]+)?\.toml|requirements(?:-[^/]+)?\.(?:txt|in))$

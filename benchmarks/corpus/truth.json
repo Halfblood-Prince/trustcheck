@@ -1,0 +1,143 @@
+{
+  "schema": "urn:trustcheck:benchmark-truth:1.0.0",
+  "version": "2026.06.1",
+  "description": "Curated package-version truth independent of Trustcheck and pip-audit output.",
+  "gates": {
+    "min_recall": 0.75,
+    "max_false_positives": 0
+  },
+  "cases": [
+    {
+      "case": "pypi-main-100",
+      "project": "pyyaml",
+      "version": "5.3",
+      "vulnerable": true,
+      "advisories_complete": false,
+      "advisories": [
+        {
+          "aliases": ["GHSA-8Q59-Q68H-6HV4", "CVE-2020-14343", "PYSEC-2020-96"],
+          "source": "https://osv.dev/vulnerability/GHSA-8q59-q68h-6hv4"
+        }
+      ],
+      "fixed_versions": ["5.4"],
+      "withdrawn_advisories": []
+    },
+    {
+      "case": "pypi-main-100",
+      "project": "jinja2",
+      "version": "2.10",
+      "vulnerable": true,
+      "advisories_complete": false,
+      "advisories": [
+        {
+          "aliases": ["GHSA-462W-V97R-4M45", "CVE-2019-10906", "PYSEC-2019-217"],
+          "source": "https://osv.dev/vulnerability/GHSA-462w-v97r-4m45"
+        }
+      ],
+      "fixed_versions": ["2.10.1"],
+      "withdrawn_advisories": []
+    },
+    {
+      "case": "pypi-main-100",
+      "project": "urllib3",
+      "version": "1.25.8",
+      "vulnerable": true,
+      "advisories_complete": false,
+      "advisories": [
+        {
+          "aliases": ["GHSA-WQVQ-5M8C-6G24", "CVE-2020-26137", "PYSEC-2020-148"],
+          "source": "https://osv.dev/vulnerability/GHSA-wqvq-5m8c-6g24"
+        }
+      ],
+      "fixed_versions": ["1.25.9"],
+      "withdrawn_advisories": []
+    },
+    {
+      "case": "pypi-main-100",
+      "project": "requests",
+      "version": "2.19.1",
+      "vulnerable": true,
+      "advisories_complete": false,
+      "advisories": [
+        {
+          "aliases": ["GHSA-X84V-XCM2-53PG", "CVE-2018-18074", "PYSEC-2018-28"],
+          "source": "https://osv.dev/vulnerability/GHSA-x84v-xcm2-53pg"
+        }
+      ],
+      "fixed_versions": ["2.20.0"],
+      "withdrawn_advisories": []
+    },
+    {
+      "case": "pypi-main-100",
+      "project": "packaging",
+      "version": "24.1",
+      "vulnerable": false,
+      "advisories": [],
+      "fixed_versions": [],
+      "withdrawn_advisories": []
+    },
+    {
+      "case": "pypi-main-100",
+      "project": "colorama",
+      "version": "0.4.6",
+      "vulnerable": false,
+      "advisories": [],
+      "fixed_versions": [],
+      "withdrawn_advisories": [
+        {
+          "aliases": ["TRUSTCHECK-WITHDRAWN-0001"],
+          "reason": "Corpus sentinel proving withdrawn advisories are excluded from expected findings."
+        }
+      ]
+    },
+    {
+      "case": "pypi-main-100",
+      "project": "six",
+      "version": "1.16.0",
+      "vulnerable": false,
+      "advisories": [],
+      "fixed_versions": [],
+      "withdrawn_advisories": []
+    },
+    {
+      "case": "markers-extras",
+      "project": "httpx",
+      "version": "0.27.0",
+      "vulnerable": false,
+      "advisories": [],
+      "fixed_versions": [],
+      "withdrawn_advisories": [],
+      "extras": ["http2"]
+    },
+    {
+      "case": "markers-extras",
+      "project": "platformdirs",
+      "version": "4.2.2",
+      "vulnerable": false,
+      "advisories": [],
+      "fixed_versions": [],
+      "withdrawn_advisories": [],
+      "marker": "sys_platform == 'win32'"
+    },
+    {
+      "case": "markers-extras",
+      "project": "importlib-resources",
+      "version": "6.4.0",
+      "vulnerable": false,
+      "advisories": [],
+      "fixed_versions": [],
+      "withdrawn_advisories": [],
+      "marker": "python_version < '3.12'"
+    },
+    {
+      "case": "private-indexes",
+      "project": "private-demo",
+      "version": "1.0.0",
+      "vulnerable": false,
+      "advisories": [],
+      "fixed_versions": [],
+      "withdrawn_advisories": [],
+      "private_index": true
+    }
+  ]
+}

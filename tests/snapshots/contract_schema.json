@@ -1295,9 +1295,33 @@
           "title": "Blocked Fixes",
           "type": "integer"
         },
+        "breaking_change_warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Breaking Change Warnings",
+          "type": "array"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
         "minimal": {
           "default": false,
           "title": "Minimal",
+          "type": "boolean"
+        },
+        "minimal_secure_upgrade_proven": {
+          "default": false,
+          "title": "Minimal Secure Upgrade Proven",
           "type": "boolean"
         },
         "patch_files": {
@@ -1374,6 +1398,14 @@
           "default": false,
           "title": "Offline",
           "type": "boolean"
+        },
+        "plugin_executions": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Plugin Executions",
+          "type": "array"
         },
         "request_count": {
           "default": 0,
@@ -2063,7 +2095,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:trustcheck:report:1.9.0",
+  "$id": "urn:trustcheck:report:1.10.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -2071,8 +2103,8 @@
       "$ref": "#/$defs/TrustReportPayload"
     },
     "schema_version": {
-      "const": "1.9.0",
-      "default": "1.9.0",
+      "const": "1.10.0",
+      "default": "1.10.0",
       "title": "Schema Version",
       "type": "string"
     }

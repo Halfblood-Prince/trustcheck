@@ -128,6 +128,59 @@ def validated_plan(source: Path) -> RemediationPlan:
 
 
 class RemediationPlannerTests(unittest.TestCase):
+    def test_confidence_changelog_and_transitive_explanations(self) -> None:
+        self.assertEqual(
+            remediation_module._compatibility_confidence("1.2.0", "1.2.1", direct=True),
+            "high",
+        )
+        self.assertEqual(
+            remediation_module._compatibility_confidence("1.2.0", "1.3.0", direct=True),
+            "medium",
+        )
+        self.assertEqual(
+            remediation_module._compatibility_confidence("bad", "2", direct=True),
+            "low",
+        )
+        self.assertEqual(
+            remediation_module._compatibility_confidence("1.2.0", "1.3.0", direct=False),
+            "low",
+        )
+        self.assertIn(
+            "could not be classified",
+            remediation_module._breaking_change_warning("bad", "2") or "",
+        )
+        self.assertIsNone(remediation_module._breaking_change_warning("1.2", "1.3"))
+        self.assertIsNone(remediation_module._changelog_url(None))
+        report = make_report("1")
+        report.repository_urls = ["https://github.com/example/demo"]
+        self.assertEqual(
+            remediation_module._changelog_url(report),
+            "https://github.com/example/demo/releases",
+        )
+        report.repository_urls = ["https://example.test/changelog"]
+        self.assertEqual(
+            remediation_module._changelog_url(report),
+            "https://example.test/changelog",
+        )
+        resolution = Resolution(
+            distributions=[
+                ResolvedDistribution(
+                    name="parent",
+                    version="1",
+                    requires_dist=("child>=1", "not valid @@@"),
+                ),
+                ResolvedDistribution(name="child", version="1"),
+            ]
+        )
+        self.assertIn(
+            "parent==1",
+            remediation_module._transitive_explanation("child", resolution),
+        )
+        self.assertIn(
+            "resolved dependency graph",
+            remediation_module._transitive_explanation("other", resolution),
+        )
+
     def setUp(self) -> None:
         self.baseline = Resolution(
             distributions=[
@@ -198,6 +251,13 @@ class RemediationPlannerTests(unittest.TestCase):
         self.assertEqual(plan.status, "validated")
         self.assertTrue(plan.minimal)
         self.assertEqual(plan.upgrades[0].to_version, "2.0")
+        self.assertEqual(plan.upgrades[0].compatibility_confidence, "low")
+        self.assertIn("Major-version", plan.upgrades[0].breaking_change_warning or "")
+        self.assertTrue(plan.minimal_secure_upgrade_proof["proven"])
+        self.assertEqual(
+            plan.to_dict()["minimal_secure_upgrade_proof"]["strategy"],  # type: ignore[index]
+            "exhaustive-cardinality-then-version search",
+        )
         self.assertIsNotNone(plan.before_graph)
         self.assertIsNotNone(plan.after_graph)
         assert plan.before_graph is not None
@@ -596,12 +656,15 @@ class RemediationModelTests(unittest.TestCase):
             attempts=2,
             upgrades=[
                 RemediationUpgrade(
-                    "demo",
-                    "1",
-                    "2",
-                    ("CVE-2",),
-                    True,
-                    "secure",
+                    project="demo",
+                    from_version="1",
+                    to_version="2",
+                    advisory_ids=("CVE-2",),
+                    direct=True,
+                    reason="secure",
+                    breaking_change_warning="review the major upgrade",
+                    changelog_url="https://example.test/changelog",
+                    transitive_explanation="required by parent==1",
                 )
             ],
             blocked=[blocked],
@@ -609,6 +672,7 @@ class RemediationModelTests(unittest.TestCase):
             patches=[patch_item],
             pull_request=pull_request,
             message="done",
+            minimal_secure_upgrade_proof={"proven": True},
         )
 
         payload = plan.to_dict()
@@ -626,6 +690,10 @@ class RemediationModelTests(unittest.TestCase):
         self.assertIn("blocked:", rendered)
         self.assertIn("patches:", rendered)
         self.assertIn("pull request:", rendered)
+        self.assertIn("minimal secure upgrade proof: proven", rendered)
+        self.assertIn("warning: review the major upgrade", rendered)
+        self.assertIn("cause: required by parent==1", rendered)
+        self.assertIn("changelog: https://example.test/changelog", rendered)
 
 
 class RemediationWriterTests(unittest.TestCase):

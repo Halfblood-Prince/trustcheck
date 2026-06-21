@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 import re
-import tomllib
+
+try:
+    import tomllib  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path

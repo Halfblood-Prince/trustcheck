@@ -314,6 +314,7 @@ class ReportDiagnostics:
     cache_hit_count: int = 0
     request_failures: list[RequestFailureDiagnostic] = field(default_factory=list)
     artifact_failures: list[ArtifactDiagnostic] = field(default_factory=list)
+    plugin_executions: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -325,6 +326,9 @@ class RemediationSummary:
     blocked_fixes: int = 0
     patch_files: list[str] = field(default_factory=list)
     pull_request_url: str | None = None
+    confidence: str | None = None
+    breaking_change_warnings: list[str] = field(default_factory=list)
+    minimal_secure_upgrade_proven: bool = False
 
 
 @dataclass(slots=True)

@@ -56,6 +56,8 @@ except ImportError:
     except PackageNotFoundError:
         _PACKAGE_VERSION = "0+unknown"
 DEFAULT_USER_AGENT = f"trustcheck/{_PACKAGE_VERSION}"
+DEFAULT_MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024
+DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 class PypiClientError(RuntimeError):
@@ -77,6 +79,49 @@ class PypiClientError(RuntimeError):
         self.url = url
         self.code = code
         self.subcode = subcode
+
+
+def _read_bounded_response(response: Any, *, limit: int, url: str) -> bytes:
+    headers = getattr(response, "headers", None) or {}
+    content_length = headers.get("Content-Length") if hasattr(headers, "get") else None
+    if content_length is not None:
+        try:
+            declared_size = int(content_length)
+        except (TypeError, ValueError):
+            declared_size = -1
+        if declared_size > limit:
+            raise _oversized_response_error(limit, url)
+
+    payload = bytearray()
+    while len(payload) <= limit:
+        read_size = min(DOWNLOAD_CHUNK_BYTES, limit + 1 - len(payload))
+        try:
+            chunk = response.read(read_size)
+        except TypeError:
+            # Compatibility for simple test/plugin response wrappers. Standard HTTP
+            # response objects always support bounded reads.
+            chunk = response.read()
+        if not chunk:
+            break
+        payload.extend(chunk)
+        if len(payload) > limit:
+            raise _oversized_response_error(limit, url)
+    return bytes(payload)
+
+
+def _reject_oversized_payload(payload: bytes, limit: int, url: str) -> None:
+    if len(payload) > limit:
+        raise _oversized_response_error(limit, url)
+
+
+def _oversized_response_error(limit: int, url: str) -> PypiClientError:
+    return PypiClientError(
+        f"response exceeds the {limit}-byte download limit: {url}",
+        transient=False,
+        url=url,
+        code="upstream",
+        subcode="response_too_large",
+    )
 
 
 class PackageClient(Protocol):
@@ -110,6 +155,7 @@ class PypiClient:
     enable_cache: bool = True
     cache_dir: str | None = None
     offline: bool = False
+    max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES
     request_hook: Callable[[str, dict[str, Any]], None] | None = None
     sleep: Callable[[float], None] = time.sleep
     http_pool: urllib3.PoolManager | None = None
@@ -179,6 +225,7 @@ class PypiClient:
         if self.offline:
             cached = self._read_disk_cache(url, accept=accept)
             if cached is not None:
+                _reject_oversized_payload(cached, self.max_download_bytes, url)
                 return cached
             raise PypiClientError(
                 f"offline mode enabled and no cached response is available for {url}",
@@ -206,7 +253,11 @@ class PypiClient:
                         req,
                         timeout=self.timeout,
                     ) as response:
-                        payload = bytes(response.read())
+                        payload = _read_bounded_response(
+                            response,
+                            limit=self.max_download_bytes,
+                            url=url,
+                        )
                         status = getattr(response, "status", None)
                 self._emit(
                     "response",
@@ -259,12 +310,22 @@ class PypiClient:
             headers=headers,
             timeout=urllib3.Timeout(total=self.timeout),
             retries=False,
+            preload_content=False,
         )
         try:
             status = int(response.status)
             if status >= 400:
                 raise self._http_status_error(status, url)
-            return bytes(response.data), status
+            if hasattr(response, "read"):
+                payload = _read_bounded_response(
+                    response,
+                    limit=self.max_download_bytes,
+                    url=url,
+                )
+            else:
+                payload = bytes(response.data)
+                _reject_oversized_payload(payload, self.max_download_bytes, url)
+            return payload, status
         finally:
             response.release_conn()
 
@@ -522,6 +583,7 @@ class IndexBackedPackageClient:
 
             self.repository_client = SimpleRepositoryClient(
                 timeout=self.base_client.timeout,
+                max_response_bytes=self.base_client.max_download_bytes,
             )
 
     def __getattr__(self, name: str) -> Any:
@@ -563,7 +625,21 @@ class IndexBackedPackageClient:
         parsed = parse.urlsplit(url)
         if parsed.scheme == "file":
             try:
-                return Path(request.url2pathname(parsed.path)).read_bytes()
+                path = Path(request.url2pathname(parsed.path))
+                if path.stat().st_size > self.base_client.max_download_bytes:
+                    raise PypiClientError(
+                        f"artifact exceeds the {self.base_client.max_download_bytes}-byte "
+                        f"download limit: {url}",
+                        url=url,
+                        code="upstream",
+                        subcode="response_too_large",
+                    )
+                with path.open("rb") as stream:
+                    return _read_bounded_response(
+                        stream,
+                        limit=self.base_client.max_download_bytes,
+                        url=url,
+                    )
             except OSError as exc:
                 raise PypiClientError(
                     f"unable to read locked artifact {url}: {exc}",
@@ -571,10 +647,16 @@ class IndexBackedPackageClient:
                     subcode="artifact_read_failed",
                 ) from exc
         try:
-            return bytes(self.repository_client.download(
+            payload = bytes(self.repository_client.download(
                 url,
                 index_url=self.index_url,
             ))
+            _reject_oversized_payload(
+                payload,
+                self.base_client.max_download_bytes,
+                url,
+            )
+            return payload
         except Exception as exc:
             raise PypiClientError(
                 str(exc),

@@ -5,11 +5,15 @@ import configparser
 import csv
 import hashlib
 import io
+import math
+import multiprocessing
+import os
 import re
 import tarfile
 import zipfile
 from email.parser import BytesParser
 from email.policy import default
+from multiprocessing.connection import Connection
 from pathlib import PurePosixPath
 from typing import IO, Callable, Iterable, Sequence, TypeVar
 
@@ -28,6 +32,14 @@ MAX_SCRIPT_SAMPLE_BYTES = 256 * 1024
 MAX_SOURCE_AST_BYTES = 512 * 1024
 MAX_NATIVE_ANALYSIS_BYTES = 32 * 1024 * 1024
 MAX_DEEP_INSPECTION_BYTES = 64 * 1024 * 1024
+MAX_ARTIFACT_BYTES = 128 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 10_000
+MAX_ARCHIVE_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 200.0
+MIN_COMPRESSION_RATIO_BYTES = 10 * 1024 * 1024
+MAX_INSPECTION_SECONDS = 20.0
+MAX_INSPECTION_CPU_SECONDS = 15
+MAX_INSPECTION_MEMORY_BYTES = 512 * 1024 * 1024
 OVERSIZED_FILE_BYTES = 20 * 1024 * 1024
 NATIVE_SUFFIXES = (".so", ".pyd", ".dll", ".dylib")
 SCRIPT_SUFFIXES = (".sh", ".bash", ".bat", ".cmd", ".ps1")
@@ -75,6 +87,10 @@ DANGEROUS_ENTRY_POINT_TARGETS = {
 MemberT = TypeVar("MemberT")
 
 
+class ArtifactLimitError(ValueError):
+    """Raised when an artifact exceeds a static-inspection safety bound."""
+
+
 class _CaseSensitiveConfigParser(configparser.ConfigParser):
     def optionxform(self, optionstr: str) -> str:
         return optionstr
@@ -88,6 +104,11 @@ def inspect_artifact(
     expected_version: str,
     expected_requires_dist: Iterable[str] | None = None,
 ) -> ArtifactInspection:
+    if len(payload) > MAX_ARTIFACT_BYTES:
+        return _limit_failure(
+            filename,
+            f"artifact exceeds the {MAX_ARTIFACT_BYTES}-byte download limit",
+        )
     if filename.endswith(".whl"):
         result = _inspect_wheel(payload)
     elif filename.endswith((".tar.gz", ".tgz", ".zip")):
@@ -107,6 +128,129 @@ def inspect_artifact(
         expected_requires_dist=expected_requires_dist,
     )
     return result
+
+
+def inspect_artifact_isolated(
+    filename: str,
+    payload: bytes,
+    *,
+    expected_project: str,
+    expected_version: str,
+    expected_requires_dist: Iterable[str] | None = None,
+    timeout: float = MAX_INSPECTION_SECONDS,
+) -> ArtifactInspection:
+    """Inspect an artifact in a resource-bounded spawned process."""
+    if len(payload) > MAX_ARTIFACT_BYTES:
+        return _limit_failure(
+            filename,
+            f"artifact exceeds the {MAX_ARTIFACT_BYTES}-byte download limit",
+        )
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_inspection_worker,
+        args=(
+            sender,
+            filename,
+            payload,
+            expected_project,
+            expected_version,
+            tuple(expected_requires_dist or ()),
+        ),
+        name="trustcheck-artifact-inspection",
+        daemon=True,
+    )
+    try:
+        process.start()
+        sender.close()
+        if not receiver.poll(timeout):
+            process.terminate()
+            process.join(timeout=1.0)
+            return _limit_failure(
+                filename,
+                f"artifact inspection exceeded the {timeout:g}-second time limit",
+            )
+        try:
+            result = receiver.recv()
+        except EOFError:
+            result = _limit_failure(
+                filename,
+                "artifact inspection worker exited without a result",
+            )
+        process.join(timeout=1.0)
+        if not isinstance(result, ArtifactInspection):
+            return _limit_failure(filename, "artifact inspection worker returned invalid data")
+        return result
+    except (OSError, RuntimeError) as exc:
+        return _limit_failure(filename, f"unable to isolate artifact inspection: {exc}")
+    finally:
+        receiver.close()
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=1.0)
+
+
+def _inspection_worker(
+    sender: Connection,
+    filename: str,
+    payload: bytes,
+    expected_project: str,
+    expected_version: str,
+    expected_requires_dist: tuple[str, ...],
+) -> None:  # pragma: no cover - exercised in the spawned integration test
+    try:
+        _apply_worker_limits()
+        result = inspect_artifact(
+            filename,
+            payload,
+            expected_project=expected_project,
+            expected_version=expected_version,
+            expected_requires_dist=expected_requires_dist,
+        )
+        sender.send(result)
+    except BaseException as exc:
+        sender.send(
+            _limit_failure(filename, f"artifact inspection worker failed: {exc}")
+        )
+    finally:
+        sender.close()
+
+
+def _apply_worker_limits() -> None:  # pragma: no cover - OS-specific child bootstrap
+    try:
+        import resource
+    except ImportError:
+        return
+    cpu_limit = max(1, math.ceil(MAX_INSPECTION_CPU_SECONDS))
+    setrlimit = getattr(resource, "setrlimit", None)
+    rlimit_cpu = getattr(resource, "RLIMIT_CPU", None)
+    if setrlimit is None or rlimit_cpu is None:
+        return
+    setrlimit(rlimit_cpu, (cpu_limit, cpu_limit))
+    rlimit_as = getattr(resource, "RLIMIT_AS", None)
+    if rlimit_as is not None:
+        setrlimit(
+            rlimit_as,
+            (MAX_INSPECTION_MEMORY_BYTES, MAX_INSPECTION_MEMORY_BYTES),
+        )
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        import pwd
+
+        nobody = getattr(pwd, "getpwnam")("nobody")
+        getattr(os, "setgroups")([])
+        getattr(os, "setgid")(nobody.pw_gid)
+        getattr(os, "setuid")(nobody.pw_uid)
+
+
+def _limit_failure(filename: str, message: str) -> ArtifactInspection:
+    kind = "wheel" if filename.endswith(".whl") else "sdist"
+    return ArtifactInspection(
+        inspected=True,
+        kind=kind,
+        archive_valid=False,
+        record_valid=False if kind == "wheel" else None,
+        error=message,
+    )
 
 
 def compare_artifact_metadata(inspections: Iterable[ArtifactInspection]) -> None:
@@ -151,6 +295,7 @@ def _inspect_wheel(payload: bytes) -> ArtifactInspection:
     try:
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             members = archive.infolist()
+            _validate_zip_limits(members, len(payload))
             result.archive_valid = True
             result.file_count = sum(1 for member in members if not member.is_dir())
             result.total_uncompressed_size = sum(
@@ -184,6 +329,7 @@ def _inspect_sdist(filename: str, payload: bytes) -> ArtifactInspection:
         if filename.endswith(".zip"):
             with zipfile.ZipFile(io.BytesIO(payload)) as archive:
                 zip_members = archive.infolist()
+                _validate_zip_limits(zip_members, len(payload))
                 result.archive_valid = True
                 result.file_count = sum(
                     1 for member in zip_members if not member.is_dir()
@@ -197,7 +343,7 @@ def _inspect_sdist(filename: str, payload: bytes) -> ArtifactInspection:
                 _inspect_sdist_zip(archive, zip_members, result)
         else:
             with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
-                tar_members = archive.getmembers()
+                tar_members = _bounded_tar_members(archive, len(payload))
                 result.archive_valid = True
                 result.file_count = sum(
                     1 for member in tar_members if member.isfile()
@@ -218,6 +364,68 @@ def _inspect_sdist(filename: str, payload: bytes) -> ArtifactInspection:
         result.archive_valid = False
         result.error = f"invalid sdist archive: {exc}"
     return result
+
+
+def _validate_zip_limits(
+    members: Sequence[zipfile.ZipInfo],
+    compressed_bytes: int,
+) -> None:
+    if len(members) > MAX_ARCHIVE_MEMBERS:
+        raise ArtifactLimitError(
+            f"archive contains {len(members)} members; limit is {MAX_ARCHIVE_MEMBERS}"
+        )
+    files = [member for member in members if not member.is_dir()]
+    total = sum(member.file_size for member in files)
+    if total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+        raise ArtifactLimitError(
+            f"archive expands to {total} bytes; limit is "
+            f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES}"
+        )
+    for member in files:
+        ratio = member.file_size / max(1, member.compress_size)
+        if member.file_size >= MIN_COMPRESSION_RATIO_BYTES and ratio > MAX_COMPRESSION_RATIO:
+            raise ArtifactLimitError(
+                f"{member.filename} has compression ratio {ratio:.1f}; "
+                f"limit is {MAX_COMPRESSION_RATIO:g}"
+            )
+    _validate_aggregate_ratio(total, compressed_bytes)
+
+
+def _bounded_tar_members(
+    archive: tarfile.TarFile,
+    compressed_bytes: int,
+) -> list[tarfile.TarInfo]:
+    members: list[tarfile.TarInfo] = []
+    total = 0
+    for member in archive:
+        members.append(member)
+        if len(members) > MAX_ARCHIVE_MEMBERS:
+            raise ArtifactLimitError(
+                f"archive contains more than {MAX_ARCHIVE_MEMBERS} members"
+            )
+        if member.isfile():
+            if member.size < 0:
+                raise ArtifactLimitError(f"{member.name} declares a negative size")
+            total += member.size
+            if total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                raise ArtifactLimitError(
+                    f"archive expands beyond the "
+                    f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES}-byte limit"
+                )
+    _validate_aggregate_ratio(total, compressed_bytes)
+    return members
+
+
+def _validate_aggregate_ratio(uncompressed_bytes: int, compressed_bytes: int) -> None:
+    ratio = uncompressed_bytes / max(1, compressed_bytes)
+    if (
+        uncompressed_bytes >= MIN_COMPRESSION_RATIO_BYTES
+        and ratio > MAX_COMPRESSION_RATIO
+    ):
+        raise ArtifactLimitError(
+            f"archive aggregate compression ratio is {ratio:.1f}; "
+            f"limit is {MAX_COMPRESSION_RATIO:g}"
+        )
 
 
 def _inspect_wheel_record(
@@ -750,7 +958,10 @@ def _read_zip_member(
     if member.file_size > limit:
         raise ValueError(f"{member.filename} exceeds the {limit}-byte inspection limit")
     with archive.open(member) as stream:
-        return stream.read(limit + 1)
+        payload = stream.read(limit + 1)
+    if len(payload) > limit:
+        raise ValueError(f"{member.filename} exceeds the {limit}-byte inspection limit")
+    return payload
 
 
 def _read_tar_member(
@@ -765,7 +976,10 @@ def _read_tar_member(
     if stream is None:
         return b""
     with stream:
-        return stream.read(limit + 1)
+        payload = stream.read(limit + 1)
+    if len(payload) > limit:
+        raise ValueError(f"{member.name} exceeds the {limit}-byte inspection limit")
+    return payload
 
 
 def _hash_zip_member(

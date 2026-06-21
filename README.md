@@ -16,7 +16,7 @@
 [![mypy](https://img.shields.io/github/actions/workflow/status/Halfblood-Prince/trustcheck/ci.yml?branch=main&label=mypy)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
 [![Coverage](https://raw.githubusercontent.com/Halfblood-Prince/trustcheck/coverage-badge/coverage.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/trustcheck.svg)](https://pypi.org/project/trustcheck/)
-[![Python 3.11 | 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
+[![Python 3.10 | 3.11 | 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/ci.yml)
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/trustcheck?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/trustcheck)
 [![TrustCheck Package Scanner](https://img.shields.io/badge/GitHub%20Action-TrustCheck%20Package%20Scanner-blue?logo=githubactions&logoColor=white)](https://github.com/marketplace/actions/trustcheck-package-scanner)
 
@@ -68,6 +68,19 @@ artifact is scanned with ClamAV. Clean binaries, checksums, and scanner reports
 are retained as workflow artifacts by
 [Binary Security](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/binary-security.yml).
 
+<!-- trustcheck-benchmark:start -->
+## Latest benchmark
+
+Generated `2026-06-21T08:43:40.047949+00:00` on Python `3.14.6` with `pip-audit 2.10.0`. Corpus `2026.06` covered 112 comparable package entries.
+
+| Tool | Cold p50 | Warm p50 | Warm p95 | Peak RSS | Requests p50 | Recall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| trustcheck scan --fast | 17.08 s | 15.70 s | 15.70 s | 88.3 MiB | unknown | 1 |
+| pip-audit | 38.71 s | 39.96 s | 39.96 s | 74.4 MiB | unknown | 1 |
+
+Alias-aware agreement: `0.759197` across `109` compared packages and `227` matched advisories.
+Resolver exact match: `True` (trustcheck `22`, pip-audit `22`).
+<!-- trustcheck-benchmark:end -->
 ## Installation
 
 Install from PyPI:
@@ -106,12 +119,30 @@ snap run trustcheck inspect requests
 
 PyPI installation requirements:
 
-- Python `>=3.11`
+- Python `>=3.10`
 - Network access to PyPI
 
-Machine-readable reports currently use JSON schema `1.9.0`. Package and report
+Machine-readable reports currently use JSON schema `1.10.0`. Package and report
 schema versions are independent so documentation-only package releases do not
 force contract churn.
+
+## Pre-commit and monorepos
+
+Trustcheck publishes a first-party hook for changed dependency files:
+
+```yaml
+repos:
+  - repo: https://github.com/Halfblood-Prince/trustcheck
+    rev: v1
+    hooks:
+      - id: trustcheck
+```
+
+The hook runs `--fast --no-deps --with-osv`, preserves lockfile artifact hashes,
+deduplicates filenames, and merges failures across every changed dependency file.
+For monorepos, `trustcheck-workspace . --format sarif` discovers supported files,
+aggregates repository-relative results, and accepts `--baseline` plus
+`--policy-overrides` for per-project policies.
 
 ## TrustCheck Package Scanner
 
@@ -342,11 +373,17 @@ SHA-256 digest of canonical advisory records. Reading one requires the trusted
 Sigstore certificate identity and accepts snapshots for at most seven days by
 default; adjust that bound with `--max-advisory-age HOURS`.
 
-Enable an installed plugin explicitly:
+Enable an installed, signed plugin explicitly:
 
 ```bash
 trustcheck scan -f requirements.txt --plugin policy:company-policy
 ```
+
+Every plugin must be explicitly allowlisted. Trustcheck verifies its signed
+`trustcheck-plugin.json` name, kind, entry point, and API version before using a
+spawned resource-bounded worker. Optional signer fingerprints live under
+`_trustcheck.trusted_signers` in plugin config. Each call is reported in
+`diagnostics.plugin_executions` with status, duration, and isolation state.
 
 Hash-pinned pip-tools output is detected automatically. Every retained
 lockfile hash is emitted in combined JSON and checked against the downloaded

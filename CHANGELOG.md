@@ -8,6 +8,29 @@ The project follows Semantic Versioning for the supported public API described i
 
 ### Added
 
+- Added the first-party `trustcheck` pre-commit hook for fast, hash-aware
+  changed dependency-file scans.
+- Added signed, API-versioned plugin manifests, plugin and signer allowlists,
+  spawned resource-bounded workers, and plugin execution diagnostics.
+- Published signed raw benchmark results with exact environments, cache phases,
+  timings, peak RSS, corpus hashes, and advisory disagreements.
+- Restored Python 3.10 support with CI and release-matrix coverage.
+- Added monorepo discovery, aggregate JSON/SARIF, stable relative locations,
+  previous-scan baselines, and glob-scoped policy overrides.
+- Added remediation confidence, breaking-change warnings, changelog links,
+  transitive causes, and minimal secure upgrade proofs; advanced the schema to `1.10.0`
+  and remediation schema to `1.2.0`.
+
+- Hardened artifact handling with streaming download and aggregate scan caps,
+  archive member/expansion/compression-ratio limits, and spawned low-privilege
+  inspection workers with wall-clock, CPU, and address-space limits.
+- Replaced benchmark union recall with a detached-signature-verified truth
+  corpus covering advisory aliases, fixes, withdrawals, markers, extras, clean
+  packages, and private indexes; correctness regressions now fail CI.
+- Added Atheris fuzz targets and CI smoke fuzzing for requirements, every
+  supported lockfile family, provenance, wheels/sdists and archive headers,
+  malformed RECORD data, and SARIF/SPDX/CycloneDX rendering.
+
 - Added Sigstore-signed advisory snapshot schema 2 with source URLs, canonical
   record SHA-256 digests, generation and expiration times, trusted signer
   identity verification, and `--max-advisory-age` enforcement.
@@ -141,7 +164,8 @@ The project follows Semantic Versioning for the supported public API described i
 
 - Replaced the `pypi-attestations` runtime dependency with an internal PEP 740 adapter that delegates certificate, transparency-log, signature, and identity verification directly to Sigstore.
 - Raised vulnerable Sigstore transitive dependency floors and added a Windows-only fallback to Sigstore's embedded trusted-root snapshot when TUF refresh cannot create symlinks without elevated privileges.
-- Raised the minimum supported Python version to 3.11 and switched TOML decoding to the standard-library `tomllib` module.
+- Use standard-library `tomllib` on Python 3.11+ and the conditional `tomli`
+  compatibility package on Python 3.10.
 - Moved coverage badge generation and publication into GitHub Actions, with the generated SVG maintained on a dedicated `coverage-badge` branch instead of in the source tree.
 - Renamed the reusable GitHub Action and Marketplace display name to `TrustCheck Package Scanner`.
 - Expanded the Snap Store listing with richer feature copy, quick-start examples, project links, and a dedicated storefront icon.

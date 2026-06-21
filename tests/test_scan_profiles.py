@@ -27,7 +27,7 @@ from trustcheck.indexes import DEFAULT_INDEX_URL
 from trustcheck.models import TrustReport
 from trustcheck.plugins import PluginManager
 from trustcheck.policy import PolicySettings
-from trustcheck.pypi import JSON_ACCEPT, PypiClient
+from trustcheck.pypi import JSON_ACCEPT, PypiClient, PypiClientError
 from trustcheck.resolver import TargetEnvironment
 from trustcheck.service import ArtifactDigestCache, inspect_package
 
@@ -259,6 +259,11 @@ class ScanProfileTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "artifact"):
             cache.fetch("artifact", None, fail)
+
+        bounded_cache = ArtifactDigestCache(max_total_bytes=3)
+        self.assertEqual(bounded_cache.fetch("one", None, lambda url: b"123"), b"123")
+        with self.assertRaisesRegex(PypiClientError, "aggregate artifact downloads"):
+            bounded_cache.fetch("two", None, lambda url: b"4")
 
     def test_digest_cache_coalesces_waiters_and_serves_cached_payload(self) -> None:
         cache = ArtifactDigestCache()

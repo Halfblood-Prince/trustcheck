@@ -276,6 +276,8 @@ def evaluate_policy(
         violations=_dedupe_violations(violations),
     )
     report.policy = evaluation
+    if plugin_manager is not None:
+        plugin_manager.attach_executions(report)
     return evaluation
 
 

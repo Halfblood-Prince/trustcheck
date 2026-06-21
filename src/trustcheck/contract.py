@@ -34,10 +34,10 @@ from .models import (
     VulnerabilitySuppression,
 )
 
-JSON_SCHEMA_VERSION: Final = "1.9.0"
+JSON_SCHEMA_VERSION: Final = "1.10.0"
 JSON_SCHEMA_ID = f"urn:trustcheck:report:{JSON_SCHEMA_VERSION}"
-SchemaVersion: TypeAlias = Literal["1.9.0"]
-DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.9.0"
+SchemaVersion: TypeAlias = Literal["1.10.0"]
+DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.10.0"
 
 
 class RiskFlagPayload(BaseModel):
@@ -373,6 +373,7 @@ class ReportDiagnosticsPayload(BaseModel):
     cache_hit_count: int = 0
     request_failures: list[RequestFailureDiagnosticPayload] = Field(default_factory=list)
     artifact_failures: list[ArtifactDiagnosticPayload] = Field(default_factory=list)
+    plugin_executions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RemediationSummaryPayload(BaseModel):
@@ -385,6 +386,9 @@ class RemediationSummaryPayload(BaseModel):
     blocked_fixes: int = 0
     patch_files: list[str] = Field(default_factory=list)
     pull_request_url: str | None = None
+    confidence: str | None = None
+    breaking_change_warnings: list[str] = Field(default_factory=list)
+    minimal_secure_upgrade_proven: bool = False
 
 
 class OwnershipRolePayload(BaseModel):

@@ -25,7 +25,7 @@ from .lockfiles import is_supported_lockfile, load_lockfile, load_pip_tools_lock
 from .models import TrustReport, VulnerabilityRecord
 from .resolver import ArtifactReference, Resolution, ResolutionError, ResolvedDistribution
 
-REMEDIATION_SCHEMA_VERSION: Final = "1.1.0"
+REMEDIATION_SCHEMA_VERSION: Final = "1.2.0"
 REMEDIATION_SCHEMA_ID: Final = (
     f"urn:trustcheck:remediation:{REMEDIATION_SCHEMA_VERSION}"
 )
@@ -60,6 +60,10 @@ class RemediationUpgrade:
     advisory_ids: tuple[str, ...] = ()
     direct: bool = False
     reason: str = ""
+    compatibility_confidence: str = "medium"
+    breaking_change_warning: str | None = None
+    changelog_url: str | None = None
+    transitive_explanation: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -69,6 +73,10 @@ class RemediationUpgrade:
             "advisory_ids": list(self.advisory_ids),
             "direct": self.direct,
             "reason": self.reason,
+            "compatibility_confidence": self.compatibility_confidence,
+            "breaking_change_warning": self.breaking_change_warning,
+            "changelog_url": self.changelog_url,
+            "transitive_explanation": self.transitive_explanation,
         }
 
 
@@ -310,6 +318,7 @@ class RemediationPlan:
     validation: RemediationValidation = field(default_factory=RemediationValidation)
     pull_request: PullRequestResult | None = None
     message: str = ""
+    minimal_secure_upgrade_proof: dict[str, object] = field(default_factory=dict)
     candidate_resolution: Resolution | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, object]:
@@ -356,6 +365,7 @@ class RemediationPlan:
                 else None
             ),
             "message": self.message,
+            "minimal_secure_upgrade_proof": self.minimal_secure_upgrade_proof,
         }
 
     def write_json(self, path: str | Path) -> None:
@@ -631,6 +641,21 @@ def plan_remediation(
                 "lowest constraint-compatible release that removes all active "
                 "fixable advisories in the selected environment"
             ),
+            compatibility_confidence=_compatibility_confidence(
+                distributions[name].version,
+                str(version),
+                direct=name in root_names,
+            ),
+            breaking_change_warning=_breaking_change_warning(
+                distributions[name].version,
+                str(version),
+            ),
+            changelog_url=_changelog_url(normalized_reports.get(name)),
+            transitive_explanation=(
+                None
+                if name in root_names
+                else _transitive_explanation(name, baseline)
+            ),
         )
         for name, version in sorted(chosen_versions_map.items())
     ]
@@ -668,7 +693,76 @@ def plan_remediation(
     )
     plan.status = "validated"
     plan.message = "a minimal secure resolution was validated"
+    plan.minimal_secure_upgrade_proof = {
+        "proven": True,
+        "strategy": "exhaustive-cardinality-then-version search",
+        "attempts": plan.attempts,
+        "max_attempts": plan.max_attempts,
+        "targeted_advisories_removed": plan.validation.targeted_advisories_removed,
+        "no_new_vulnerabilities": plan.validation.no_new_vulnerabilities,
+        "policy_passed": plan.validation.policy_passed,
+        "resolution_reproducible": plan.validation.resolution_passed,
+        "selected_upgrades": [
+            f"{item.project}=={item.to_version}" for item in plan.upgrades
+        ],
+    }
     return plan
+
+
+def _compatibility_confidence(from_version: str, to_version: str, *, direct: bool) -> str:
+    try:
+        before = Version(from_version)
+        after = Version(to_version)
+    except InvalidVersion:
+        return "low"
+    if before.major != after.major:
+        return "low"
+    if before.minor != after.minor:
+        return "medium" if direct else "low"
+    return "high"
+
+
+def _breaking_change_warning(from_version: str, to_version: str) -> str | None:
+    try:
+        before = Version(from_version)
+        after = Version(to_version)
+    except InvalidVersion:
+        return "Version compatibility could not be classified; review release notes."
+    if before.major != after.major:
+        return (
+            f"Major-version upgrade {from_version} -> {to_version} may contain "
+            "backward-incompatible changes."
+        )
+    return None
+
+
+def _changelog_url(report: TrustReport | None) -> str | None:
+    if report is None:
+        return None
+    urls = [*report.declared_repository_urls, *report.repository_urls]
+    explicit = next(
+        (url for url in urls if "changelog" in url.lower() or "releases" in url.lower()),
+        None,
+    )
+    if explicit:
+        return explicit
+    github = next((url.rstrip("/") for url in urls if "github.com/" in url.lower()), None)
+    return f"{github}/releases" if github else None
+
+
+def _transitive_explanation(project: str, resolution: Resolution) -> str:
+    parents: list[str] = []
+    for distribution in resolution.distributions:
+        for raw_requirement in distribution.requires_dist:
+            try:
+                requirement = Requirement(raw_requirement)
+            except InvalidRequirement:
+                continue
+            if _key(requirement.name) == project:
+                parents.append(f"{distribution.name}=={distribution.version}")
+    if parents:
+        return "Required transitively by " + ", ".join(sorted(set(parents))) + "."
+    return "Transitive dependency selected by the resolved dependency graph."
 
 
 def validate_candidate(
@@ -1098,6 +1192,15 @@ def render_remediation_text(plan: RemediationPlan) -> str:
         f"minimal: {'yes' if plan.minimal else 'no'}",
         f"attempts: {plan.attempts}/{plan.max_attempts}",
     ]
+    if plan.minimal_secure_upgrade_proof:
+        lines.append(
+            "minimal secure upgrade proof: "
+            + (
+                "proven"
+                if plan.minimal_secure_upgrade_proof.get("proven")
+                else "not proven"
+            )
+        )
     if plan.message:
         lines.append(f"message: {plan.message}")
     if plan.upgrades:
@@ -1105,9 +1208,16 @@ def render_remediation_text(plan: RemediationPlan) -> str:
         lines.extend(
             "  - "
             f"{item.project}: {item.from_version} -> {item.to_version} "
-            f"({', '.join(item.advisory_ids)})"
+            f"({', '.join(item.advisory_ids)}; confidence={item.compatibility_confidence})"
             for item in plan.upgrades
         )
+        for item in plan.upgrades:
+            if item.breaking_change_warning:
+                lines.append(f"    warning: {item.breaking_change_warning}")
+            if item.transitive_explanation:
+                lines.append(f"    cause: {item.transitive_explanation}")
+            if item.changelog_url:
+                lines.append(f"    changelog: {item.changelog_url}")
     if plan.blocked:
         lines.append("blocked:")
         lines.extend(

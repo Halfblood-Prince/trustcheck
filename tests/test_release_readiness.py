@@ -3,10 +3,11 @@ from __future__ import annotations
 import io
 import re
 import shlex
-import tomllib
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+
+import tomllib
 
 import trustcheck
 from trustcheck.cli import build_parser, main

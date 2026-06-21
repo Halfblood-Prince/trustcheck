@@ -7,7 +7,11 @@ import os
 import re
 import sys
 import threading
-import tomllib
+
+try:
+    import tomllib  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
@@ -2169,6 +2173,22 @@ def _attach_remediation_summary(
         blocked_fixes=len(plan.blocked),
         patch_files=[patch.path for patch in plan.patches],
         pull_request_url=pull_request_url,
+        confidence=(
+            min(
+                (item.compatibility_confidence for item in plan.upgrades),
+                key=lambda value: {"low": 0, "medium": 1, "high": 2}[value],
+            )
+            if plan.upgrades
+            else None
+        ),
+        breaking_change_warnings=[
+            item.breaking_change_warning
+            for item in plan.upgrades
+            if item.breaking_change_warning is not None
+        ],
+        minimal_secure_upgrade_proven=(
+            plan.minimal_secure_upgrade_proof.get("proven") is True
+        ),
     )
     for report in reports:
         report.remediation = summary

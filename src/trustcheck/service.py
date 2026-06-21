@@ -32,7 +32,7 @@ from .advisories import (
     VulnerabilityIntelligenceClient,
     parse_pypi_vulnerabilities,
 )
-from .artifacts import compare_artifact_metadata, inspect_artifact
+from .artifacts import compare_artifact_metadata, inspect_artifact_isolated
 from .attestations import Distribution as AttestedDistribution
 from .attestations import Provenance, VerificationError
 from .malicious import assess_package, finding_for_artifact
@@ -126,6 +126,7 @@ _RECOMMENDATION_ORDER = {
     "review-required": 2,
     "high-risk": 3,
 }
+MAX_TOTAL_ARTIFACT_BYTES = 512 * 1024 * 1024
 
 SCAN_PROFILE_NAMES = ("fast", "standard", "full")
 
@@ -167,10 +168,12 @@ SCAN_PROFILES = {
 class ArtifactDigestCache:
     """Share downloaded artifacts by digest and coalesce concurrent fetches."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_total_bytes: int = MAX_TOTAL_ARTIFACT_BYTES) -> None:
         self._payloads: dict[str, bytes] = {}
         self._pending: dict[str, Future[bytes]] = {}
         self._lock = Lock()
+        self._max_total_bytes = max_total_bytes
+        self._total_bytes = 0
 
     def fetch(
         self,
@@ -200,6 +203,18 @@ class ArtifactDigestCache:
             observed_digest = hashlib.new("sha256", payload).hexdigest()
             observed_key = f"sha256:{observed_digest}"
             with self._lock:
+                if (
+                    observed_key not in self._payloads
+                    and self._total_bytes + len(payload) > self._max_total_bytes
+                ):
+                    raise PypiClientError(
+                        "aggregate artifact downloads exceed the "
+                        f"{self._max_total_bytes}-byte scan limit",
+                        code="upstream",
+                        subcode="response_too_large",
+                    )
+                if observed_key not in self._payloads:
+                    self._total_bytes += len(payload)
                 self._payloads[observed_key] = payload
                 if not expected_sha256 or expected_sha256.lower() == observed_digest:
                     self._payloads[key] = payload
@@ -692,7 +707,7 @@ def _collect_file(
             if artifact_bytes is None:
                 artifact_bytes = download()
             provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
-            provenance.artifact = inspect_artifact(
+            provenance.artifact = inspect_artifact_isolated(
                 filename,
                 artifact_bytes,
                 expected_project=project,

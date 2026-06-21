@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import platform
@@ -15,8 +16,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
-BENCHMARK_SCHEMA = "urn:trustcheck:benchmark:pip-audit:3.0.0"
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from packaging.markers import Marker, default_environment
+from packaging.utils import canonicalize_name
+
+BENCHMARK_SCHEMA = "urn:trustcheck:benchmark:pip-audit:4.0.0"
 CORPUS_SCHEMA = "urn:trustcheck:benchmark-corpus:1.0.0"
+TRUTH_SCHEMA = "urn:trustcheck:benchmark-truth:1.0.0"
 MIN_CORPUS_PACKAGES = 100
 MAX_CORPUS_PACKAGES = 500
 TRUSTCHECK_BENCHMARK_SUBCOMMAND = "scan"
@@ -51,6 +59,30 @@ class RunResult:
     request_count: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class TruthCase:
+    case_id: str
+    project: str
+    version: str
+    vulnerable: bool
+    advisories: tuple[frozenset[str], ...]
+    withdrawn: tuple[frozenset[str], ...]
+    fixed_versions: tuple[str, ...]
+    marker: str | None = None
+    extras: tuple[str, ...] = ()
+    private_index: bool = False
+    advisories_complete: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class TruthCorpus:
+    manifest: Path
+    version: str
+    cases: tuple[TruthCase, ...]
+    min_recall: float
+    max_false_positives: int
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -62,6 +94,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--corpus",
         default="benchmarks/corpus/corpus.json",
         help="Versioned benchmark corpus manifest.",
+    )
+    parser.add_argument(
+        "--truth",
+        default="benchmarks/corpus/truth.json",
+        help="Signed advisory truth corpus used for correctness gates.",
     )
     parser.add_argument(
         "--case",
@@ -113,6 +150,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.requirements
         else _load_corpus(Path(args.corpus).resolve())
     )
+    truth = None if args.requirements else _load_truth_corpus(Path(args.truth).resolve())
     benchmark_cases = _benchmark_cases(corpus, args.case)
     if not benchmark_cases:
         parser.error("no pip-audit-comparable corpus cases were selected")
@@ -155,7 +193,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         trustcheck_findings = _trustcheck_findings(trustcheck_runs[-1].payload)
         pip_audit_findings = _pip_audit_findings(pip_audit_runs[-1].payload)
-        correctness = _compare_findings(trustcheck_findings, pip_audit_findings)
+        correctness = _compare_findings(
+            trustcheck_findings,
+            pip_audit_findings,
+            truth=truth,
+            selected_cases={case.case_id for case in benchmark_cases},
+        )
 
         evidence: dict[str, Any] = {}
         evidence_commands: dict[str, Any] = {}
@@ -198,6 +241,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             resolution_findings = _compare_findings(
                 _trustcheck_findings(resolution_trust_warm[-1].payload),
                 _pip_audit_findings(resolution_pip_warm[-1].payload),
+                truth=truth,
+                selected_cases={resolution_case.case_id},
             )
             evidence["dependency_resolution"] = {
                 "case": resolution_case.case_id,
@@ -289,6 +334,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "pip_audit": _tool_version([sys.executable, "-m", "pip_audit", "--version"]),
         },
         "corpus": _corpus_summary(corpus, benchmark_cases),
+        "truth_corpus": _truth_summary(truth),
         "configuration": {
             "iterations": args.iterations,
             "evidence_iterations": args.evidence_iterations,
@@ -301,11 +347,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "trustcheck": "tool-reported diagnostics.request_count",
                 "pip_audit": "not exposed by pip-audit; recorded as null",
             },
-            "memory_measurement": (
-                "GNU time maximum resident set size"
-                if platform.system() == "Linux"
-                else "unavailable on this platform; recorded as null"
-            ),
+            "memory_measurement": _memory_measurement_method(),
             "selected_cases": [case.case_id for case in benchmark_cases],
         },
         "commands": published_commands,
@@ -325,7 +367,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     print(json.dumps(output["performance"], indent=2, sort_keys=True))
     print(json.dumps(correctness, indent=2, sort_keys=True))
-    return 0
+    regressions = correctness.get("regressions", [])
+    return 1 if regressions else 0
 
 
 def _load_corpus(manifest: Path) -> Corpus:
@@ -356,6 +399,114 @@ def _load_corpus(manifest: Path) -> Corpus:
         version=raw_version,
         cases=cases,
         package_count=package_count,
+    )
+
+
+def _load_truth_corpus(manifest: Path) -> TruthCorpus:
+    if not manifest.is_file():
+        raise ValueError(f"benchmark truth corpus does not exist: {manifest}")
+    signature_path = manifest.with_suffix(manifest.suffix + ".sig")
+    public_key_path = manifest.with_name("truth-public-key.pem")
+    try:
+        signature = base64.b64decode(
+            signature_path.read_text(encoding="ascii").strip(),
+            validate=True,
+        )
+        public_key = serialization.load_pem_public_key(public_key_path.read_bytes())
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"unable to load truth corpus signature: {exc}") from exc
+    if not isinstance(public_key, rsa.RSAPublicKey):
+        raise ValueError("truth corpus public key must be RSA")
+    raw_payload = manifest.read_bytes()
+    try:
+        public_key.verify(signature, raw_payload, padding.PKCS1v15(), hashes.SHA256())
+    except InvalidSignature as exc:
+        raise ValueError("benchmark truth corpus signature is invalid") from exc
+
+    payload = json.loads(raw_payload)
+    if not isinstance(payload, dict) or payload.get("schema") != TRUTH_SCHEMA:
+        raise ValueError("unsupported benchmark truth corpus schema")
+    version = _required_string(payload, "version")
+    raw_cases = payload.get("cases")
+    gates = payload.get("gates")
+    if not isinstance(raw_cases, list) or not raw_cases:
+        raise ValueError("benchmark truth corpus must contain cases")
+    if not isinstance(gates, dict):
+        raise ValueError("benchmark truth corpus must declare regression gates")
+    min_recall = gates.get("min_recall")
+    max_false_positives = gates.get("max_false_positives")
+    if not isinstance(min_recall, (int, float)) or not 0 <= min_recall <= 1:
+        raise ValueError("truth corpus min_recall must be between zero and one")
+    if not isinstance(max_false_positives, int) or max_false_positives < 0:
+        raise ValueError("truth corpus max_false_positives must be non-negative")
+    return TruthCorpus(
+        manifest=manifest,
+        version=version,
+        cases=tuple(_load_truth_case(item) for item in raw_cases),
+        min_recall=float(min_recall),
+        max_false_positives=max_false_positives,
+    )
+
+
+def _load_truth_case(payload: object) -> TruthCase:
+    if not isinstance(payload, dict):
+        raise ValueError("truth corpus cases must be objects")
+    case_id = _required_string(payload, "case")
+    project = canonicalize_name(_required_string(payload, "project"))
+    version = _required_string(payload, "version")
+    vulnerable = payload.get("vulnerable")
+    if not isinstance(vulnerable, bool):
+        raise ValueError(f"truth case {project}=={version} needs vulnerable boolean")
+
+    def identities(key: str) -> tuple[frozenset[str], ...]:
+        raw = payload.get(key, [])
+        if not isinstance(raw, list):
+            raise ValueError(f"truth case {project}=={version} has invalid {key}")
+        parsed: list[frozenset[str]] = []
+        for item in raw:
+            if not isinstance(item, dict) or not isinstance(item.get("aliases"), list):
+                raise ValueError(f"truth case {project}=={version} has invalid {key}")
+            aliases = frozenset(
+                str(alias).strip().upper()
+                for alias in item["aliases"]
+                if str(alias).strip()
+            )
+            if not aliases:
+                raise ValueError(f"truth case {project}=={version} has empty aliases")
+            parsed.append(aliases)
+        return tuple(parsed)
+
+    advisories = identities("advisories")
+    withdrawn = identities("withdrawn_advisories")
+    if vulnerable != bool(advisories):
+        raise ValueError(
+            f"truth case {project}=={version} vulnerability state conflicts with advisories"
+        )
+    fixed_versions = payload.get("fixed_versions", [])
+    extras = payload.get("extras", [])
+    marker = payload.get("marker")
+    if not isinstance(fixed_versions, list) or any(
+        not isinstance(item, str) for item in fixed_versions
+    ):
+        raise ValueError(f"truth case {project}=={version} has invalid fixed_versions")
+    if not isinstance(extras, list) or any(not isinstance(item, str) for item in extras):
+        raise ValueError(f"truth case {project}=={version} has invalid extras")
+    if marker is not None:
+        if not isinstance(marker, str):
+            raise ValueError(f"truth case {project}=={version} has invalid marker")
+        Marker(marker)
+    return TruthCase(
+        case_id=case_id,
+        project=project,
+        version=version,
+        vulnerable=vulnerable,
+        advisories=advisories,
+        withdrawn=withdrawn,
+        fixed_versions=tuple(fixed_versions),
+        marker=marker,
+        extras=tuple(extras),
+        private_index=payload.get("private_index") is True,
+        advisories_complete=payload.get("advisories_complete", True) is True,
     )
 
 
@@ -601,15 +752,31 @@ _MEMORY_MARKER = "__trustcheck_max_rss_kib__="
 
 
 def _memory_wrapped_command(command: Sequence[str]) -> list[str]:
-    time_binary = Path("/usr/bin/time")
-    if platform.system() == "Linux" and time_binary.is_file():
+    method = _memory_measurement_method()
+    if method == "GNU time maximum resident set size":
         return [
-            str(time_binary),
+            "/usr/bin/time",
             "-f",
             _MEMORY_MARKER + "%M",
             *command,
         ]
-    return list(command)
+    if method == "unavailable on this platform; recorded as null":
+        return list(command)
+    return [
+        sys.executable,
+        str(Path(__file__).with_name("measure_command.py")),
+        *command,
+    ]
+
+
+def _memory_measurement_method() -> str:
+    if platform.system() == "Linux" and Path("/usr/bin/time").is_file():
+        return "GNU time maximum resident set size"
+    try:
+        import psutil  # noqa: F401
+    except ImportError:
+        return "unavailable on this platform; recorded as null"
+    return "psutil process-tree peak resident set size"
 
 
 def _extract_memory_measurement(stderr: str) -> tuple[int | None, str]:
@@ -908,6 +1075,9 @@ def _dedupe_identities(identities: Sequence[set[str]]) -> list[set[str]]:
 def _compare_findings(
     left: dict[tuple[str, str], list[set[str]]],
     right: dict[tuple[str, str], list[set[str]]],
+    *,
+    truth: TruthCorpus | None = None,
+    selected_cases: set[str] | None = None,
 ) -> dict[str, Any]:
     matched = 0
     left_only: list[dict[str, Any]] = []
@@ -935,25 +1105,92 @@ def _compare_findings(
         )
     denominator = matched + len(left_only) + len(right_only)
     agreement = matched / denominator if denominator else 1.0
-    expected = {
-        package: _dedupe_identities(
-            [*left.get(package, []), *right.get(package, [])]
-        )
-        for package in packages
-    }
-    return {
+    result: dict[str, Any] = {
         "matched_advisories": matched,
         "trustcheck_only": left_only,
         "pip_audit_only": right_only,
         "alias_aware_agreement": round(agreement, 6),
-        "advisory_recall": {
-            "reference": "union-of-tool-findings",
-            "trustcheck": _advisory_recall(left, expected),
-            "pip_audit": _advisory_recall(right, expected),
-        },
         "packages_compared": len(packages),
         "trustcheck_vulnerable_packages": sum(bool(items) for items in left.values()),
         "pip_audit_vulnerable_packages": sum(bool(items) for items in right.values()),
+    }
+    if truth is None:
+        result["advisory_recall"] = {
+            "reference": "no-truth-corpus",
+            "trustcheck": None,
+            "pip_audit": None,
+        }
+        result["regressions"] = []
+        return result
+
+    active_cases = [
+        case
+        for case in truth.cases
+        if (selected_cases is None or case.case_id in selected_cases)
+        and (case.marker is None or Marker(case.marker).evaluate(default_environment()))
+        and not case.private_index
+    ]
+    expected = {
+        (case.project, case.version): [set(identity) for identity in case.advisories]
+        for case in active_cases
+    }
+    trust_metrics = _truth_metrics(left, active_cases)
+    pip_metrics = _truth_metrics(right, active_cases)
+    regressions: list[str] = []
+    if trust_metrics["recall"] < truth.min_recall:
+        regressions.append(
+            f"trustcheck recall {trust_metrics['recall']:.6f} is below "
+            f"{truth.min_recall:.6f}"
+        )
+    if len(trust_metrics["false_positives"]) > truth.max_false_positives:
+        regressions.append(
+            f"trustcheck false positives {len(trust_metrics['false_positives'])} exceed "
+            f"{truth.max_false_positives}"
+        )
+    result["advisory_recall"] = {
+        "reference": "signed-curated-truth-corpus",
+        "trustcheck": _advisory_recall(left, expected),
+        "pip_audit": _advisory_recall(right, expected),
+    }
+    result["truth"] = {
+        "version": truth.version,
+        "case_count": len(active_cases),
+        "expected_advisory_count": sum(len(items) for items in expected.values()),
+        "trustcheck": trust_metrics,
+        "pip_audit": pip_metrics,
+    }
+    result["regressions"] = regressions
+    return result
+
+
+def _truth_metrics(
+    observed: dict[tuple[str, str], list[set[str]]],
+    cases: Sequence[TruthCase],
+) -> dict[str, Any]:
+    expected = {
+        (case.project, case.version): [set(identity) for identity in case.advisories]
+        for case in cases
+    }
+    false_negatives: list[dict[str, Any]] = []
+    false_positives: list[dict[str, Any]] = []
+    for case in cases:
+        package = (case.project, case.version)
+        observed_identities = observed.get(package, [])
+        for identity in expected[package]:
+            if not any(identity & candidate for candidate in observed_identities):
+                false_negatives.append(_finding_summary(package, identity))
+        if not case.vulnerable or case.advisories_complete:
+            for identity in observed_identities:
+                if not any(identity & expected_id for expected_id in expected[package]):
+                    false_positives.append(_finding_summary(package, identity))
+        for withdrawn in case.withdrawn:
+            for identity in observed_identities:
+                if withdrawn & identity:
+                    false_positives.append(_finding_summary(package, identity))
+    return {
+        "recall": _advisory_recall(observed, expected),
+        "false_negatives": false_negatives,
+        "false_positives": false_positives,
     }
 
 
@@ -1068,6 +1305,23 @@ def _corpus_summary(
             }
             for case in corpus.cases
         ],
+    }
+
+
+def _truth_summary(truth: TruthCorpus | None) -> dict[str, object] | None:
+    if truth is None:
+        return None
+    return {
+        "schema": TRUTH_SCHEMA,
+        "version": truth.version,
+        "manifest": _published_path(truth.manifest),
+        "sha256": _sha256(truth.manifest),
+        "signature": _published_path(truth.manifest.with_suffix(".json.sig")),
+        "case_count": len(truth.cases),
+        "gates": {
+            "min_recall": truth.min_recall,
+            "max_false_positives": truth.max_false_positives,
+        },
     }
 
 

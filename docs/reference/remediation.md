@@ -64,11 +64,17 @@ trustcheck scan -f pylock.toml \
   --remediation-output reports/remediation.json
 ```
 
-Patch bundles use schema `urn:trustcheck:remediation:1.1.0`. They contain
+Patch bundles use schema `urn:trustcheck:remediation:1.2.0`. They contain
 before/after dependency graphs, file digests, unified diffs, structured edits,
 advisory IDs removed, lockfile hash validation, reproduction commands,
 post-fix graph and report digests, minimality evidence, validation results, and
 PR metadata.
+
+Each upgrade includes compatibility confidence, a likely-breaking-change
+warning for major upgrades, an available changelog or release link, and its
+direct or transitive dependency cause. `minimal_secure_upgrade_proof` records
+the search strategy, attempts, selected versions, advisory removal, policy
+result, and resolution reproduction evidence.
 
 ## Pull requests
 

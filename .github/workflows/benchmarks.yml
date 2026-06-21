@@ -1,6 +1,7 @@
 name: Benchmarks
 
 on:
+  pull_request:
   push:
     branches:
       - main
@@ -27,13 +28,12 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          ref: ${{ github.ref_name }}
-          persist-credentials: true
+          persist-credentials: ${{ github.event_name != 'pull_request' }}
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install . pip-audit
+      - run: python -m pip install . pip-audit psutil
       - run: >-
           python benchmarks/benchmark_against_pip_audit.py
           --warmups 1
@@ -44,19 +44,39 @@ jobs:
           python scripts/update_benchmark_table.py
           benchmarks/results/latest.json
           --readme README.md
+      - name: Sign benchmark result
+        if: github.event_name != 'pull_request'
+        env:
+          BENCHMARK_SIGNING_KEY_PEM: ${{ secrets.BENCHMARK_SIGNING_KEY_PEM }}
+        run: >-
+          python scripts/benchmark_signature.py
+          benchmarks/results/latest.json
+          --signature benchmarks/results/latest.json.sig
+          --private-key-env BENCHMARK_SIGNING_KEY_PEM
+      - name: Verify committed benchmark signature
+        if: github.event_name == 'pull_request'
+        run: >-
+          python scripts/benchmark_signature.py
+          benchmarks/results/latest.json
+          --signature benchmarks/results/latest.json.sig
+          --public-key benchmarks/results/benchmark-public-key.pem
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: trustcheck-pip-audit-benchmark-${{ github.sha }}
-          path: benchmarks/results/latest.json
+          path: |
+            benchmarks/results/latest.json
+            benchmarks/results/latest.json.sig
+            benchmarks/results/benchmark-public-key.pem
           if-no-files-found: error
           retention-days: 90
       - name: Open benchmark result pull request
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md benchmarks/results/latest.json
+          git add README.md benchmarks/results/latest.json benchmarks/results/latest.json.sig
           if git diff --cached --quiet; then
             echo "Benchmark table is already up to date."
           else

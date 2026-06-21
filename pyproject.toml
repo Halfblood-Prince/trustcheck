@@ -11,7 +11,7 @@ name = "trustcheck"
 dynamic = ["version"]
 description = "Package trust and provenance verification for PyPI consumers."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 keywords = ["pypi", "security", "supply-chain", "provenance", "attestations"]
 license = "LicenseRef-Trustcheck-Personal-Use"
 license-files = ["LICENSE"]
@@ -25,18 +25,21 @@ classifiers = [
   "Topic :: Security",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
+  "cryptography>=45,<47",
   "idna>=3.15,<4",
   "packaging>=24,<27",
   "PyJWT>=2.13,<3",
   "pydantic>=2.10,<3",
   "sigstore>=4.3,<5",
   "tomlkit>=0.13,<1",
+  "tomli>=2.2,<3; python_version < '3.11'",
   "tuf>=7,<8",
   "urllib3>=2.7,<3",
 ]
@@ -46,6 +49,8 @@ keyring = ["keyring>=25,<27"]
 
 [project.scripts]
 trustcheck = "trustcheck.cli:main"
+trustcheck-pre-commit = "trustcheck.pre_commit:main"
+trustcheck-workspace = "trustcheck.workspace:main"
 
 [project.urls]
 Repository = "https://github.com/Halfblood-Prince/trustcheck"
@@ -70,14 +75,14 @@ version_file = "src/trustcheck/_version.py"
 fallback_version = "0.0.0+source"
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 files = ["src"]
 strict = true
 warn_unused_configs = true

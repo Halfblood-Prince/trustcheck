@@ -14,10 +14,10 @@ interface for a single PyPI package.
 
 ## Current schema identifiers
 
-- `JSON_SCHEMA_VERSION = "1.9.0"`
-- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.9.0"`
+- `JSON_SCHEMA_VERSION = "1.10.0"`
+- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.10.0"`
 
-Package versions and report schema versions are independent. Schema `1.9.0`
+Package versions and report schema versions are independent. Schema `1.10.0`
 adds interpreted SLSA provenance, expanded consistency and release-drift
 evidence, and verified-publisher organization policy settings.
 
@@ -25,7 +25,7 @@ evidence, and verified-publisher organization policy settings.
 
 ```json
 {
-  "schema_version": "1.9.0",
+  "schema_version": "1.10.0",
   "report": {
     "project": "demo",
     "version": "1.2.3",

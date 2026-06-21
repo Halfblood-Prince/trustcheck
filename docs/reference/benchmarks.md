@@ -22,13 +22,19 @@ compatible environment.
 Correctness is alias-aware: advisories match when any normalized `CVE`, `GHSA`,
 `PYSEC`, or provider ID overlaps. The raw unmatched records remain in the JSON
 result so agreement cannot hide feed or normalization differences.
+Recall is measured against the signed `benchmarks/corpus/truth.json`, which
+contains independently curated vulnerable and clean package-version pairs,
+aliases, fixed versions, withdrawals, markers, extras, and private-index cases.
+`truth.json.sig` is verified with the checked-in public key before a benchmark
+runs. The manifest's minimum recall and maximum false-positive gates make the
+benchmark exit nonzero on a Trustcheck regression.
 
 Separate evidence suites publish complete dependency resolution and Trustcheck
 `standard`/`full` profile results. Every suite records cold-cache and warm-cache
 p50/p95, peak RSS, request samples where the tool reports them, and exact
 commands. Resolution evidence compares complete package/version sets. Advisory
-recall uses the alias-aware union of both tools' findings as its stated
-reference. Profile evidence records how many artifacts had provenance,
+recall uses the signed curated truth corpus as its reference. Profile evidence
+records how many artifacts had provenance,
 verification, static inspection, native analysis, and heuristic findings.
 Trustcheck request counts come from report diagnostics; `pip-audit` request
 counts are `null` because the tool does not expose that measurement.

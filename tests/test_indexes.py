@@ -281,6 +281,28 @@ class IndexTests(unittest.TestCase):
         with self.assertRaisesRegex(IndexError, "unable to download"):
             client.download("https://index.example/demo.whl")
 
+    def test_simple_client_streaming_cap_handles_headers_and_observed_size(self) -> None:
+        declared = FakeResponse(b"", content_type="application/octet-stream")
+        declared.headers["Content-Length"] = "5"
+        observed = FakeResponse(b"12345", content_type="application/octet-stream")
+        for response in (declared, observed):
+            client = SimpleRepositoryClient(
+                opener=lambda *args, response=response, **kwargs: response,
+                max_response_bytes=4,
+            )
+            with self.subTest(response=response), self.assertRaisesRegex(
+                IndexError, "exceeds"
+            ):
+                client.download("https://index.example/demo.whl")
+
+        malformed = FakeResponse(b"ok")
+        malformed.headers["Content-Length"] = "unknown"
+        client = SimpleRepositoryClient(
+            opener=lambda *args, **kwargs: malformed,
+            max_response_bytes=4,
+        )
+        self.assertEqual(client.download("https://index.example/demo.whl"), b"ok")
+
     def test_simple_client_rejects_malformed_responses(self) -> None:
         client = SimpleRepositoryClient(
             opener=lambda *args, **kwargs: FakeResponse(b"{bad")

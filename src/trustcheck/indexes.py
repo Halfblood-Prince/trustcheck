@@ -29,6 +29,8 @@ SIMPLE_JSON_ACCEPT = (
     "application/vnd.pypi.simple.latest+json;q=0.9, text/html;q=0.1"
 )
 DEFAULT_INDEX_URL = "https://pypi.org/simple"
+DEFAULT_MAX_RESPONSE_BYTES = 128 * 1024 * 1024
+RESPONSE_CHUNK_BYTES = 1024 * 1024
 KEYRING_PROVIDERS = {"auto", "disabled", "import", "subprocess"}
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 UrlOpener = Callable[..., Any]
@@ -40,6 +42,30 @@ class _KeyringModule(Protocol):
 
 class IndexError(RuntimeError):
     pass
+
+
+def _read_bounded_response(response: Any, *, limit: int, url: str) -> bytes:
+    headers = getattr(response, "headers", None) or {}
+    content_length = headers.get("Content-Length") if hasattr(headers, "get") else None
+    if content_length is not None:
+        try:
+            if int(content_length) > limit:
+                raise IndexError(f"response exceeds the {limit}-byte limit: {url}")
+        except (TypeError, ValueError):
+            pass
+    payload = bytearray()
+    while len(payload) <= limit:
+        read_size = min(RESPONSE_CHUNK_BYTES, limit + 1 - len(payload))
+        try:
+            chunk = response.read(read_size)
+        except TypeError:
+            chunk = response.read()
+        if not chunk:
+            break
+        payload.extend(chunk)
+        if len(payload) > limit:
+            raise IndexError(f"response exceeds the {limit}-byte limit: {url}")
+    return bytes(payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +146,7 @@ class DependencyConfusionFinding:
 @dataclass(slots=True)
 class SimpleRepositoryClient:
     timeout: float = 15.0
+    max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES
     keyring_provider: str = "auto"
     opener: UrlOpener = request.urlopen
     runner: CommandRunner = subprocess.run
@@ -246,7 +273,11 @@ class SimpleRepositoryClient:
             headers["Accept"] = accept
         req = request.Request(request_url, headers=headers)
         with self.opener(req, timeout=self.timeout) as response:
-            payload = bytes(response.read())
+            payload = _read_bounded_response(
+                response,
+                limit=self.max_response_bytes,
+                url=redact_url_credentials(url),
+            )
             response_headers = getattr(response, "headers", {})
             content_type = (
                 response_headers.get("Content-Type", "")

@@ -108,10 +108,11 @@ advisory options, and enabled plugins. Stale or mismatched state fails closed.
 
 ## Plugins
 
-Plugins are disabled by default because loading an entry point executes
-installed Python code. Enable all installed Trustcheck plugins with
-`--enable-plugins`, or allowlist specific plugins with repeatable
-`--plugin [KIND:]NAME`.
+Plugins are disabled by default and require an explicit allowlist. Signed
+`trustcheck-plugin.json` manifests bind the name, kind, entry point, and API
+version. Trustcheck verifies the signature and optional signer-fingerprint
+allowlist before importing code in a spawned, resource-bounded worker.
+Execution status, timing, and isolation are included in report diagnostics.
 
 ```bash
 trustcheck scan -f requirements.txt \
@@ -139,9 +140,24 @@ company-policy = "company_trustcheck:CompanyPolicy"
 
 Plugin objects declare a stable `name`. Configuration is a JSON object keyed
 by that name. Plugin API version `1` uses the public protocols exported by
-`trustcheck`. Plugins used in concurrent scans must be thread-safe and should
-return deterministic results. Exceptions and contract violations fail the
-scan rather than being silently ignored.
+`trustcheck`. The distribution includes `trustcheck-plugin.json`:
+
+```json
+{
+  "schema": "urn:trustcheck:plugin-manifest:1",
+  "manifest": {
+    "name": "company-policy",
+    "kind": "policy",
+    "entry_point": "company_trustcheck:CompanyPolicy",
+    "api_version": "1"
+  },
+  "public_key": "-----BEGIN PUBLIC KEY-----...",
+  "signature": "base64-rsa-pkcs1v15-sha256"
+}
+```
+
+The signature covers canonical compact JSON for `manifest` with sorted keys.
+Exceptions, timeouts, signature failures, and contract violations fail closed.
 
 The GitHub Action exposes `enable-plugins`, `plugins`, and `plugin-config`.
 The workflow must install plugin distributions before invoking the composite

@@ -51,6 +51,7 @@
       "cache_hit_count": 0,
       "max_retries": 2,
       "offline": false,
+      "plugin_executions": [],
       "request_count": 0,
       "request_failures": [],
       "retry_count": 0,
@@ -239,7 +240,10 @@
     "remediation": {
       "attempts": 0,
       "blocked_fixes": 0,
+      "breaking_change_warnings": [],
+      "confidence": null,
       "minimal": false,
+      "minimal_secure_upgrade_proven": false,
       "patch_files": [],
       "pull_request_url": null,
       "status": "not-requested",
@@ -303,5 +307,5 @@
       }
     ]
   },
-  "schema_version": "1.9.0"
+  "schema_version": "1.10.0"
 }

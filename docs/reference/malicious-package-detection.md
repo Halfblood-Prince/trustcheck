@@ -18,6 +18,19 @@ These checks run during normal inspection:
 Dependency-confusion evidence comes from resolver and Simple Repository checks;
 Trustcheck does not guess index collisions from package names alone.
 
+## Resource isolation
+
+Artifact responses are streamed with a 128 MiB per-response cap and a 512 MiB
+aggregate retained-download cap per scan. Before any archive member is read,
+inspection rejects archives with more than 10,000 members, more than 256 MiB of
+declared expansion, or a compression ratio above 200 for expansions of at
+least 10 MiB.
+
+Built-in deep inspection runs in a spawned process with a 20-second wall-clock
+deadline. On POSIX, that worker also receives a 15-second CPU limit, a 512 MiB
+address-space limit, and drops root privileges to `nobody`. Other platforms
+still receive process and wall-clock isolation plus the format and byte caps.
+
 ## Python AST analysis
 
 `--inspect-artifacts` parses bounded `.py` members with the standard-library
