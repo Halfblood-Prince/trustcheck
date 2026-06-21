@@ -8,6 +8,9 @@ The project follows Semantic Versioning for the supported public API described i
 
 ### Added
 
+- Added `--sandbox-image` and a digest-pinned default resolver image, plus
+  sparse staging of requirement, constraint, dependency-group, and local
+  dependency inputs for container and Bubblewrap resolution.
 - Added bounded concurrent target scans, OSV `/v1/querybatch` support with
   deduplicated advisory fetches, and configurable `--max-workers` controls.
 - Added SHA-256 content-addressed persistent caching with verified references,
@@ -124,6 +127,10 @@ The project follows Semantic Versioning for the supported public API described i
 - Extended the machine-readable per-file report with artifact findings.
 
 ### Changed
+
+- Changed the CLI and Python resolver sandbox default from `warn` to `auto`,
+  and the GitHub Action default to `strict`; `warn` remains an explicit
+  compatibility mode.
 
 - Replaced the `pypi-attestations` runtime dependency with an internal PEP 740 adapter that delegates certificate, transparency-log, signature, and identity verification directly to Sigstore.
 - Raised vulnerable Sigstore transitive dependency floors and added a Windows-only fallback to Sigstore's embedded trusted-root snapshot when TUF refresh cannot create symlinks without elevated privileges.

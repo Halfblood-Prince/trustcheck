@@ -260,23 +260,27 @@ can isolate that resolver invocation:
 trustcheck scan -f requirements.txt --sandbox auto
 ```
 
-`--sandbox auto` prefers Bubblewrap on Linux, then Docker or Podman, and falls
-back to strict wheel-only resolution when no runtime is available. The full
-mode set is:
+`--sandbox auto` is the default. It prefers Bubblewrap on Linux, then Docker or
+Podman, and falls back to strict wheel-only resolution when no runtime is
+available. The full mode set is:
 
-- `warn` (default): preserve pip behavior and emit an execution-risk warning
+- `warn`: explicitly preserve host pip behavior and emit an execution-risk warning
 - `off`: preserve pip behavior without the warning
 - `container`: run pip as an unprivileged process in a read-only Docker/Podman
-  container with dropped capabilities and only the resolver workspace mounted
+  container with dropped capabilities and only staged resolver inputs mounted
 - `bubblewrap`: run pip in low-privilege Linux namespaces with a read-only
-  workspace, read-only system paths, and a cleared environment
+  staged input tree, read-only system paths, and a cleared environment
 - `strict`: reject editable, VCS, local non-wheel, direct non-wheel, and source
   archive inputs, ignore user pip configuration, and require wheels for every
   resolved package; child-process creation is denied so unexpected transitive
   source hooks and VCS commands fail closed
 
 Container and Bubblewrap modes retain network access for package-index
-resolution. Cross-target resolution is always wheel-only.
+resolution. Requirements, nested includes, constraints, dependency-group
+files, and referenced local dependencies are copied to a temporary input tree;
+the project workspace is not mounted. Container images must be pinned by a
+full SHA-256 digest when supplied with `--sandbox-image`. Cross-target
+resolution is always wheel-only.
 
 Inspect dependencies declared in a TOML project file:
 

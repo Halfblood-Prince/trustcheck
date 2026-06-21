@@ -73,6 +73,9 @@ class GitHubActionTests(unittest.TestCase):
                 allow_dependency_confusion=True,
                 trusted_projects=("requests", "internal-sdk"),
                 sandbox="container",
+                sandbox_image=(
+                    "registry.example/resolver@sha256:" + "c" * 64
+                ),
             )
 
             arguments = build_cli_arguments(settings, workspace=workspace)
@@ -99,6 +102,10 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("internal-sdk", arguments)
         self.assertIn("--sandbox", arguments)
         self.assertEqual(arguments[arguments.index("--sandbox") + 1], "container")
+        self.assertEqual(
+            arguments[arguments.index("--sandbox-image") + 1],
+            "registry.example/resolver@sha256:" + "c" * 64,
+        )
         self.assertEqual(arguments[-2:], ["--format", "json"])
 
     def test_package_target_maps_advisory_inputs_to_scan_cli(self) -> None:
@@ -599,6 +606,8 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("actions/upload-artifact@v7", action)
         self.assertIn("continue-on-error: true", action)
         self.assertIn('exit "$TRUSTCHECK_EXIT_CODE"', action)
+        self.assertIn("default: strict", action)
+        self.assertIn("sandbox-image:", action)
 
     def test_action_validation_workflow_has_pass_and_failure_cases(self) -> None:
         workflow = Path(".github/workflows/action-integration.yml").read_text(
@@ -665,6 +674,9 @@ class GitHubActionTests(unittest.TestCase):
                 "TRUSTCHECK_ACTION_ALLOW_CONSTRAINT_CHANGES": "true",
                 "TRUSTCHECK_ACTION_MAX_FIX_ATTEMPTS": "99",
                 "TRUSTCHECK_ACTION_SANDBOX": "strict",
+                "TRUSTCHECK_ACTION_SANDBOX_IMAGE": (
+                    "registry.example/resolver@sha256:" + "d" * 64
+                ),
             }
         )
 
@@ -694,6 +706,10 @@ class GitHubActionTests(unittest.TestCase):
         self.assertTrue(settings.allow_constraint_changes)
         self.assertEqual(settings.max_fix_attempts, 99)
         self.assertEqual(settings.sandbox, "strict")
+        self.assertEqual(
+            settings.sandbox_image,
+            "registry.example/resolver@sha256:" + "d" * 64,
+        )
 
     def test_environment_rejects_invalid_remediation_and_attempt_values(self) -> None:
         cases = (
@@ -797,6 +813,7 @@ class GitHubActionTests(unittest.TestCase):
         )
 
         self.assertEqual(settings.report_path, "trustcheck-report.cdx.xml")
+        self.assertEqual(settings.sandbox, "strict")
         with self.assertRaisesRegex(ActionInputError, "format"):
             ActionSettings.from_environment(
                 {

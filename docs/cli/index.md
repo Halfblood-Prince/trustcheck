@@ -231,19 +231,25 @@ trustcheck scan -f requirements.txt --sandbox auto
 
 | Mode | Behavior |
 | --- | --- |
-| `warn` | Default. Run the host pip resolver and warn that metadata hooks may execute. |
+| `warn` | Explicit compatibility mode. Run the host pip resolver and warn that metadata hooks may execute. |
 | `off` | Run the host pip resolver without a warning. |
-| `auto` | Prefer Bubblewrap on Linux, then Docker/Podman; fall back to `strict`. |
-| `container` | Run as UID/GID 65534 in a read-only Docker/Podman container with no capabilities, `no-new-privileges`, bounded PIDs, a temporary cache, and only the resolver workspace mounted read-only. |
-| `bubblewrap` | On Linux, unshare user, mount, IPC, UTS, cgroup, and PID namespaces; clear the environment; expose system paths and the resolver workspace read-only. |
+| `auto` | Default. Prefer Bubblewrap on Linux, then Docker/Podman; fall back to `strict`. |
+| `container` | Run as UID/GID 65534 in a read-only Docker/Podman container with no capabilities, `no-new-privileges`, bounded PIDs, a temporary cache, and only staged resolver inputs mounted read-only. |
+| `bubblewrap` | On Linux, unshare user, mount, IPC, UTS, cgroup, and PID namespaces; clear the environment; expose system paths and staged resolver inputs read-only. |
 | `strict` | Reject editable, VCS, source-archive, local non-wheel, and direct non-wheel inputs; use isolated pip configuration, require wheels, and deny child-process creation so unexpected transitive source hooks fail closed. |
 
 Container and Bubblewrap keep network access because dependency resolution must
-reach configured indexes. They do not mount the user home or host pip cache.
+reach configured indexes. They stage only requirement and constraint files,
+dependency-group TOML, nested includes, and referenced local dependencies; the
+project workspace, user home, and host pip cache are not mounted.
 `strict` does not execute source metadata hooks; a source-only dependency fails
 resolution unless the configured index provides a target-compatible wheel.
 External keyring helpers are also unavailable in strict mode; use index URL
 credentials or an authenticated index endpoint.
+
+The container backend defaults to a digest-pinned `python:3.13-slim` image.
+Override it with `--sandbox-image IMAGE@sha256:DIGEST`; mutable tags are
+rejected.
 
 Scan dependencies declared in a TOML project file:
 

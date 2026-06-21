@@ -155,7 +155,8 @@ review immediately.
 | `allow-dependency-confusion` | `false` | Continue after reporting a cross-index project-name collision. |
 | `trusted-projects` | empty | Whitespace- or newline-separated names added to the typosquatting reference set. |
 | `max-workers` | `8` | Bound concurrent target, advisory, and network work from 1 through 64. |
-| `sandbox` | `warn` | Resolver isolation: `off`, `warn`, `auto`, `container`, `bubblewrap`, or `strict`. |
+| `sandbox` | `strict` | Resolver isolation: `off`, `warn`, `auto`, `container`, `bubblewrap`, or `strict`. |
+| `sandbox-image` | empty | Digest-pinned OCI image for container resolution. |
 | `advisory-snapshots` | empty | Whitespace- or newline-separated advisory snapshot paths. |
 | `write-advisory-snapshot` | empty | Write a merged versioned advisory snapshot. |
 | `resume-state` | empty | Checkpoint path for resumable dependency-file scans. |

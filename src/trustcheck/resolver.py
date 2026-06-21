@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess  # nosec B404
 import sys
+import tempfile
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -35,6 +36,11 @@ WarningHandler = Callable[[str], None]
 SANDBOX_MODES = ("off", "warn", "auto", "container", "bubblewrap", "strict")
 VCS_PREFIXES = ("git+", "hg+", "svn+", "bzr+")
 SOURCE_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tar.bz2", ".tar.xz", ".tgz")
+DEFAULT_SANDBOX_IMAGE = (
+    "python:3.13-slim@"
+    "sha256:c33f0bc4364a6881bed1ec0cc2665e6c53c87a43e774aaeab88e6f17af105e4f"
+)
+DIGEST_PINNED_IMAGE_PATTERN = re.compile(r"^\S+@sha256:[0-9a-fA-F]{64}$")
 # This path is mounted as a fresh private tmpfs in each enforced sandbox.
 SANDBOX_TEMP_DIRECTORY = "/tmp"  # nosec B108
 
@@ -148,7 +154,7 @@ class PipResolver:
     indexes: IndexConfiguration = field(default_factory=IndexConfiguration)
     index_client: RepositoryIndexClient | None = None
     allow_dependency_confusion: bool = False
-    sandbox_mode: str = "warn"
+    sandbox_mode: str = "auto"
     container_runtime: str | None = None
     container_image: str | None = None
     executable_finder: ExecutableFinder = shutil.which
@@ -276,6 +282,14 @@ class PipResolver:
         risk_reasons: Sequence[str],
     ) -> Resolution:
         target = target or TargetEnvironment()
+        if (
+            self.container_image is not None
+            and DIGEST_PINNED_IMAGE_PATTERN.fullmatch(self.container_image) is None
+        ):
+            raise ResolutionError(
+                "container resolver sandbox image must be pinned by a full "
+                "sha256 digest"
+            )
         selected_mode = self._selected_sandbox_mode()
         warnings = self._sandbox_warnings(selected_mode, risk_reasons)
         if selected_mode == "strict" and risk_reasons:
@@ -283,53 +297,67 @@ class PipResolver:
                 "strict resolver sandbox rejected unsafe requirement input: "
                 + "; ".join(dict.fromkeys(risk_reasons))
             )
-        command = [
-            self.python_executable,
-            "-m",
-            "pip",
-            "install",
-            "--dry-run",
-            "--ignore-installed",
-            "--quiet",
-            "--report",
-            "-",
-            "--disable-pip-version-check",
-            "--no-input",
-        ]
-        if target.python_version:
-            command.extend(["--python-version", target.python_version])
-        for platform in target.platforms:
-            command.extend(["--platform", platform])
-        if target.implementation:
-            command.extend(["--implementation", target.implementation])
-        for abi in target.abis:
-            command.extend(["--abi", abi])
-        if target.is_cross_target:
-            command.extend(["--only-binary", ":all:"])
-        elif selected_mode == "strict":
-            command.extend(["--isolated", "--only-binary", ":all:"])
-        if offline:
-            command.append("--no-index")
-        else:
-            command.extend(self.indexes.pip_arguments())
-        command.extend(install_arguments)
-        if selected_mode == "strict":
-            command = [
-                command[0],
-                "-m",
-                "trustcheck._resolver_guard",
-                *command[3:],
-            ]
         run_cwd = Path(cwd).resolve() if cwd is not None else Path.cwd().resolve()
-        command, subprocess_cwd = self._sandbox_command(
-            command,
-            mode=selected_mode,
-            workspace=run_cwd,
-        )
-        if cwd is None and selected_mode in {"off", "warn", "strict"}:
-            subprocess_cwd = None
-
+        stage_directory: tempfile.TemporaryDirectory[str] | None = None
         try:
+            sandbox_workspace = run_cwd
+            staged_arguments = list(install_arguments)
+            if selected_mode in {"container", "bubblewrap"}:
+                stage_directory = tempfile.TemporaryDirectory(
+                    prefix="trustcheck-resolver-"
+                )
+                sandbox_workspace = Path(stage_directory.name).resolve()
+                staged_arguments = _stage_sandbox_inputs(
+                    install_arguments,
+                    workspace=run_cwd,
+                    destination=sandbox_workspace,
+                )
+
+            command = [
+                self.python_executable,
+                "-m",
+                "pip",
+                "install",
+                "--dry-run",
+                "--ignore-installed",
+                "--quiet",
+                "--report",
+                "-",
+                "--disable-pip-version-check",
+                "--no-input",
+            ]
+            if target.python_version:
+                command.extend(["--python-version", target.python_version])
+            for platform in target.platforms:
+                command.extend(["--platform", platform])
+            if target.implementation:
+                command.extend(["--implementation", target.implementation])
+            for abi in target.abis:
+                command.extend(["--abi", abi])
+            if target.is_cross_target:
+                command.extend(["--only-binary", ":all:"])
+            elif selected_mode == "strict":
+                command.extend(["--isolated", "--only-binary", ":all:"])
+            if offline:
+                command.append("--no-index")
+            else:
+                command.extend(self.indexes.pip_arguments())
+            command.extend(staged_arguments)
+            if selected_mode == "strict":
+                command = [
+                    command[0],
+                    "-m",
+                    "trustcheck._resolver_guard",
+                    *command[3:],
+                ]
+            command, subprocess_cwd = self._sandbox_command(
+                command,
+                mode=selected_mode,
+                workspace=sandbox_workspace,
+            )
+            if cwd is None and selected_mode in {"off", "warn", "strict"}:
+                subprocess_cwd = None
+
             completed = self.runner(
                 command,
                 cwd=subprocess_cwd,
@@ -342,6 +370,9 @@ class PipResolver:
             )
         except OSError as exc:
             raise ResolutionError(f"unable to start pip dependency resolver: {exc}") from exc
+        finally:
+            if stage_directory is not None:
+                stage_directory.cleanup()
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip()
             if not detail:
@@ -438,9 +469,12 @@ class PipResolver:
         runtime = self._container_executable(required=True)
         if runtime is None:
             raise ResolutionError("container resolver sandbox runtime is unavailable")
-        image = self.container_image or (
-            f"python:{sys.version_info.major}.{sys.version_info.minor}-slim"
-        )
+        image = self.container_image or DEFAULT_SANDBOX_IMAGE
+        if DIGEST_PINNED_IMAGE_PATTERN.fullmatch(image) is None:
+            raise ResolutionError(
+                "container resolver sandbox image must be pinned by a full "
+                "sha256 digest"
+            )
         pip_command = [
             "python",
             *(
@@ -509,7 +543,20 @@ class PipResolver:
         ]
         for source in binds:
             wrapped.extend(["--ro-bind", str(source), str(source)])
-        wrapped.extend(["--chdir", str(workspace), *command])
+        wrapped.extend(
+            [
+                "--ro-bind",
+                str(workspace),
+                "/workspace",
+                "--chdir",
+                "/workspace",
+                command[0],
+                *(
+                    _containerize_argument(argument, workspace)
+                    for argument in command[1:]
+                ),
+            ]
+        )
         return wrapped
 
     def annotate_indexes(self, resolution: Resolution) -> Resolution:
@@ -569,6 +616,238 @@ class PipResolver:
         return resolution
 
 
+def _stage_sandbox_inputs(
+    arguments: Sequence[str],
+    *,
+    workspace: Path,
+    destination: Path,
+) -> list[str]:
+    workspace = workspace.resolve()
+    destination = destination.resolve()
+    visited_requirement_files: set[Path] = set()
+    visited_groups: set[tuple[Path, str]] = set()
+
+    def staged_path(source: Path) -> Path:
+        resolved = source.resolve()
+        if not resolved.is_relative_to(workspace):
+            raise ResolutionError(
+                "resolver sandbox cannot stage an input outside the resolver workspace: "
+                f"{resolved}"
+            )
+        return destination / resolved.relative_to(workspace)
+
+    def copy_local_path(source: Path) -> Path:
+        resolved = source.resolve()
+        target = staged_path(resolved)
+        if not resolved.exists():
+            raise ResolutionError(f"resolver sandbox input not found: {resolved}")
+        if resolved.is_dir():
+            shutil.copytree(
+                resolved,
+                target,
+                dirs_exist_ok=True,
+                symlinks=True,
+            )
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(resolved, target)
+        return target
+
+    def stage_requirement_file(source: Path) -> Path:
+        resolved = source.resolve()
+        target = staged_path(resolved)
+        if resolved in visited_requirement_files:
+            return target
+        visited_requirement_files.add(resolved)
+        try:
+            text = resolved.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ResolutionError(
+                f"unable to stage requirement file {resolved}: {exc}"
+            ) from exc
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            _translate_workspace_reference(text, workspace, "/workspace"),
+            encoding="utf-8",
+        )
+        for line in _logical_requirement_lines(text):
+            nested = _nested_requirement_path(line)
+            if nested is not None:
+                stage_requirement_file(_resolve_local_path(nested, resolved.parent))
+                continue
+            local = _local_requirement_path(line, resolved.parent)
+            if local is not None:
+                copy_local_path(local)
+        return target
+
+    def stage_dependency_group(source: Path, group: str) -> Path:
+        resolved = source.resolve()
+        key = (resolved, group)
+        target = staged_path(resolved)
+        if key in visited_groups:
+            return target
+        visited_groups.add(key)
+        try:
+            text = resolved.read_text(encoding="utf-8")
+            payload = tomllib.loads(text)
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+            raise ResolutionError(
+                f"unable to stage dependency group source {resolved}: {exc}"
+            ) from exc
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            _translate_workspace_reference(text, workspace, "/workspace"),
+            encoding="utf-8",
+        )
+        groups = payload.get("dependency-groups")
+        selected = groups.get(group) if isinstance(groups, dict) else None
+        if isinstance(selected, list):
+            for item in selected:
+                if isinstance(item, str):
+                    local = _local_requirement_path(item, resolved.parent)
+                    if local is not None:
+                        copy_local_path(local)
+                elif isinstance(item, dict):
+                    included = item.get("include-group")
+                    if isinstance(included, str):
+                        stage_dependency_group(resolved, included)
+        return target
+
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in {"-r", "--requirement", "-c", "--constraint"}:
+            if index + 1 < len(arguments):
+                stage_requirement_file(
+                    _resolve_local_path(arguments[index + 1], workspace)
+                )
+                index += 2
+                continue
+        nested = _nested_requirement_path(argument)
+        if nested is not None:
+            stage_requirement_file(_resolve_local_path(nested, workspace))
+            index += 1
+            continue
+        if argument == "--group" and index + 1 < len(arguments):
+            group_path, separator, group = arguments[index + 1].rpartition(":")
+            if separator:
+                stage_dependency_group(
+                    _resolve_local_path(group_path, workspace),
+                    group,
+                )
+            index += 2
+            continue
+        if argument.startswith("--group="):
+            group_path, separator, group = argument[8:].rpartition(":")
+            if separator:
+                stage_dependency_group(
+                    _resolve_local_path(group_path, workspace),
+                    group,
+                )
+            index += 1
+            continue
+        local = _local_requirement_path(argument, workspace)
+        if local is not None:
+            copy_local_path(local)
+        index += 1
+
+    return [
+        _translate_workspace_reference(argument, workspace, destination)
+        for argument in arguments
+    ]
+
+
+def _resolve_local_path(value: str, base: Path) -> Path:
+    cleaned = value.strip().strip("\"'")
+    parsed = parse.urlsplit(cleaned)
+    if parsed.scheme == "file":
+        path_text = parse.unquote(parsed.path)
+        if re.match(r"^/[a-zA-Z]:/", path_text):
+            path_text = path_text[1:]
+        candidate = Path(path_text)
+    else:
+        candidate = Path(cleaned.split("#", maxsplit=1)[0])
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    return candidate.resolve()
+
+
+def _local_requirement_path(raw_requirement: str, base: Path) -> Path | None:
+    raw = raw_requirement.strip()
+    if not raw or raw.startswith("#"):
+        return None
+    try:
+        tokens = shlex.split(raw, comments=True, posix=os.name != "nt")
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    first = tokens[0]
+    candidate: str | None = None
+    if first in {"-e", "--editable", "-f", "--find-links"}:
+        if len(tokens) < 2:
+            return None
+        candidate = tokens[1]
+    else:
+        for prefix in ("-e", "--editable=", "-f", "--find-links="):
+            if first.startswith(prefix) and len(first) > len(prefix):
+                candidate = first[len(prefix):]
+                break
+    if candidate is None and first.startswith("-"):
+        return None
+    if candidate is None:
+        requirement_text = re.split(
+            r"\s+--hash(?:=|\s)", raw, maxsplit=1
+        )[0].strip()
+        try:
+            requirement = Requirement(requirement_text)
+        except InvalidRequirement:
+            candidate = requirement_text
+        else:
+            if requirement.url is None:
+                return None
+            if parse.urlsplit(requirement.url).scheme != "file":
+                return None
+            candidate = requirement.url
+    if candidate is None or any(
+        candidate.lower().startswith(prefix) for prefix in VCS_PREFIXES
+    ):
+        return None
+    parsed = parse.urlsplit(candidate)
+    windows_path = re.match(r"^[a-zA-Z]:[\\/]", candidate) is not None
+    if parsed.scheme and parsed.scheme != "file" and not windows_path:
+        return None
+    path = _resolve_local_path(candidate, base)
+    if not path.exists() and "[" in candidate and candidate.endswith("]"):
+        path = _resolve_local_path(candidate.rsplit("[", maxsplit=1)[0], base)
+    return path
+
+
+def _translate_workspace_reference(
+    value: str,
+    workspace: Path,
+    target: str | Path,
+) -> str:
+    if isinstance(target, Path):
+        target_path = str(target)
+        target_uri = target.as_uri()
+        target_separator = os.sep
+    else:
+        target_path = target
+        target_uri = f"file://{target}" if target.startswith("/") else target
+        target_separator = "/"
+    translated = value.replace(workspace.as_uri(), target_uri)
+    for source in dict.fromkeys((str(workspace), workspace.as_posix())):
+        translated = translated.replace(
+            f"{source}\\", f"{target_path}{target_separator}"
+        )
+        translated = translated.replace(
+            f"{source}/", f"{target_path}{target_separator}"
+        )
+        translated = translated.replace(source, target_path)
+    return translated
+
+
 def _containerize_argument(argument: str, workspace: Path) -> str:
     try:
         workspace_uri = workspace.as_uri()
@@ -579,6 +858,8 @@ def _containerize_argument(argument: str, workspace: Path) -> str:
         translated = translated.replace(workspace_uri, "file:///workspace")
     translated = translated.replace(str(workspace), "/workspace")
     translated = translated.replace(workspace.as_posix(), "/workspace")
+    if "/workspace" in translated:
+        translated = translated.replace("\\", "/")
     lowered = translated.lower()
     if "file://" in lowered and "file:///workspace" not in lowered:
         raise ResolutionError(
@@ -605,6 +886,7 @@ def _containerize_argument(argument: str, workspace: Path) -> str:
 
 
 def _bubblewrap_readonly_binds(workspace: Path, python_executable: Path) -> tuple[Path, ...]:
+    del workspace
     candidates = [
         Path("/usr"),
         Path("/bin"),
@@ -614,7 +896,6 @@ def _bubblewrap_readonly_binds(workspace: Path, python_executable: Path) -> tupl
         Path(sys.base_prefix),
         Path(sys.prefix),
         python_executable.parent,
-        workspace,
     ]
     selected: list[Path] = []
     for candidate in sorted(
@@ -676,7 +957,7 @@ def _logical_requirement_lines(text: str) -> list[str]:
 
 def _nested_requirement_path(line: str) -> str | None:
     try:
-        tokens = shlex.split(line, comments=True, posix=True)
+        tokens = shlex.split(line, comments=True, posix=os.name != "nt")
     except ValueError:
         return None
     if not tokens:

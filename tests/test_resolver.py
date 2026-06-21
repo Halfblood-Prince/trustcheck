@@ -14,6 +14,7 @@ from trustcheck.indexes import (
     IndexError,
 )
 from trustcheck.resolver import (
+    DEFAULT_SANDBOX_IMAGE,
     ArtifactReference,
     PipResolver,
     Resolution,
@@ -25,11 +26,15 @@ from trustcheck.resolver import (
     _containerize_argument,
     _dependency_group_risks,
     _filename_from_url,
+    _local_requirement_path,
     _logical_requirement_lines,
     _nested_requirement_path,
     _path_requirement_risks,
     _requirement_file_risks,
     _requirement_risks,
+    _resolve_local_path,
+    _stage_sandbox_inputs,
+    _translate_workspace_reference,
     discover_installed_distributions,
     parse_installation_report,
     validate_resolved_requirement,
@@ -211,6 +216,7 @@ class ResolverTests(unittest.TestCase):
             resolution = PipResolver(
                 python_executable="python-test",
                 runner=runner,
+                sandbox_mode="warn",
             ).resolve_requirements_file(
                 requirements,
                 constraints=[constraints],
@@ -260,7 +266,7 @@ class ResolverTests(unittest.TestCase):
                 encoding="utf-8",
             )
             constraints.write_text("requests<3\n", encoding="utf-8")
-            PipResolver(runner=runner).resolve_requirements(
+            PipResolver(runner=runner, sandbox_mode="warn").resolve_requirements(
                 [
                     "--editable",
                     "git+https://example.com/demo.git#egg=demo",
@@ -294,6 +300,7 @@ class ResolverTests(unittest.TestCase):
 
         resolution = PipResolver(
             runner=runner,
+            sandbox_mode="warn",
             warning_handler=warnings.append,
         ).resolve_requirements(
             ["demo @ git+https://example.com/demo.git"],
@@ -411,7 +418,10 @@ class ResolverTests(unittest.TestCase):
                 runner=runner,
                 sandbox_mode="container",
                 container_runtime="docker",
-                container_image="registry.example/resolver@sha256:abc",
+                container_image=(
+                    "registry.example/resolver@sha256:"
+                    + "a" * 64
+                ),
                 executable_finder=lambda executable: (
                     "docker-test" if executable == "docker" else None
                 ),
@@ -428,11 +438,15 @@ class ResolverTests(unittest.TestCase):
         self.assertIn("--cap-drop=ALL", command)
         self.assertIn("--security-opt=no-new-privileges", command)
         self.assertIn("--user=65534:65534", command)
-        self.assertIn(
-            f"type=bind,source={workspace},target=/workspace,readonly",
-            command,
+        mount = next(
+            item for item in command
+            if item.startswith("type=bind,source=")
         )
-        image_index = command.index("registry.example/resolver@sha256:abc")
+        self.assertNotIn(f"source={workspace},", mount)
+        self.assertTrue(mount.endswith("target=/workspace,readonly"))
+        image_index = command.index(
+            "registry.example/resolver@sha256:" + "a" * 64
+        )
         self.assertEqual(command[image_index + 1 : image_index + 5], [
             "python",
             "-m",
@@ -462,6 +476,133 @@ class ResolverTests(unittest.TestCase):
                 sandbox_mode="container",
                 executable_finder=lambda executable: None,
             ).resolve_requirements(["demo"])
+
+    def test_enforced_sandboxes_mount_only_staged_resolver_inputs(self) -> None:
+        mounted_sources: list[Path] = []
+
+        def runner(command, **kwargs):
+            del kwargs
+            if command[0] == "docker-test":
+                mount = next(
+                    item for item in command
+                    if item.startswith("type=bind,source=")
+                )
+                source = Path(
+                    mount.removeprefix("type=bind,source=").removesuffix(
+                        ",target=/workspace,readonly"
+                    )
+                )
+            else:
+                bind_index = next(
+                    index for index, item in enumerate(command)
+                    if item == "--ro-bind"
+                    and command[index + 2] == "/workspace"
+                )
+                source = Path(command[bind_index + 1])
+            mounted_sources.append(source)
+            self.assertTrue((source / "requirements.txt").is_file())
+            self.assertTrue((source / "constraints.txt").is_file())
+            self.assertTrue((source / "nested" / "requirements.txt").is_file())
+            self.assertTrue((source / "local-demo" / "pyproject.toml").is_file())
+            self.assertFalse((source / ".env").exists())
+            self.assertFalse((source / "private-source.py").exists())
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(installation_report()),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir).resolve()
+            nested = workspace / "nested"
+            local = workspace / "local-demo"
+            nested.mkdir()
+            local.mkdir()
+            (workspace / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+            (workspace / "private-source.py").write_text("secret = 1\n", encoding="utf-8")
+            requirements = workspace / "requirements.txt"
+            constraints = workspace / "constraints.txt"
+            requirements.write_text("-r nested/requirements.txt\n", encoding="utf-8")
+            constraints.write_text("demo<3\n", encoding="utf-8")
+            (nested / "requirements.txt").write_text(
+                "-e ../local-demo\n",
+                encoding="utf-8",
+            )
+            (local / "pyproject.toml").write_text(
+                "[project]\nname = 'local-demo'\nversion = '1'\n",
+                encoding="utf-8",
+            )
+
+            PipResolver(
+                runner=runner,
+                sandbox_mode="container",
+                container_runtime="docker",
+                executable_finder=lambda executable: "docker-test",
+            ).resolve_requirements_file(
+                requirements,
+                constraints=[constraints],
+                offline=True,
+            )
+            with patch(
+                "trustcheck.resolver.platform_module.system",
+                return_value="Linux",
+            ):
+                PipResolver(
+                    python_executable="/usr/bin/python3",
+                    runner=runner,
+                    sandbox_mode="bubblewrap",
+                    executable_finder=lambda executable: "/usr/bin/bwrap",
+                ).resolve_requirements_file(
+                    requirements,
+                    constraints=[constraints],
+                    offline=True,
+                )
+
+        self.assertEqual(len(mounted_sources), 2)
+        self.assertTrue(all(not source.exists() for source in mounted_sources))
+
+    def test_container_image_is_digest_pinned(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(command, **kwargs):
+            del kwargs
+            calls.append(command)
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(installation_report()),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resolver = PipResolver(
+                runner=runner,
+                sandbox_mode="container",
+                executable_finder=lambda executable: "docker-test",
+            )
+            resolver.resolve_requirements(
+                ["demo"],
+                cwd=tmpdir,
+                offline=True,
+            )
+            self.assertIn(DEFAULT_SANDBOX_IMAGE, calls[0])
+
+            with self.assertRaisesRegex(ResolutionError, "full sha256 digest"):
+                PipResolver(
+                    sandbox_mode="container",
+                    container_image="python:3.13-slim",
+                    executable_finder=lambda executable: "docker-test",
+                ).resolve_requirements(
+                    ["demo"],
+                    cwd=tmpdir,
+                    offline=True,
+                )
+            with self.assertRaisesRegex(ResolutionError, "full sha256 digest"):
+                PipResolver(
+                    sandbox_mode="strict",
+                    container_image="python:3.13-slim",
+                ).resolve_requirements(["demo"], offline=True)
 
     def test_auto_selects_bubblewrap_container_or_strict(self) -> None:
         calls: list[list[str]] = []
@@ -494,7 +635,8 @@ class ResolverTests(unittest.TestCase):
             self.assertEqual(calls[-1][0], "/usr/bin/bwrap")
             self.assertIn("--clearenv", calls[-1])
             self.assertIn("--share-net", calls[-1])
-            self.assertIn(str(workspace), calls[-1])
+            self.assertNotIn(str(workspace), calls[-1])
+            self.assertIn("/workspace", calls[-1])
 
         with patch(
             "trustcheck.resolver.platform_module.system",
@@ -611,6 +753,138 @@ class ResolverTests(unittest.TestCase):
             _requirement_risks("demo @ file:///project/demo"),
             ["local path requirement without a prebuilt wheel"],
         )
+
+    def test_sandbox_input_staging_covers_nested_files_and_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            destination = root / "stage"
+            workspace.mkdir()
+            destination.mkdir()
+            first = workspace / "first.txt"
+            second = workspace / "second.txt"
+            wheel = workspace / "local.whl"
+            project = workspace / "pyproject.toml"
+            first.write_text("-r second.txt\n", encoding="utf-8")
+            second.write_text("-r first.txt\n", encoding="utf-8")
+            wheel.write_bytes(b"wheel")
+            project.write_text(
+                "[dependency-groups]\n"
+                "base = ['./local.whl']\n"
+                "dev = [{include-group = 'base'}, 'demo']\n"
+                "cycle = [{include-group = 'cycle'}]\n",
+                encoding="utf-8",
+            )
+
+            staged = _stage_sandbox_inputs(
+                [
+                    "-rfirst.txt",
+                    "--constraint",
+                    str(second),
+                    "--group",
+                    f"{project}:dev",
+                    f"--group={project}:cycle",
+                    "--group",
+                    "missing-separator",
+                    "--group=missing-separator",
+                    str(wheel),
+                    "--requirement",
+                ],
+                workspace=workspace,
+                destination=destination,
+            )
+
+            self.assertTrue((destination / "first.txt").is_file())
+            self.assertTrue((destination / "second.txt").is_file())
+            self.assertTrue((destination / "local.whl").is_file())
+            self.assertTrue((destination / "pyproject.toml").is_file())
+            self.assertIn(str(destination / "local.whl"), staged)
+
+    def test_sandbox_input_staging_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            destination = root / "stage"
+            outside = root / "outside.txt"
+            workspace.mkdir()
+            destination.mkdir()
+            outside.write_text("demo\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ResolutionError, "outside"):
+                _stage_sandbox_inputs(
+                    [str(outside)],
+                    workspace=workspace,
+                    destination=destination,
+                )
+            with self.assertRaisesRegex(ResolutionError, "not found"):
+                _stage_sandbox_inputs(
+                    ["./missing.whl"],
+                    workspace=workspace,
+                    destination=destination,
+                )
+            with self.assertRaisesRegex(ResolutionError, "requirement file"):
+                _stage_sandbox_inputs(
+                    ["--requirement", str(workspace)],
+                    workspace=workspace,
+                    destination=destination,
+                )
+
+            invalid_project = workspace / "pyproject.toml"
+            invalid_project.write_text("not = [valid", encoding="utf-8")
+            with self.assertRaisesRegex(ResolutionError, "dependency group"):
+                _stage_sandbox_inputs(
+                    ["--group", f"{invalid_project}:dev"],
+                    workspace=workspace,
+                    destination=destination,
+                )
+
+    def test_local_requirement_staging_helpers_cover_supported_forms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir).resolve()
+            local = root / "local-demo"
+            local.mkdir()
+            forms = (
+                f"-e {local}",
+                f"--editable={local}",
+                f"-f {local}",
+                f"--find-links={local}",
+                f"demo @ {local.as_uri()}",
+                f"{local}[testing]",
+            )
+            for value in forms:
+                with self.subTest(value=value):
+                    self.assertEqual(
+                        _local_requirement_path(value, root),
+                        local,
+                    )
+
+            self.assertEqual(_resolve_local_path(local.as_uri(), root), local)
+            self.assertIsNone(_local_requirement_path("", root))
+            self.assertIsNone(_local_requirement_path("'unterminated", root))
+            self.assertIsNone(_local_requirement_path("--editable", root))
+            self.assertIsNone(_local_requirement_path("--index-url value", root))
+            self.assertIsNone(_local_requirement_path("demo>=1", root))
+            self.assertIsNone(
+                _local_requirement_path("demo @ https://example.com/demo.whl", root)
+            )
+            self.assertIsNone(
+                _local_requirement_path("git+https://example.com/demo.git", root)
+            )
+            self.assertIsNone(
+                _local_requirement_path("https://example.com/demo.whl", root)
+            )
+            self.assertEqual(
+                _translate_workspace_reference(
+                    f"{root}/local-demo {root.as_uri()}/local-demo",
+                    root,
+                    "/workspace",
+                ),
+                "/workspace/local-demo file:///workspace/local-demo",
+            )
+            self.assertEqual(
+                _translate_workspace_reference("demo", root, "relative"),
+                "demo",
+            )
 
     def test_requirement_file_preflight_handles_cycles_and_read_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

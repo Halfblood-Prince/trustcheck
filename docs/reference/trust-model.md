@@ -175,13 +175,14 @@ presented as proof that a publisher or package is malicious.
 - some projects do not publish provenance at all
 - repository matching currently supports canonical GitHub and GitLab URLs only
 - lockfile scans consume the recorded resolution; requirements and project
-  inputs run pip's complete resolver. The default `--sandbox warn` mode can
-  execute build-backend metadata hooks; use `auto`, `container`, `bubblewrap`,
-  or `strict` for enforcement
+  inputs run pip's complete resolver. The default `--sandbox auto` mode uses an
+  enforced sandbox or falls back to strict wheel-only resolution. `warn` is an
+  explicit compatibility mode that can execute build-backend metadata hooks
 - resolver containers and Bubblewrap namespaces retain network access to
-  configured package indexes; they constrain host filesystem, environment,
-  identity, capability, and process access rather than providing an offline
-  execution boundary
+  configured package indexes. They expose staged resolver inputs and necessary
+  local dependency directories, not the project workspace; they constrain host
+  filesystem, environment, identity, capability, and process access rather
+  than providing an offline execution boundary
 - versionless source trees cannot be represented as package-release audits and
   are reported as unsupported
 - private Simple Repository indexes do not necessarily publish Warehouse

@@ -63,7 +63,8 @@ class ActionSettings:
     allow_dependency_confusion: bool = False
     trusted_projects: tuple[str, ...] = ()
     max_workers: int = 8
-    sandbox: str = "warn"
+    sandbox: str = "strict"
+    sandbox_image: str = ""
     advisory_snapshots: tuple[str, ...] = ()
     write_advisory_snapshot: str = ""
     resume_state: str = ""
@@ -129,8 +130,8 @@ class ActionSettings:
         if max_workers < 1 or max_workers > 64:
             raise ActionInputError("'max-workers' must be between 1 and 64")
         sandbox = (
-            environment.get("TRUSTCHECK_ACTION_SANDBOX", "warn").strip()
-            or "warn"
+            environment.get("TRUSTCHECK_ACTION_SANDBOX", "strict").strip()
+            or "strict"
         )
         if sandbox not in SANDBOX_MODES:
             raise ActionInputError(
@@ -205,6 +206,9 @@ class ActionSettings:
             ),
             max_workers=max_workers,
             sandbox=sandbox,
+            sandbox_image=environment.get(
+                "TRUSTCHECK_ACTION_SANDBOX_IMAGE", ""
+            ).strip(),
             advisory_snapshots=_parse_multi_value(
                 environment.get(
                     "TRUSTCHECK_ACTION_ADVISORY_SNAPSHOTS",
@@ -487,6 +491,8 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
             arguments.extend(["--trusted-project", project])
     arguments.extend(["--max-workers", str(settings.max_workers)])
     arguments.extend(["--sandbox", settings.sandbox])
+    if settings.sandbox_image:
+        arguments.extend(["--sandbox-image", settings.sandbox_image])
     for snapshot in settings.advisory_snapshots:
         snapshot_path = _resolve_workspace_path(snapshot, workspace)
         if not snapshot_path.is_file():

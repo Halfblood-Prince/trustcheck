@@ -99,10 +99,11 @@ wheel-only fallback when neither runtime is available:
 trustcheck scan -f requirements.txt --sandbox auto
 ```
 
-The compatibility default is `--sandbox warn`, which preserves host pip
-behavior and warns that source metadata hooks may execute. Use
-`--sandbox strict` in runtime-limited CI to reject editable, local non-wheel,
-VCS, direct non-wheel, and source-only requirements.
+`--sandbox auto` is the default. `--sandbox warn` remains an explicit
+compatibility mode that preserves host pip behavior and warns that source
+metadata hooks may execute. The GitHub Action defaults to `strict`, which
+rejects editable, local non-wheel, VCS, direct non-wheel, and source-only
+requirements.
 
 ```bash
 trustcheck scan -f requirements.txt --constraint constraints.txt

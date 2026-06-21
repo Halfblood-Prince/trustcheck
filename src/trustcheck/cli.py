@@ -686,10 +686,18 @@ def _add_file_resolution_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--sandbox",
         choices=SANDBOX_MODES,
-        default="warn",
+        default="auto",
         help=(
             "Resolver isolation: compatibility modes off/warn, automatic secure "
             "selection, Docker/Podman, bubblewrap, or strict wheel-only."
+        ),
+    )
+    parser.add_argument(
+        "--sandbox-image",
+        default=None,
+        metavar="IMAGE@SHA256:DIGEST",
+        help=(
+            "Digest-pinned OCI image used by the container resolver sandbox."
         ),
     )
     parser.add_argument(
@@ -2159,7 +2167,8 @@ def _build_scan_state(
             "options": {
                 "scan_profile": getattr(args, "scan_profile", None),
                 "artifact_scope": getattr(args, "artifact_scope", None),
-                "sandbox": getattr(args, "sandbox", "warn"),
+                "sandbox": getattr(args, "sandbox", "auto"),
+                "sandbox_image": getattr(args, "sandbox_image", None),
                 "with_deps": getattr(args, "with_deps", False),
                 "with_transitive_deps": getattr(args, "with_transitive_deps", False),
                 "inspect_artifacts": getattr(args, "inspect_artifacts", False),
@@ -2338,7 +2347,8 @@ def _resolver_from_args(
         indexes=indexes,
         index_client=index_client,
         allow_dependency_confusion=args.allow_dependency_confusion,
-        sandbox_mode=getattr(args, "sandbox", "warn"),
+        sandbox_mode=getattr(args, "sandbox", "auto"),
+        container_image=getattr(args, "sandbox_image", None),
         warning_handler=lambda message: print(
             f"warning: {message}",
             file=sys.stderr,
