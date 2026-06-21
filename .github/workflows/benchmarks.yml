@@ -34,6 +34,12 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install . pip-audit psutil
+      - name: Verify published benchmark signature
+        run: >-
+          python scripts/benchmark_signature.py
+          benchmarks/results/latest.json
+          --signature benchmarks/results/latest.json.sig
+          --public-key benchmarks/results/benchmark-public-key.pem
       - run: >-
           python benchmarks/benchmark_against_pip_audit.py
           --warmups 1
@@ -53,8 +59,8 @@ jobs:
           benchmarks/results/latest.json
           --signature benchmarks/results/latest.json.sig
           --private-key-env BENCHMARK_SIGNING_KEY_PEM
-      - name: Verify committed benchmark signature
-        if: github.event_name == 'pull_request'
+      - name: Verify generated benchmark signature
+        if: github.event_name != 'pull_request'
         run: >-
           python scripts/benchmark_signature.py
           benchmarks/results/latest.json

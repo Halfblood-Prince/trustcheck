@@ -71,7 +71,14 @@ jobs:
       - name: Install tooling
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . mypy ruff
+          python -m pip install -e . mypy ruff "tomli>=2.2,<3"
+
+      - name: Verify published benchmark signature
+        run: >-
+          python scripts/benchmark_signature.py
+          benchmarks/results/latest.json
+          --signature benchmarks/results/latest.json.sig
+          --public-key benchmarks/results/benchmark-public-key.pem
 
       - name: Run lint
         run: ruff check src tests scripts
@@ -115,6 +122,14 @@ jobs:
 
       - name: Build package
         run: python -m build
+
+      - name: Test built sdist source tree
+        shell: bash
+        run: |
+          sdist_root="$(mktemp -d)"
+          tar -xf dist/*.tar.gz -C "$sdist_root" --strip-components=1
+          cd "$sdist_root"
+          python -m pytest -q tests/test_release_version.py
 
       - name: Smoke test built wheel
         shell: bash

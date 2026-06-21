@@ -75,6 +75,10 @@ class WorkspaceTests(unittest.TestCase):
         _normalize_sources(outside, Path.cwd())
         self.assertEqual(outside["resolved"][0]["source_file"], "demo.txt")
 
+        backslash = {"resolved": [{"source_file": r"C:\outside\demo.txt"}]}
+        _normalize_sources(backslash, Path.cwd())
+        self.assertEqual(backslash["resolved"][0]["source_file"], "demo.txt")
+
     def test_scan_workspace_records_failures_offline_and_invalid_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

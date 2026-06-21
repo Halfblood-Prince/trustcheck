@@ -6,7 +6,7 @@ import hashlib
 import json
 import subprocess  # nosec B404
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Mapping, Sequence
 
 from .exports import render_payload_export
@@ -82,10 +82,15 @@ def _normalize_sources(payload: dict[str, Any], root: Path) -> None:
     for item in resolved:
         if not isinstance(item, dict) or not isinstance(item.get("source_file"), str):
             continue
+        source_file = item["source_file"]
+        windows_path = PureWindowsPath(source_file)
+        if windows_path.is_absolute() and not Path(source_file).is_absolute():
+            item["source_file"] = windows_path.name
+            continue
         try:
-            item["source_file"] = Path(item["source_file"]).resolve().relative_to(root).as_posix()
+            item["source_file"] = Path(source_file).resolve().relative_to(root).as_posix()
         except ValueError:
-            item["source_file"] = Path(item["source_file"]).name
+            item["source_file"] = Path(source_file).name
 
 
 def scan_workspace(

@@ -1,0 +1,1 @@
+include scripts/verify_release_version.py

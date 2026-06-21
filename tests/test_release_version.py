@@ -11,6 +11,11 @@ from scripts.verify_release_version import _expected_version, verify_artifact_ve
 
 
 class ReleaseVersionTests(unittest.TestCase):
+    def test_sdist_includes_release_version_verifier(self) -> None:
+        manifest = Path("MANIFEST.in").read_text(encoding="utf-8")
+
+        self.assertIn("include scripts/verify_release_version.py", manifest.splitlines())
+
     def test_artifact_metadata_must_exactly_match_release_version(self) -> None:
         metadata = b"Metadata-Version: 2.4\nName: trustcheck\nVersion: 1.10.0\n\n"
         with TemporaryDirectory() as directory:
