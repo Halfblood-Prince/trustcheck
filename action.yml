@@ -94,6 +94,26 @@ inputs:
     description: Path for a merged reusable advisory snapshot.
     required: false
     default: ""
+  max-advisory-age:
+    description: Maximum accepted advisory snapshot age in hours.
+    required: false
+    default: "168"
+  advisory-snapshot-identity:
+    description: Trusted Sigstore certificate identity for advisory snapshots.
+    required: false
+    default: ""
+  advisory-snapshot-issuer:
+    description: Expected OIDC issuer for the advisory snapshot signer.
+    required: false
+    default: ""
+  sign-advisory-snapshot:
+    description: Sign written advisory snapshots using ambient Sigstore identity.
+    required: false
+    default: "false"
+  allow-unsigned-advisory-snapshot:
+    description: Explicitly allow unsigned advisory snapshot compatibility mode.
+    required: false
+    default: "false"
   resume-state:
     description: Checkpoint path used to resume matching dependency-file scans.
     required: false
@@ -201,13 +221,22 @@ runs:
   using: composite
   steps:
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
       with:
         python-version: ${{ inputs.python-version }}
 
     - name: Install trustcheck
       shell: bash
-      run: python -m pip install --disable-pip-version-check "$GITHUB_ACTION_PATH"
+      run: |
+        python -m pip install \
+          --disable-pip-version-check \
+          --require-hashes \
+          --requirement "$GITHUB_ACTION_PATH/requirements-action.lock"
+        python -m pip install \
+          --disable-pip-version-check \
+          --no-build-isolation \
+          --no-deps \
+          "$GITHUB_ACTION_PATH"
 
     - name: Run trustcheck
       id: trustcheck
@@ -236,6 +265,11 @@ runs:
         TRUSTCHECK_ACTION_SANDBOX_IMAGE: ${{ inputs['sandbox-image'] }}
         TRUSTCHECK_ACTION_ADVISORY_SNAPSHOTS: ${{ inputs['advisory-snapshots'] }}
         TRUSTCHECK_ACTION_WRITE_ADVISORY_SNAPSHOT: ${{ inputs['write-advisory-snapshot'] }}
+        TRUSTCHECK_ACTION_MAX_ADVISORY_AGE: ${{ inputs['max-advisory-age'] }}
+        TRUSTCHECK_ACTION_ADVISORY_SNAPSHOT_IDENTITY: ${{ inputs['advisory-snapshot-identity'] }}
+        TRUSTCHECK_ACTION_ADVISORY_SNAPSHOT_ISSUER: ${{ inputs['advisory-snapshot-issuer'] }}
+        TRUSTCHECK_ACTION_SIGN_ADVISORY_SNAPSHOT: ${{ inputs['sign-advisory-snapshot'] }}
+        TRUSTCHECK_ACTION_ALLOW_UNSIGNED_ADVISORY_SNAPSHOT: ${{ inputs['allow-unsigned-advisory-snapshot'] }}
         TRUSTCHECK_ACTION_RESUME_STATE: ${{ inputs['resume-state'] }}
         TRUSTCHECK_ACTION_ENABLE_PLUGINS: ${{ inputs['enable-plugins'] }}
         TRUSTCHECK_ACTION_PLUGINS: ${{ inputs.plugins }}
@@ -257,7 +291,7 @@ runs:
 
     - name: Upload trustcheck report
       if: always() && steps.trustcheck.outputs['report-path'] != ''
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: ${{ inputs['artifact-name'] }}
         path: |

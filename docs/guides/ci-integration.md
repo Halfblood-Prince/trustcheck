@@ -159,6 +159,11 @@ review immediately.
 | `sandbox-image` | empty | Digest-pinned OCI image for container resolution. |
 | `advisory-snapshots` | empty | Whitespace- or newline-separated advisory snapshot paths. |
 | `write-advisory-snapshot` | empty | Write a merged versioned advisory snapshot. |
+| `max-advisory-age` | `168` | Maximum accepted snapshot age in hours. |
+| `advisory-snapshot-identity` | empty | Trusted Sigstore certificate identity for snapshot verification. |
+| `advisory-snapshot-issuer` | empty | Expected OIDC issuer for the snapshot signer. |
+| `sign-advisory-snapshot` | `false` | Sign written snapshots using ambient Sigstore identity. |
+| `allow-unsigned-advisory-snapshot` | `false` | Explicit compatibility mode for unsigned snapshots. |
 | `resume-state` | empty | Checkpoint path for resumable dependency-file scans. |
 | `enable-plugins` | `false` | Enable installed Trustcheck entry-point plugins. |
 | `plugins` | empty | Whitespace- or newline-separated `[kind:]name` plugin allowlist. |
@@ -181,6 +186,12 @@ review immediately.
 
 Private-index credentials can be supplied through URL user information,
 `.netrc`, or the configured keyring provider. Reports redact URL passwords.
+
+All external Actions used by Trustcheck's own workflows and composite Action
+are pinned to full commit SHAs. The composite Action installs runtime and
+build dependencies from `requirements-action.lock` with `--require-hashes`,
+then installs Trustcheck with dependency resolution and build isolation
+disabled.
 With multiple indexes, a normalized name found on more than one index fails
 closed unless `allow-dependency-confusion` is explicitly enabled.
 

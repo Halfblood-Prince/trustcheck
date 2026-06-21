@@ -44,6 +44,11 @@ material digests, and action references not pinned to full commits remain
 explicit review findings. They indicate a weaker or less reproducible build,
 not proof that the artifact is malicious.
 
+Trustcheck applies the same rule to itself: external workflow Actions are
+pinned to full commits, and the reusable Action installs a hash-locked runtime
+and build dependency set. Release builds validate wheel and sdist metadata
+against the stable release tag before publication.
+
 Verified sdists and wheels are compared on repository, workflow, builder,
 source commit, and build type. Release history separately records changes in
 signer, repository, workflow, builder, source commit, and build type. A source

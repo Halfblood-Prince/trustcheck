@@ -8,6 +8,11 @@ The project follows Semantic Versioning for the supported public API described i
 
 ### Added
 
+- Added Sigstore-signed advisory snapshot schema 2 with source URLs, canonical
+  record SHA-256 digests, generation and expiration times, trusted signer
+  identity verification, and `--max-advisory-age` enforcement.
+- Added `requirements-action.lock` for hash-locked composite Action runtime and
+  build dependencies, plus exact release artifact version validation.
 - Added `--sandbox-image` and a digest-pinned default resolver image, plus
   sparse staging of requirement, constraint, dependency-group, and local
   dependency inputs for container and Bubblewrap resolution.
@@ -128,6 +133,8 @@ The project follows Semantic Versioning for the supported public API described i
 
 ### Changed
 
+- Pinned every external GitHub Action dependency to a full commit SHA and
+  replaced the source-build fallback version with `0.0.0+source`.
 - Changed the CLI and Python resolver sandbox default from `warn` to `auto`,
   and the GitHub Action default to `strict`; `warn` remains an explicit
   compatibility mode.

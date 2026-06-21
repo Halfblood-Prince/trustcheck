@@ -112,7 +112,7 @@ class SnapPackagingTests(unittest.TestCase):
         ordered_markers = (
             "Set release version in Snap metadata",
             "Require Snap Store credentials",
-            "uses: snapcore/action-build@v1",
+            "uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79",
             "Validate Snap Store access",
             'snapcraft lint "$SNAP_PATH"',
             "Verify built snap metadata",
@@ -122,7 +122,7 @@ class SnapPackagingTests(unittest.TestCase):
             "trustcheck --help",
             "trustcheck inspect sampleproject",
             "unexpected_verification_error",
-            "actions/attest-build-provenance@v4",
+            "actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32",
             "Upload verified snap",
         )
         positions = [qa.index(marker) for marker in ordered_markers]
@@ -145,13 +145,18 @@ class SnapPackagingTests(unittest.TestCase):
 
         self.assertIn("secrets.SNAPCRAFT_STORE_CREDENTIALS", publisher)
         self.assertIn("name: snap-${{ github.sha }}", publisher)
-        self.assertIn("uses: snapcore/action-publish@v1", publisher)
+        self.assertIn(
+            "uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40",
+            publisher,
+        )
         self.assertIn("snap: ${{ steps.snap.outputs.path }}", publisher)
         self.assertIn("release: stable", publisher)
         self.assertIn("sudo snap install snapcraft --classic", publisher)
         self.assertIn('snapcraft upload-metadata "$SNAP_PATH" --force', publisher)
         self.assertLess(
-            publisher.index("uses: snapcore/action-publish@v1"),
+            publisher.index(
+                "uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40"
+            ),
             publisher.index('snapcraft upload-metadata "$SNAP_PATH" --force'),
         )
 

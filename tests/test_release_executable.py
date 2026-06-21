@@ -53,7 +53,10 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
         self.assertIn("& $binary --help", build)
         self.assertIn("trustcheck-$releaseVersion-windows-x86_64.exe", build)
         self.assertIn("Get-FileHash", build)
-        self.assertIn("actions/attest-build-provenance@v4", build)
+        self.assertIn(
+            "actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32",
+            build,
+        )
         self.assertIn("windows-executable-unscanned-${{ github.sha }}", build)
 
     def test_defender_scans_the_executable_from_the_build_job(self) -> None:
@@ -76,7 +79,10 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
 
         self.assertIn("- windows-defender-scan", upload)
         self.assertIn("- publish-github-action", upload)
-        self.assertIn("actions/download-artifact@v8", upload)
+        self.assertIn(
+            "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+            upload,
+        )
         self.assertIn('gh release upload "$RELEASE_TAG"', upload)
         self.assertIn("windows-executable/*", upload)
         self.assertIn("--clobber", upload)

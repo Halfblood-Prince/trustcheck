@@ -8,11 +8,12 @@ import threading
 import time
 import unittest
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib import error
 
 import trustcheck.cache as cache_module
@@ -312,7 +313,7 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertIn("pull-requests: write", workflow)
         self.assertIn("paths-ignore:", workflow)
         self.assertIn("group: benchmark-results", workflow)
-        self.assertIn("uses: actions/checkout@v6", workflow)
+        self.assertIn("uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10", workflow)
         self.assertIn("ref: ${{ github.ref_name }}", workflow)
         self.assertIn("--output benchmarks/results/latest.json", workflow)
         self.assertIn("--evidence-iterations 3", workflow)
@@ -326,7 +327,9 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertIn("gh pr edit", workflow)
         self.assertNotIn("trustcheck inspect", workflow)
         self.assertLess(
-            workflow.index("uses: actions/upload-artifact@v7"),
+            workflow.index(
+                "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+            ),
             workflow.index("name: Open benchmark result pull request"),
         )
 
@@ -588,7 +591,7 @@ class AdvisoryBatchAndSnapshotTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             first_path = Path(directory) / "first.json"
             output_path = Path(directory) / "merged.json"
-            first = AdvisorySnapshotStore(output=first_path)
+            first = AdvisorySnapshotStore(output=first_path, allow_unsigned=True)
             first.put(
                 "Demo",
                 "1",
@@ -599,6 +602,7 @@ class AdvisoryBatchAndSnapshotTests(unittest.TestCase):
             merged = AdvisorySnapshotStore(
                 inputs=[first_path],
                 output=output_path,
+                allow_unsigned=True,
             )
             self.assertTrue(merged.sources)
             self.assertEqual(merged.get("demo", "1")[0].id, "GHSA-one")  # type: ignore[index]
@@ -618,7 +622,7 @@ class AdvisoryBatchAndSnapshotTests(unittest.TestCase):
                 AdvisorySnapshotError,
                 "unsupported",
             ):
-                AdvisorySnapshotStore(inputs=[bad])
+                AdvisorySnapshotStore(inputs=[bad], allow_unsigned=True)
 
     def test_snapshot_rejects_invalid_records_and_preserves_suppressions(self) -> None:
         with TemporaryDirectory() as directory:
@@ -628,7 +632,7 @@ class AdvisoryBatchAndSnapshotTests(unittest.TestCase):
                 path.write_text(
                     json.dumps(
                         {
-                            "schema": ADVISORY_SNAPSHOT_SCHEMA,
+                            "schema": "urn:trustcheck:advisory-snapshot:1.0.0",
                             "records": records,
                         }
                     ),
@@ -637,22 +641,22 @@ class AdvisoryBatchAndSnapshotTests(unittest.TestCase):
 
             write([])
             with self.assertRaisesRegex(AdvisorySnapshotError, "records"):
-                AdvisorySnapshotStore(inputs=[path])
+                AdvisorySnapshotStore(inputs=[path], allow_unsigned=True)
             write({"demo==1": {}})
             with self.assertRaisesRegex(AdvisorySnapshotError, "collection"):
-                AdvisorySnapshotStore(inputs=[path])
+                AdvisorySnapshotStore(inputs=[path], allow_unsigned=True)
             write({"demo==1": ["bad"]})
             with self.assertRaisesRegex(AdvisorySnapshotError, "must be an object"):
-                AdvisorySnapshotStore(inputs=[path])
+                AdvisorySnapshotStore(inputs=[path], allow_unsigned=True)
             write({"demo==1": [{"id": "X", "summary": "x", "suppression": "bad"}]})
             with self.assertRaisesRegex(AdvisorySnapshotError, "suppression"):
-                AdvisorySnapshotStore(inputs=[path])
+                AdvisorySnapshotStore(inputs=[path], allow_unsigned=True)
             write({"demo==1": [{"id": "X", "summary": "x", "suppression": {}}]})
             with self.assertRaisesRegex(AdvisorySnapshotError, "invalid"):
-                AdvisorySnapshotStore(inputs=[path])
+                AdvisorySnapshotStore(inputs=[path], allow_unsigned=True)
             write({"demo==1": [{"unknown": True}]})
             with self.assertRaisesRegex(AdvisorySnapshotError, "invalid"):
-                AdvisorySnapshotStore(inputs=[path])
+                AdvisorySnapshotStore(inputs=[path], allow_unsigned=True)
 
             store = AdvisorySnapshotStore()
             self.assertIsNone(store.write())
@@ -680,7 +684,7 @@ class AdvisoryBatchAndSnapshotTests(unittest.TestCase):
             first = Path(directory) / "first.json"
             second = Path(directory) / "second.json"
             duplicate = {
-                "schema": ADVISORY_SNAPSHOT_SCHEMA,
+                "schema": "urn:trustcheck:advisory-snapshot:1.0.0",
                 "records": {
                     "demo==1": [
                         {"id": "GHSA-one", "summary": "one", "aliases": []}
@@ -689,12 +693,15 @@ class AdvisoryBatchAndSnapshotTests(unittest.TestCase):
             }
             first.write_text(json.dumps(duplicate), encoding="utf-8")
             second.write_text(json.dumps(duplicate), encoding="utf-8")
-            deduplicated = AdvisorySnapshotStore(inputs=[first, second])
+            deduplicated = AdvisorySnapshotStore(
+                inputs=[first, second],
+                allow_unsigned=True,
+            )
             self.assertEqual(len(deduplicated.get("demo", "1") or []), 1)
 
             path.write_text("{bad", encoding="utf-8")
             with self.assertRaisesRegex(AdvisorySnapshotError, "unable to read"):
-                AdvisorySnapshotStore(inputs=[path])
+                AdvisorySnapshotStore(inputs=[path], allow_unsigned=True)
 
             output = Path(directory) / "atomic.json"
             with patch(
@@ -704,6 +711,102 @@ class AdvisoryBatchAndSnapshotTests(unittest.TestCase):
                 with self.assertRaises(OSError):
                     snapshots_module._atomic_write_json(output, {})
             self.assertEqual(list(Path(directory).glob(".atomic.json.*.tmp")), [])
+
+    def test_snapshot_sigstore_metadata_digest_and_expiry(self) -> None:
+        now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+
+        def signing_runner(command, **kwargs):
+            del kwargs
+            bundle = Path(command[command.index("--bundle") + 1])
+            bundle.write_text("{}", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "snapshot.json"
+            store = AdvisorySnapshotStore(
+                output=path,
+                source_urls=("https://api.osv.dev",),
+                sign_output=True,
+                clock=lambda: now,
+                runner=signing_runner,
+            )
+            store.put(
+                "demo",
+                "1",
+                [VulnerabilityRecord(id="GHSA-one", summary="one")],
+            )
+            store.write()
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["schema"], ADVISORY_SNAPSHOT_SCHEMA)
+            self.assertEqual(payload["generated_at"], now.isoformat())
+            self.assertEqual(
+                payload["expires_at"],
+                (now + timedelta(hours=168)).isoformat(),
+            )
+            self.assertEqual(
+                payload["source_manifest"]["sources"],
+                [{"url": "https://api.osv.dev"}],
+            )
+            self.assertEqual(
+                payload["source_manifest"]["records_sha256"],
+                payload["digests"]["records_sha256"],
+            )
+            self.assertRegex(payload["digests"]["records_sha256"], r"^[0-9a-f]{64}$")
+
+            verifier = Mock()
+            with patch(
+                "trustcheck.snapshots.Bundle.from_json",
+                return_value=Mock(),
+            ), patch(
+                "trustcheck.snapshots.Verifier.production",
+                return_value=verifier,
+            ):
+                loaded = AdvisorySnapshotStore(
+                    inputs=[path],
+                    sigstore_identity="https://github.com/example/project/.github/workflows/snapshot.yml@refs/heads/main",
+                    sigstore_issuer="https://token.actions.githubusercontent.com",
+                    clock=lambda: now + timedelta(hours=1),
+                )
+                self.assertEqual(loaded.get("demo", "1")[0].id, "GHSA-one")  # type: ignore[index]
+                verifier.verify_artifact.assert_called_once()
+
+                with self.assertRaisesRegex(AdvisorySnapshotError, "maximum age"):
+                    AdvisorySnapshotStore(
+                        inputs=[path],
+                        sigstore_identity="trusted",
+                        max_age=timedelta(minutes=30),
+                        clock=lambda: now + timedelta(hours=1),
+                    )
+
+            payload["records"]["demo==1"][0]["summary"] = "tampered"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with patch(
+                "trustcheck.snapshots.Bundle.from_json",
+                return_value=Mock(),
+            ), patch(
+                "trustcheck.snapshots.Verifier.production",
+                return_value=Mock(),
+            ), self.assertRaisesRegex(AdvisorySnapshotError, "digest mismatch"):
+                AdvisorySnapshotStore(
+                    inputs=[path],
+                    sigstore_identity="trusted",
+                    clock=lambda: now,
+                )
+
+    def test_snapshot_requires_signature_or_explicit_compatibility(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "snapshot.json"
+            with self.assertRaisesRegex(AdvisorySnapshotError, "Sigstore-signed"):
+                AdvisorySnapshotStore(output=path).write()
+
+            legacy = {
+                "schema": "urn:trustcheck:advisory-snapshot:1.0.0",
+                "records": {},
+            }
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+            with self.assertRaisesRegex(AdvisorySnapshotError, "bundle not found"):
+                AdvisorySnapshotStore(inputs=[path])
+            AdvisorySnapshotStore(inputs=[path], allow_unsigned=True)
 
     def test_prefetch_populates_snapshot_and_uses_it_offline(self) -> None:
         class Provider:
@@ -731,7 +834,7 @@ class AdvisoryBatchAndSnapshotTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "snapshot.json"
             provider = Provider()
-            store = AdvisorySnapshotStore(output=path)
+            store = AdvisorySnapshotStore(output=path, allow_unsigned=True)
             client = VulnerabilityIntelligenceClient(
                 providers=(OsvProvider("OSV", provider),),  # type: ignore[arg-type]
                 snapshot_store=store,
@@ -743,7 +846,10 @@ class AdvisoryBatchAndSnapshotTests(unittest.TestCase):
             self.assertEqual(client.query("demo", "1")[0].id, "GHSA-demo")
 
             offline = VulnerabilityIntelligenceClient(
-                snapshot_store=AdvisorySnapshotStore(inputs=[path]),
+                snapshot_store=AdvisorySnapshotStore(
+                    inputs=[path],
+                    allow_unsigned=True,
+                ),
             )
             self.assertEqual(offline.query("other", "2")[0].id, "GHSA-other")
 
@@ -1525,6 +1631,20 @@ class ActionAndServiceExtensionTests(unittest.TestCase):
                     "TRUSTCHECK_ACTION_MAX_WORKERS": "65",
                 }
             )
+        with self.assertRaisesRegex(ActionInputError, "number"):
+            ActionSettings.from_environment(
+                {
+                    "TRUSTCHECK_ACTION_TARGET": "demo",
+                    "TRUSTCHECK_ACTION_MAX_ADVISORY_AGE": "old",
+                }
+            )
+        with self.assertRaisesRegex(ActionInputError, "positive"):
+            ActionSettings.from_environment(
+                {
+                    "TRUSTCHECK_ACTION_TARGET": "demo",
+                    "TRUSTCHECK_ACTION_MAX_ADVISORY_AGE": "0",
+                }
+            )
 
         with TemporaryDirectory() as directory:
             workspace = Path(directory)
@@ -1539,6 +1659,10 @@ class ActionAndServiceExtensionTests(unittest.TestCase):
                 max_workers=4,
                 advisory_snapshots=("advisories.json",),
                 write_advisory_snapshot="merged.json",
+                max_advisory_age=24,
+                advisory_snapshot_identity="trusted@example.com",
+                advisory_snapshot_issuer="https://issuer.example",
+                sign_advisory_snapshot=True,
                 resume_state="resume.json",
                 enable_plugins=True,
                 plugins=("policy:demo",),
@@ -1548,6 +1672,10 @@ class ActionAndServiceExtensionTests(unittest.TestCase):
             self.assertIn("--max-workers", arguments)
             self.assertIn("--advisory-snapshot", arguments)
             self.assertIn("--write-advisory-snapshot", arguments)
+            self.assertIn("--max-advisory-age", arguments)
+            self.assertIn("--advisory-snapshot-identity", arguments)
+            self.assertIn("--advisory-snapshot-issuer", arguments)
+            self.assertIn("--sign-advisory-snapshot", arguments)
             self.assertIn("--resume-state", arguments)
             self.assertIn("--enable-plugins", arguments)
             self.assertIn("--plugin-config", arguments)

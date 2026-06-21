@@ -67,7 +67,7 @@ trustcheck = ["py.typed"]
 version_scheme = "no-guess-dev"
 local_scheme = "no-local-version"
 version_file = "src/trustcheck/_version.py"
-fallback_version = "0+unknown"
+fallback_version = "0.0.0+source"
 
 [tool.ruff]
 target-version = "py311"

@@ -333,8 +333,14 @@ trustcheck scan -f requirements.txt \
   --with-osv \
   --max-workers 8 \
   --resume-state .trustcheck/scan-state.json \
-  --write-advisory-snapshot .trustcheck/advisories.json
+  --write-advisory-snapshot .trustcheck/advisories.json \
+  --sign-advisory-snapshot
 ```
+
+Signed snapshots include source URLs, generation and expiration times, and a
+SHA-256 digest of canonical advisory records. Reading one requires the trusted
+Sigstore certificate identity and accepts snapshots for at most seven days by
+default; adjust that bound with `--max-advisory-age HOURS`.
 
 Enable an installed plugin explicitly:
 

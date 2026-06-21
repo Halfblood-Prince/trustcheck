@@ -11,6 +11,7 @@ import tomllib
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Callable, Sequence
 from urllib import parse
@@ -88,7 +89,11 @@ from .service import (
     ProgressCallback,
     inspect_package,
 )
-from .snapshots import AdvisorySnapshotError, AdvisorySnapshotStore
+from .snapshots import (
+    DEFAULT_MAX_ADVISORY_AGE_HOURS,
+    AdvisorySnapshotError,
+    AdvisorySnapshotStore,
+)
 
 EXIT_OK = 0
 EXIT_UPSTREAM_FAILURE = 1
@@ -757,6 +762,33 @@ def _add_runtime_arguments(
         "--write-advisory-snapshot",
         metavar="PATH",
         help="Write merged advisory results as a reusable offline snapshot.",
+    )
+    parser.add_argument(
+        "--max-advisory-age",
+        type=float,
+        default=DEFAULT_MAX_ADVISORY_AGE_HOURS,
+        metavar="HOURS",
+        help="Reject advisory snapshots older than this many hours; defaults to 168.",
+    )
+    parser.add_argument(
+        "--advisory-snapshot-identity",
+        metavar="IDENTITY",
+        help="Trusted Sigstore certificate identity for advisory snapshots.",
+    )
+    parser.add_argument(
+        "--advisory-snapshot-issuer",
+        metavar="URL",
+        help="Expected OIDC issuer for the advisory snapshot signer.",
+    )
+    parser.add_argument(
+        "--sign-advisory-snapshot",
+        action="store_true",
+        help="Sign written advisory snapshots with Sigstore ambient identity.",
+    )
+    parser.add_argument(
+        "--allow-unsigned-advisory-snapshot",
+        action="store_true",
+        help="Allow unsigned snapshot input or output for compatibility.",
     )
     parser.add_argument(
         "--enable-plugins",
@@ -1766,6 +1798,18 @@ def _post_fix_reproduction_command(
         command.append("--offline")
     for snapshot in getattr(args, "advisory_snapshot", ()):
         command.extend(["--advisory-snapshot", str(Path(snapshot).resolve())])
+    if getattr(args, "max_advisory_age", None) is not None:
+        command.extend(["--max-advisory-age", str(args.max_advisory_age)])
+    if getattr(args, "advisory_snapshot_identity", None):
+        command.extend(
+            ["--advisory-snapshot-identity", args.advisory_snapshot_identity]
+        )
+    if getattr(args, "advisory_snapshot_issuer", None):
+        command.extend(
+            ["--advisory-snapshot-issuer", args.advisory_snapshot_issuer]
+        )
+    if getattr(args, "allow_unsigned_advisory_snapshot", False):
+        command.append("--allow-unsigned-advisory-snapshot")
     return tuple(command)
 
 
@@ -2511,12 +2555,14 @@ def _build_vulnerability_client(
     max_workers = _resolve_max_workers(args, config_payload)
     providers: list[OsvProvider] = []
     seen_urls: set[str] = set()
+    source_urls: list[str] = []
 
     def add_provider(name: str, base_url: str) -> None:
         normalized = base_url.strip().rstrip("/")
         if not normalized or normalized in seen_urls:
             return
         seen_urls.add(normalized)
+        source_urls.append(normalized)
         provider_client = _build_osv_client(
             client,
             base_url=normalized,
@@ -2551,9 +2597,36 @@ def _build_vulnerability_client(
         if plugin_manager is not None
         else ()
     )
+    kev_url = _config_string(
+        advisory_config,
+        "kev_url",
+        default=CISA_KEV_URL,
+    )
+    epss_url = _config_string(
+        advisory_config,
+        "epss_url",
+        default=EPSS_BASE_URL,
+    )
+    if kev_enabled:
+        source_urls.append(kev_url)
+    if epss_enabled:
+        source_urls.append(epss_url)
     snapshot_store = AdvisorySnapshotStore(
         inputs=getattr(args, "advisory_snapshot", ()),
         output=getattr(args, "write_advisory_snapshot", None),
+        source_urls=source_urls,
+        max_age=timedelta(
+            hours=getattr(
+                args,
+                "max_advisory_age",
+                DEFAULT_MAX_ADVISORY_AGE_HOURS,
+            )
+        ),
+        sigstore_identity=getattr(args, "advisory_snapshot_identity", None),
+        sigstore_issuer=getattr(args, "advisory_snapshot_issuer", None),
+        allow_unsigned=getattr(args, "allow_unsigned_advisory_snapshot", False),
+        sign_output=getattr(args, "sign_advisory_snapshot", False),
+        offline=client.offline,
     )
     if (
         not providers
@@ -2565,16 +2638,6 @@ def _build_vulnerability_client(
     ):
         return None
 
-    kev_url = _config_string(
-        advisory_config,
-        "kev_url",
-        default=CISA_KEV_URL,
-    )
-    epss_url = _config_string(
-        advisory_config,
-        "epss_url",
-        default=EPSS_BASE_URL,
-    )
     return VulnerabilityIntelligenceClient(
         providers=tuple(providers),
         advisory_sources=advisory_sources,

@@ -61,18 +61,32 @@ offline scans:
 ```bash
 trustcheck scan -f requirements.txt \
   --with-osv \
-  --write-advisory-snapshot .trustcheck/advisories.json
+  --write-advisory-snapshot .trustcheck/advisories.json \
+  --sign-advisory-snapshot
 
 trustcheck scan -f requirements.txt \
   --offline \
   --cache-dir .trustcheck/cache \
-  --advisory-snapshot .trustcheck/advisories.json
+  --advisory-snapshot .trustcheck/advisories.json \
+  --advisory-snapshot-identity \
+    https://github.com/example/project/.github/workflows/snapshot.yml@refs/heads/main \
+  --advisory-snapshot-issuer https://token.actions.githubusercontent.com \
+  --max-advisory-age 24
 ```
 
 `--advisory-snapshot` is repeatable. Inputs merge deterministically and
 deduplicate advisory identities. `--write-advisory-snapshot` writes the merged
-set atomically using schema
-`urn:trustcheck:advisory-snapshot:1.0.0`.
+set atomically using schema `urn:trustcheck:advisory-snapshot:2.0.0`.
+
+Schema 2 records a source manifest with provider URLs and a bound SHA-256
+digest of canonical advisory records, plus generation and expiration
+timestamps. `--sign-advisory-snapshot`
+creates a Sigstore bundle beside the JSON as `<snapshot>.sigstore.json` using
+ambient OIDC identity. Loading verifies that bundle against
+`--advisory-snapshot-identity` and optional `--advisory-snapshot-issuer` before
+parsing records. `--max-advisory-age HOURS` defaults to 168 and can impose a
+shorter lifetime than the signed snapshot. Legacy or unsigned snapshots are
+accepted only with `--allow-unsigned-advisory-snapshot`.
 
 The snapshot covers vulnerability intelligence. Offline package metadata and
 artifacts still require a populated content cache.

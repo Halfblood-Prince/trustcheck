@@ -88,6 +88,11 @@ and EPSS fields.
 `VulnerabilityIntelligenceClient.prefetch()` performs bounded multi-package
 OSV batch queries. An `AdvisorySnapshotStore` can be supplied for reusable
 offline records, and `flush_snapshots()` atomically writes configured output.
+Snapshot schema 2 includes source URLs, generation and expiration timestamps,
+and a canonical record digest. Configure `max_age`, `sigstore_identity`, and
+optionally `sigstore_issuer` when loading. Set `sign_output=True` when writing
+with ambient Sigstore identity; unsigned compatibility requires the explicit
+`allow_unsigned=True` setting.
 
 ## Plugin API
 

@@ -15,7 +15,10 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("name: Generate coverage badge", workflow)
         self.assertIn("coverage-badge/coverage.svg", workflow)
         self.assertIn("publish-coverage-badge:", workflow)
-        self.assertIn("actions/download-artifact@v8", workflow)
+        self.assertIn(
+            "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+            workflow,
+        )
         self.assertIn("contents: write", workflow)
         self.assertIn("github.event_name == 'push'", workflow)
         self.assertIn("group: coverage-badge", workflow)

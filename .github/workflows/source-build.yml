@@ -11,6 +11,9 @@ permissions:
 jobs:
   source-build-without-git:
     name: Source Build (${{ matrix.os }})
+    env:
+      SETUPTOOLS_SCM_PRETEND_VERSION: 0.0.0+source
+      SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK: 0.0.0+source
     strategy:
       fail-fast: false
       matrix:
@@ -19,13 +22,13 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
 
@@ -48,6 +51,10 @@ jobs:
             --exclude=.tmp-build \
             -cf - . | tar -xf - -C "$archive_root"
           python -m build --sdist --wheel --outdir "$archive_root/dist" "$archive_root"
+          python scripts/verify_release_version.py \
+            --expected 0.0.0+source \
+            "$archive_root"/dist/*.whl \
+            "$archive_root"/dist/*.tar.gz
 
       - name: Smoke test built sdist
         shell: bash
@@ -63,5 +70,8 @@ jobs:
             --exclude=.tmp-build \
             -cf - . | tar -xf - -C "$archive_root"
           python -m build --sdist --outdir "$archive_root/dist" "$archive_root"
+          python scripts/verify_release_version.py \
+            --expected 0.0.0+source \
+            "$archive_root"/dist/*.tar.gz
           python -m pip install --force-reinstall "$archive_root"/dist/*.tar.gz
           trustcheck --help

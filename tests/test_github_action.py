@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -603,11 +604,62 @@ class GitHubActionTests(unittest.TestCase):
 
         self.assertTrue(action.startswith("name: TrustCheck Package Scanner\n"))
         self.assertLess(upload_position, enforcement_position)
-        self.assertIn("actions/upload-artifact@v7", action)
+        self.assertIn(
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+            action,
+        )
         self.assertIn("continue-on-error: true", action)
         self.assertIn('exit "$TRUSTCHECK_EXIT_CODE"', action)
         self.assertIn("default: strict", action)
         self.assertIn("sandbox-image:", action)
+
+    def test_all_external_actions_are_commit_pinned(self) -> None:
+        files = [Path("action.yml"), *Path(".github/workflows").glob("*.yml")]
+        found = 0
+        for path in files:
+            for line_number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(),
+                1,
+            ):
+                match = re.match(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", line)
+                if match is None or match.group(1).startswith("./"):
+                    continue
+                found += 1
+                reference = match.group(1)
+                self.assertRegex(
+                    reference,
+                    r"^[^@]+@[0-9a-f]{40}$",
+                    f"mutable action reference at {path}:{line_number}",
+                )
+        self.assertGreater(found, 0)
+
+    def test_composite_action_uses_hash_locked_installation(self) -> None:
+        action = Path("action.yml").read_text(encoding="utf-8")
+        lock = Path("requirements-action.lock").read_text(encoding="utf-8")
+
+        self.assertIn("--require-hashes", action)
+        self.assertIn('requirements-action.lock"', action)
+        self.assertIn("--no-build-isolation", action)
+        self.assertIn("--no-deps", action)
+        for dependency in (
+            "idna",
+            "packaging",
+            "pyjwt",
+            "pydantic",
+            "setuptools",
+            "setuptools-scm",
+            "sigstore",
+            "tomlkit",
+            "tuf",
+            "urllib3",
+            "wheel",
+        ):
+            block = re.search(
+                rf"(?ms)^{re.escape(dependency)}==.*?(?=^[a-z0-9_.-]+==|\Z)",
+                lock,
+            )
+            self.assertIsNotNone(block, dependency)
+            self.assertIn("--hash=sha256:", block.group(0))  # type: ignore[union-attr]
 
     def test_action_validation_workflow_has_pass_and_failure_cases(self) -> None:
         workflow = Path(".github/workflows/action-integration.yml").read_text(
