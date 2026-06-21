@@ -15,7 +15,12 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("name: Verify published benchmark signature", workflow)
         self.assertIn("benchmarks/results/latest.json.sig", workflow)
         self.assertIn("benchmarks/results/benchmark-public-key.pem", workflow)
-        self.assertIn('python -m pip install -e . mypy ruff "tomli>=2.2,<3"', workflow)
+        self.assertIn("python -m pip install -e . mypy ruff", workflow)
+        self.assertNotIn('python-version: ["3.10"', workflow)
+        publish = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn('python-version: ["3.10"', publish)
         self.assertIn("name: Test built sdist source tree", workflow)
         self.assertIn("python -m pytest -q tests/test_release_version.py", workflow)
 

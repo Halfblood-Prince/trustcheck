@@ -7,11 +7,7 @@ import os
 import re
 import sys
 import threading
-
-try:
-    import tomllib  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - Python 3.10 compatibility
-    import tomli as tomllib
+import tomllib
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field

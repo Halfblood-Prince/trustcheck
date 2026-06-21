@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python `>=3.10`
+- Python `>=3.11`
 - Network access to PyPI for live inspection
 
 ## Install from PyPI

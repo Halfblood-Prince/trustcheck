@@ -75,6 +75,8 @@ class BinarySecurityWorkflowTests(unittest.TestCase):
         self.assertIn('"urllib3>=2.7,<3"', project)
         self.assertIn('"idna>=3.15,<4"', project)
         self.assertIn('"PyJWT>=2.13,<3"', project)
+        self.assertIn('"cryptography>=48.0.1,<49"', project)
+        self.assertNotIn("tomli", project)
         self.assertNotIn("pypi-attestations", project)
         self.assertFalse((ROOT / "src" / "trustcheck" / "parse_toml.py").exists())
         self.assertFalse((ROOT / "src" / "trustcheck" / "parse_toml").exists())

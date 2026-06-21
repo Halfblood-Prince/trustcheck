@@ -9,11 +9,7 @@ import shutil
 import subprocess  # nosec B404
 import sys
 import tempfile
-
-try:
-    import tomllib  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - Python 3.10 compatibility
-    import tomli as tomllib
+import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import Distribution, distributions
