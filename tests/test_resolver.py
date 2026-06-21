@@ -799,6 +799,8 @@ class ResolverTests(unittest.TestCase):
             self.assertTrue((destination / "local.whl").is_file())
             self.assertTrue((destination / "pyproject.toml").is_file())
             self.assertIn(str(destination / "local.whl"), staged)
+            if destination != destination.resolve():
+                self.assertNotIn(str(destination.resolve() / "local.whl"), staged)
 
     def test_sandbox_input_staging_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

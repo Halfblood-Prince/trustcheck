@@ -623,6 +623,7 @@ def _stage_sandbox_inputs(
     destination: Path,
 ) -> list[str]:
     lexical_workspace = workspace.absolute()
+    lexical_destination = destination.absolute()
     workspace = workspace.resolve()
     workspace_aliases = tuple(dict.fromkeys((lexical_workspace, workspace)))
     destination = destination.resolve()
@@ -759,7 +760,7 @@ def _stage_sandbox_inputs(
         index += 1
 
     return [
-        translate(argument, destination)
+        translate(argument, lexical_destination)
         for argument in arguments
     ]
 

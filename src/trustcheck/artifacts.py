@@ -230,9 +230,12 @@ def _apply_worker_limits() -> None:  # pragma: no cover - OS-specific child boot
     infinity = getattr(resource, "RLIM_INFINITY", -1)
 
     def set_soft_limit(kind: int, requested: int) -> None:
-        _, hard_limit = getrlimit(kind)
-        effective = requested if hard_limit == infinity else min(requested, hard_limit)
-        setrlimit(kind, (effective, effective))
+        try:
+            _, hard_limit = getrlimit(kind)
+            effective = requested if hard_limit == infinity else min(requested, hard_limit)
+            setrlimit(kind, (effective, effective))
+        except (OSError, ValueError):
+            return
 
     set_soft_limit(rlimit_cpu, cpu_limit)
     rlimit_as = getattr(resource, "RLIMIT_AS", None)

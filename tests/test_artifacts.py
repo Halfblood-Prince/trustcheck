@@ -289,6 +289,30 @@ class WheelArtifactInspectionTests(unittest.TestCase):
         self.assertEqual(applied[0], (1, (5, 5)))
         self.assertEqual(applied[1], (2, (512 * 1024 * 1024, 512 * 1024 * 1024)))
 
+    def test_worker_limits_tolerate_unsupported_platform_limit(self) -> None:
+        applied: list[int] = []
+
+        def setrlimit(kind: int, limits: tuple[int, int]) -> None:
+            del limits
+            if kind == 2:
+                raise ValueError("current limit exceeds maximum limit")
+            applied.append(kind)
+
+        resource = SimpleNamespace(
+            RLIM_INFINITY=-1,
+            RLIMIT_CPU=1,
+            RLIMIT_AS=2,
+            getrlimit=lambda kind: (-1, -1),
+            setrlimit=setrlimit,
+        )
+
+        with patch.dict(sys.modules, {"resource": resource}), patch(
+            "trustcheck.artifacts.os.geteuid", return_value=1000, create=True
+        ):
+            _apply_worker_limits()
+
+        self.assertEqual(applied, [1])
+
     def test_ast_and_native_heuristics_are_recorded_in_artifact_results(self) -> None:
         payload = build_wheel(
             extra_files={
