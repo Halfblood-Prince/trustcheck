@@ -622,10 +622,17 @@ def _stage_sandbox_inputs(
     workspace: Path,
     destination: Path,
 ) -> list[str]:
+    lexical_workspace = workspace.absolute()
     workspace = workspace.resolve()
+    workspace_aliases = tuple(dict.fromkeys((lexical_workspace, workspace)))
     destination = destination.resolve()
     visited_requirement_files: set[Path] = set()
     visited_groups: set[tuple[Path, str]] = set()
+
+    def translate(value: str, target: str | Path) -> str:
+        for alias in workspace_aliases:
+            value = _translate_workspace_reference(value, alias, target)
+        return value
 
     def staged_path(source: Path) -> Path:
         resolved = source.resolve()
@@ -667,7 +674,7 @@ def _stage_sandbox_inputs(
             ) from exc
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
-            _translate_workspace_reference(text, workspace, "/workspace"),
+            translate(text, "/workspace"),
             encoding="utf-8",
         )
         for line in _logical_requirement_lines(text):
@@ -696,7 +703,7 @@ def _stage_sandbox_inputs(
             ) from exc
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
-            _translate_workspace_reference(text, workspace, "/workspace"),
+            translate(text, "/workspace"),
             encoding="utf-8",
         )
         groups = payload.get("dependency-groups")
@@ -752,7 +759,7 @@ def _stage_sandbox_inputs(
         index += 1
 
     return [
-        _translate_workspace_reference(argument, workspace, destination)
+        translate(argument, destination)
         for argument in arguments
     ]
 

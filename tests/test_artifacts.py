@@ -3,10 +3,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import sys
 import tarfile
 import unittest
 import zipfile
 from collections.abc import Mapping
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from trustcheck.artifacts import (
@@ -17,6 +19,7 @@ from trustcheck.artifacts import (
     MAX_NATIVE_ANALYSIS_BYTES,
     MAX_SOURCE_AST_BYTES,
     OVERSIZED_FILE_BYTES,
+    _apply_worker_limits,
     _bounded_tar_members,
     _canonical_requirements,
     _inspect_tar_payloads,
@@ -267,6 +270,24 @@ class WheelArtifactInspectionTests(unittest.TestCase):
         )
         self.assertTrue(result.archive_valid, result.error)
         self.assertEqual(result.metadata_name, "demo")
+
+    def test_worker_limits_respect_platform_hard_maximums(self) -> None:
+        applied: list[tuple[int, tuple[int, int]]] = []
+        resource = SimpleNamespace(
+            RLIM_INFINITY=-1,
+            RLIMIT_CPU=1,
+            RLIMIT_AS=2,
+            getrlimit=lambda kind: (100, 5 if kind == 1 else -1),
+            setrlimit=lambda kind, limits: applied.append((kind, limits)),
+        )
+
+        with patch.dict(sys.modules, {"resource": resource}), patch(
+            "trustcheck.artifacts.os.geteuid", return_value=1000, create=True
+        ):
+            _apply_worker_limits()
+
+        self.assertEqual(applied[0], (1, (5, 5)))
+        self.assertEqual(applied[1], (2, (512 * 1024 * 1024, 512 * 1024 * 1024)))
 
     def test_ast_and_native_heuristics_are_recorded_in_artifact_results(self) -> None:
         payload = build_wheel(

@@ -10,10 +10,9 @@ class PublishedBenchmarkTests(unittest.TestCase):
     def test_committed_result_is_signed_and_complete(self) -> None:
         root = Path(__file__).resolve().parents[1]
         attributes = (root / ".gitattributes").read_text(encoding="utf-8")
-        self.assertIn(
-            "benchmarks/results/latest.json -text diff whitespace=cr-at-eol",
-            attributes.splitlines(),
-        )
+        lines = attributes.splitlines()
+        for path in ("benchmarks/corpus/truth.json", "benchmarks/results/latest.json"):
+            self.assertIn(f"{path} -text diff whitespace=cr-at-eol", lines)
         namespace = runpy.run_path(str(root / "scripts" / "benchmark_signature.py"))
         result = root / "benchmarks" / "results" / "latest.json"
         namespace["verify"](

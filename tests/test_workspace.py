@@ -30,7 +30,7 @@ class WorkspaceTests(unittest.TestCase):
             (root / "requirements-api.txt").write_text("demo==1\n", encoding="utf-8")
             files = discover_dependency_files(root)
         self.assertEqual(
-            [path.relative_to(root).as_posix() for path in files],
+            [path.relative_to(root.resolve()).as_posix() for path in files],
             ["requirements-api.txt", "service/pyproject.toml"],
         )
 

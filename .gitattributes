@@ -1,2 +1,3 @@
 # Benchmark signatures cover exact file bytes; Git must not rewrite line endings.
+benchmarks/corpus/truth.json -text diff whitespace=cr-at-eol
 benchmarks/results/latest.json -text diff whitespace=cr-at-eol

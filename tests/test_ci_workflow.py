@@ -66,6 +66,12 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         )
         self.assertFalse((ROOT / "docs" / "assets" / "images" / "coverage.svg").exists())
 
+    def test_readme_links_adversarial_fuzzing_badge(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("actions/workflows/fuzz.yml/badge.svg?branch=main", readme)
+        self.assertEqual(readme.count("actions/workflows/fuzz.yml"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -223,16 +223,21 @@ def _apply_worker_limits() -> None:  # pragma: no cover - OS-specific child boot
         return
     cpu_limit = max(1, math.ceil(MAX_INSPECTION_CPU_SECONDS))
     setrlimit = getattr(resource, "setrlimit", None)
+    getrlimit = getattr(resource, "getrlimit", None)
     rlimit_cpu = getattr(resource, "RLIMIT_CPU", None)
-    if setrlimit is None or rlimit_cpu is None:
+    if setrlimit is None or getrlimit is None or rlimit_cpu is None:
         return
-    setrlimit(rlimit_cpu, (cpu_limit, cpu_limit))
+    infinity = getattr(resource, "RLIM_INFINITY", -1)
+
+    def set_soft_limit(kind: int, requested: int) -> None:
+        _, hard_limit = getrlimit(kind)
+        effective = requested if hard_limit == infinity else min(requested, hard_limit)
+        setrlimit(kind, (effective, effective))
+
+    set_soft_limit(rlimit_cpu, cpu_limit)
     rlimit_as = getattr(resource, "RLIMIT_AS", None)
     if rlimit_as is not None:
-        setrlimit(
-            rlimit_as,
-            (MAX_INSPECTION_MEMORY_BYTES, MAX_INSPECTION_MEMORY_BYTES),
-        )
+        set_soft_limit(rlimit_as, MAX_INSPECTION_MEMORY_BYTES)
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         import pwd
 
