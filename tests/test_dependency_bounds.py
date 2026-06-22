@@ -8,6 +8,14 @@ from scripts.dependency_bounds import lower_bound_constraints
 
 
 class DependencyBoundsTests(unittest.TestCase):
+    def test_repository_constraints_use_sigstore_compatible_pydantic_floor(self) -> None:
+        constraints = lower_bound_constraints(
+            Path(__file__).parents[1] / "pyproject.toml",
+            extras=["test"],
+        )
+
+        self.assertIn("pydantic==2.12", constraints)
+
     def test_extracts_declared_direct_lower_bounds(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             pyproject = Path(directory) / "pyproject.toml"
