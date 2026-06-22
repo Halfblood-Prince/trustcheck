@@ -54,18 +54,19 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("name: Test built sdist source tree", workflow)
         self.assertIn("python -m pytest -q tests/test_release_version.py", workflow)
 
-    def test_benchmark_workflow_verifies_before_and_after_generation(self) -> None:
+    def test_benchmark_workflow_presents_unsigned_results(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "benchmarks.yml").read_text(
             encoding="utf-8"
         )
 
-        published = workflow.index("name: Verify published benchmark signature")
         benchmark = workflow.index("python benchmarks/benchmark_against_pip_audit.py")
-        signing = workflow.index("name: Sign benchmark result")
-        generated = workflow.index("name: Verify generated benchmark signature")
-        self.assertLess(published, benchmark)
-        self.assertLess(benchmark, signing)
-        self.assertLess(signing, generated)
+        presentation = workflow.index("name: Present benchmark results")
+        artifact = workflow.index("uses: actions/upload-artifact@")
+        self.assertLess(benchmark, presentation)
+        self.assertLess(presentation, artifact)
+        self.assertIn("$GITHUB_STEP_SUMMARY", workflow)
+        self.assertNotIn("benchmark_signature.py", workflow)
+        self.assertNotIn("BENCHMARK_SIGNING_KEY_PEM", workflow)
 
     def test_ci_generates_and_publishes_coverage_badge(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(

@@ -13,7 +13,8 @@ from trustcheck.cli import build_parser, main
 from trustcheck.contract import JSON_SCHEMA_ID, JSON_SCHEMA_VERSION
 
 ROOT = Path(__file__).parents[1]
-RELEASE_VERSION = "1.9.0"
+RELEASE_VERSION = "2.1.0"
+RELEASE_DATE = "2026-06-22"
 
 
 def _documented_trustcheck_commands() -> list[tuple[Path, list[str]]]:
@@ -66,9 +67,10 @@ class ReleaseReadinessTests(unittest.TestCase):
         )
         docs_changelog = (ROOT / "docs" / "changelog.md").read_text(encoding="utf-8")
 
-        self.assertIn(f"## [{RELEASE_VERSION}] - 2026-06-09", changelog)
+        self.assertIn(f"## [{RELEASE_VERSION}] - {RELEASE_DATE}", changelog)
         self.assertIn(
-            f"Package release `{RELEASE_VERSION}` emits machine-readable report schema `1.4.0`.",
+            f"Package release `{RELEASE_VERSION}` emits machine-readable report schema "
+            f"`{JSON_SCHEMA_VERSION}`.",
             changelog,
         )
         self.assertIn(f"advanced the schema to `{JSON_SCHEMA_VERSION}`", changelog)

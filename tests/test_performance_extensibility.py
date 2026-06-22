@@ -468,39 +468,39 @@ class BenchmarkPublicationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "five warm trustcheck samples"):
             namespace["_validate_publishable"](weak)
 
-    def test_benchmark_workflow_publishes_results_through_pull_request(self) -> None:
+    def test_benchmark_workflow_is_manual_and_presents_results(self) -> None:
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github" / "workflows" / "benchmarks.yml").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("push:", workflow)
-        self.assertIn("if: github.actor != 'github-actions[bot]'", workflow)
-        self.assertIn("contents: write", workflow)
-        self.assertIn("pull-requests: write", workflow)
-        self.assertIn("paths-ignore:", workflow)
-        self.assertIn("group: benchmark-results", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertNotIn("push:", workflow)
+        self.assertNotIn("pull_request:", workflow)
+        self.assertNotIn("schedule:", workflow)
+        self.assertNotIn("contents: write", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
+        self.assertIn("group: benchmark-results-${{ github.ref }}", workflow)
         self.assertIn("uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10", workflow)
-        self.assertIn("pull_request:", workflow)
-        self.assertIn("if: github.event_name != 'pull_request'", workflow)
+        self.assertIn("persist-credentials: false", workflow)
         self.assertIn("--output benchmarks/results/latest.json", workflow)
         self.assertIn("pip-audit==2.10.1", workflow)
         self.assertIn("--iterations 5", workflow)
         self.assertIn("--evidence-iterations 5", workflow)
         self.assertIn("retention-days: 90", workflow)
         self.assertIn("python scripts/update_benchmark_table.py", workflow)
-        self.assertIn("git add README.md benchmarks/results/latest.json", workflow)
-        self.assertIn("git commit -m \"Update benchmark results\"", workflow)
-        self.assertIn('branch="automation/benchmark-results"', workflow)
-        self.assertIn("git push --force-with-lease", workflow)
-        self.assertIn("gh pr create", workflow)
-        self.assertIn("gh pr edit", workflow)
+        self.assertIn("$GITHUB_STEP_SUMMARY", workflow)
+        self.assertNotIn("git add", workflow)
+        self.assertNotIn("git commit", workflow)
+        self.assertNotIn("git push", workflow)
+        self.assertNotIn("gh pr", workflow)
         self.assertNotIn("trustcheck inspect", workflow)
         self.assertLess(
+            workflow.index("name: Present benchmark results"),
             workflow.index(
                 "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
             ),
-            workflow.index("name: Open benchmark result pull request"),
         )
 
 def _report(project: str, version: str) -> TrustReport:

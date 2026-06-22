@@ -6,6 +6,10 @@ The project follows Semantic Versioning for the supported public API described i
 
 ## Unreleased
 
+## [2.1.0] - 2026-06-22
+
+Package release `2.1.0` emits machine-readable report schema `1.10.0`.
+
 ### Added
 
 - Added the first-party `trustcheck` pre-commit hook for fast, hash-aware
@@ -203,5 +207,6 @@ Package release `1.9.0` emits machine-readable report schema `1.4.0`.
 - Aligned the README, documentation site, CLI help, changelog, and JSON contract documentation around the same supported feature set.
 - Replaced temporary Discord issue and security links with stable GitHub project pages and private vulnerability reporting.
 
-[Unreleased]: https://github.com/Halfblood-Prince/trustcheck/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.0.5...v2.1.0
 [1.9.0]: https://github.com/Halfblood-Prince/trustcheck/compare/v1.8.0...v1.9.0
