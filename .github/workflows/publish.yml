@@ -126,6 +126,7 @@ jobs:
         run: python -m pytest -q tests
 
       - name: Build package
+        shell: bash
         run: |
           python -m build
           python scripts/verify_release_version.py \

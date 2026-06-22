@@ -36,6 +36,13 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
             release_workflow.count("scripts/verify_release_version.py"), 2
         )
         self.assertIn('--tag "$GITHUB_REF_NAME"', release_workflow)
+        build_step_start = release_workflow.index("- name: Build package")
+        build_step_end = release_workflow.index(
+            "- name: Prepare package upload directory", build_step_start
+        )
+        self.assertIn(
+            "shell: bash", release_workflow[build_step_start:build_step_end]
+        )
 
     def test_ci_verifies_published_benchmark_signature(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
