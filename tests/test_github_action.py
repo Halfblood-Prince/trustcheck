@@ -686,6 +686,8 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("--method PATCH", workflow)
         self.assertIn("-F force=true", workflow)
         self.assertIn("--method POST", workflow)
+        self.assertIn("for attempt in {1..5}", workflow)
+        self.assertIn("sleep 2", workflow)
         self.assertIn("Immutable: `uses: Halfblood-Prince/trustcheck@", workflow)
         self.assertIn("Compatible major: `uses: Halfblood-Prince/trustcheck@", workflow)
         self.assertIn("secrets.RELEASE_TOKEN || github.token", workflow)

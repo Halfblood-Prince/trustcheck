@@ -47,6 +47,16 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
         build = _job_block(workflow, "build-windows-executable")
 
         self.assertIn('"pyinstaller>=6.20,<7"', build)
+        self.assertIn("Set standalone release version", build)
+        self.assertIn(
+            '"SETUPTOOLS_SCM_PRETEND_VERSION=$releaseVersion" >> $env:GITHUB_ENV',
+            build,
+        )
+        self.assertIn(
+            '"SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK=$releaseVersion" '
+            ">> $env:GITHUB_ENV",
+            build,
+        )
         self.assertIn("python scripts/build_standalone.py", build)
         self.assertIn("dist\\standalone\\trustcheck.exe", build)
         self.assertIn("& $binary --version", build)

@@ -423,6 +423,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set standalone release version
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $releaseVersion = $env:TAG_NAME.TrimStart("v")
+          "SETUPTOOLS_SCM_PRETEND_VERSION=$releaseVersion" >> $env:GITHUB_ENV
+          "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK=$releaseVersion" >> $env:GITHUB_ENV
+
       - name: Install PyInstaller tooling
         run: |
           python -m pip install --upgrade pip
@@ -698,7 +707,16 @@ jobs:
             operation="Created"
           fi
 
-          resolved_sha="$(gh api "$get_endpoint" --jq '.object.sha')"
+          resolved_sha=""
+          for attempt in {1..5}; do
+            resolved_sha="$(gh api "$get_endpoint" --jq '.object.sha')"
+            if [ "$resolved_sha" = "$GITHUB_SHA" ]; then
+              break
+            fi
+            if [ "$attempt" -lt 5 ]; then
+              sleep 2
+            fi
+          done
           if [ "$resolved_sha" != "$GITHUB_SHA" ]; then
             echo "${ACTION_MAJOR_TAG} resolved to ${resolved_sha}, expected ${GITHUB_SHA}." >&2
             exit 1
