@@ -187,12 +187,14 @@ jobs:
 
       - name: Generate lowest-supported constraints
         if: matrix.dependency-set == 'lowest-supported'
-        run: python scripts/dependency_bounds.py --extra test > lowest-constraints.txt
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "packaging>=24,<27"
+          python scripts/dependency_bounds.py --extra test > lowest-constraints.txt
 
       - name: Install lowest-supported dependencies
         if: matrix.dependency-set == 'lowest-supported'
         run: |
-          python -m pip install --upgrade pip
           python -m pip install -c lowest-constraints.txt -e ".[test]" build pytest
           python -m pip check
 
