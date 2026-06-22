@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
 import tomllib
@@ -19,6 +20,12 @@ from .resolver import ArtifactReference
 
 SUPPORTED_LOCKFILES = {"pdm.lock", "pipfile.lock", "poetry.lock", "uv.lock"}
 PYLOCK_NAME = re.compile(r"^pylock(?:\.[^.]+)?\.toml$")
+_MARKER_TOKEN = re.compile(
+    r"(?P<space>\s+)|"
+    r"(?P<string>'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\")|"
+    r"(?P<word>[A-Za-z_][A-Za-z0-9_.-]*)|"
+    r"(?P<other>.)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -904,9 +911,61 @@ def _evaluate_marker(
     context: str,
 ) -> bool:
     try:
-        return Marker(expression).evaluate(environment=dict(environment))
+        compatible_expression = _compatible_set_marker(expression, environment)
+        return Marker(compatible_expression).evaluate(environment=dict(environment))
     except (InvalidMarker, KeyError) as exc:
         raise ValueError(f"invalid environment marker in {context}: {exc}") from exc
+
+
+def _compatible_set_marker(
+    expression: str,
+    environment: Mapping[str, Any],
+) -> str:
+    """Reduce PEP 751 set membership for packaging versions older than 25."""
+    tokens = [
+        (match.lastgroup, match.group(), match.start(), match.end())
+        for match in _MARKER_TOKEN.finditer(expression)
+        if match.lastgroup != "space"
+    ]
+    replacements: list[tuple[int, int, str]] = []
+    index = 0
+    while index < len(tokens):
+        kind, text, start, _ = tokens[index]
+        if kind != "string" or index + 2 >= len(tokens):
+            index += 1
+            continue
+
+        operator = tokens[index + 1][1]
+        variable_index = index + 2
+        if operator == "not" and index + 3 < len(tokens):
+            if tokens[index + 2][1] != "in":
+                index += 1
+                continue
+            operator = "not in"
+            variable_index = index + 3
+        elif operator != "in":
+            index += 1
+            continue
+
+        variable = tokens[variable_index][1]
+        if variable not in {"extras", "dependency_groups"}:
+            index += 1
+            continue
+
+        value = str(ast.literal_eval(text))
+        applies = value in environment[variable]
+        if operator == "not in":
+            applies = not applies
+        comparison = "==" if applies else "!="
+        os_name = repr(str(environment["os_name"]))
+        replacements.append(
+            (start, tokens[variable_index][3], f"os_name {comparison} {os_name}")
+        )
+        index = variable_index + 1
+
+    for start, end, replacement in reversed(replacements):
+        expression = expression[:start] + replacement + expression[end:]
+    return expression
 
 
 def _validate_requires_python(

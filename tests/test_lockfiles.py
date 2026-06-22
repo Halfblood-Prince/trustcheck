@@ -12,6 +12,7 @@ from trustcheck.lockfiles import (
     LockedPackage,
     LockfileResolution,
     _clean_requirement_entry,
+    _evaluate_marker,
     _exact_requirement_version,
     _filename_from_location,
     _hash_table,
@@ -223,6 +224,27 @@ class LockfileTests(unittest.TestCase):
         self.assertEqual(
             package.artifacts[0].hashes,
             (("sha256", "a" * 64), ("sha512", "b" * 128)),
+        )
+
+    def test_pylock_set_markers_work_with_older_packaging_versions(self) -> None:
+        environment = _marker_environment({"python_version": "3.12"})
+        environment["extras"] = {"security"}
+        environment["dependency_groups"] = {"dev"}
+
+        self.assertTrue(
+            _evaluate_marker(
+                "python_version >= '3.11' and 'security' in extras "
+                "and 'docs' not in dependency_groups",
+                environment,
+                context="test",
+            )
+        )
+        self.assertFalse(
+            _evaluate_marker(
+                "'security' not in extras or 'test' in dependency_groups",
+                environment,
+                context="test",
+            )
         )
 
     def test_load_pylock_supports_archive_directory_vcs_and_duplicate_artifacts(self) -> None:
