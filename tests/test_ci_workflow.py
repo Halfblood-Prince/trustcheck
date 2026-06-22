@@ -94,6 +94,54 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("git -C \"$publish_root\" push --force origin coverage-badge", workflow)
         self.assertNotIn("git diff --exit-code -- docs/assets/images/coverage.svg", workflow)
 
+    def test_ci_exercises_dependency_bounds_and_checks_installations(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("dependency-bounds:", workflow)
+        self.assertIn("dependency-set: lowest-supported", workflow)
+        self.assertIn("dependency-set: latest-compatible", workflow)
+        self.assertIn("python scripts/dependency_bounds.py", workflow)
+        self.assertIn("--extra test", workflow)
+        self.assertGreaterEqual(workflow.count('-e ".[test]"'), 4)
+        self.assertIn("--upgrade-strategy eager", workflow)
+        self.assertGreaterEqual(workflow.count("python -m pip check"), 6)
+
+    def test_live_integration_is_nightly_and_blocks_stale_releases(self) -> None:
+        live = (ROOT / ".github/workflows/live-integration.yml").read_text(
+            encoding="utf-8"
+        )
+        release = (ROOT / ".github/workflows/publish.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("workflow_dispatch:", live)
+        self.assertIn("schedule:", live)
+        self.assertNotIn("pull_request:", live)
+        self.assertIn('TRUSTCHECK_RUN_LIVE: "1"', live)
+        self.assertIn("tests/test_integration_live.py", live)
+        self.assertIn("python -m pip check", live)
+        self.assertIn("live-integration-freshness:", release)
+        self.assertIn("live-integration.yml/runs", release)
+        self.assertIn('"$age_seconds" -gt 172800', release)
+
+    def test_sarif_integration_uploads_stable_fixture_alerts(self) -> None:
+        workflow = (ROOT / ".github/workflows/sarif-integration.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("security-events: write", workflow)
+        self.assertIn("requirements-vulnerable.txt", workflow)
+        self.assertEqual(workflow.count("--output-file trustcheck-"), 2)
+        self.assertIn("scripts/validate_sarif.py", workflow)
+        self.assertIn("--compare trustcheck-second.sarif", workflow)
+        self.assertIn(
+            "github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e",
+            workflow,
+        )
+        self.assertIn("category: trustcheck-sarif-integration", workflow)
+
     def test_readme_uses_action_published_badge(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 

@@ -100,7 +100,8 @@ JSON output.
 
 ## Network and diagnostics flags
 
-- `--config-file PATH`: load network settings from a JSON config file
+- `--config-file PATH`: load JSON, standalone TOML, or `[tool.trustcheck]`
+  settings from `pyproject.toml`
 - `--timeout FLOAT`: set request timeout in seconds
 - `--retries INT`: set transient retry count
 - `--backoff FLOAT`: set retry backoff factor

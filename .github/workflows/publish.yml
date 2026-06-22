@@ -6,6 +6,7 @@ on:
       - "v*.*.*"
 
 permissions:
+  actions: read
   attestations: write
   contents: write
   id-token: write
@@ -62,8 +63,43 @@ jobs:
           echo "Releasing from commit ${GITHUB_SHA}"
           git rev-parse HEAD
 
-  qa:
+  live-integration-freshness:
     needs: verify-tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Require a recent successful live integration run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest="$(
+            gh api \
+              --method GET \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/live-integration.yml/runs" \
+              -f branch=main \
+              -f status=completed \
+              -F per_page=1
+          )"
+          conclusion="$(jq -r '.workflow_runs[0].conclusion // empty' <<< "$latest")"
+          completed_at="$(jq -r '.workflow_runs[0].updated_at // empty' <<< "$latest")"
+          run_url="$(jq -r '.workflow_runs[0].html_url // empty' <<< "$latest")"
+          if [ -z "$completed_at" ]; then
+            echo "No completed live integration run exists on main." >&2
+            exit 1
+          fi
+          age_seconds="$((
+            $(date -u +%s) - $(date -u -d "$completed_at" +%s)
+          ))"
+          if [ "$conclusion" != "success" ] || [ "$age_seconds" -gt 172800 ]; then
+            echo "Latest live integration run is not a recent success: ${run_url}" >&2
+            exit 1
+          fi
+          echo "Using live integration signal from ${completed_at}: ${run_url}"
+
+  qa:
+    needs:
+      - verify-tag
+      - live-integration-freshness
     runs-on: ubuntu-latest
 
     steps:
@@ -120,7 +156,8 @@ jobs:
       - name: Install test tooling
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . build pytest
+          python -m pip install -e ".[test]" build pytest
+          python -m pip check
 
       - name: Run test suite
         run: python -m pytest -q tests
@@ -188,7 +225,8 @@ jobs:
       - name: Install coverage tooling
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . build pytest pytest-cov coverage cyclonedx-bom
+          python -m pip install -e ".[test]" build pytest pytest-cov coverage cyclonedx-bom
+          python -m pip check
 
       - name: Run tests with coverage
         run: python -m pytest --cov=trustcheck --cov-report=term-missing --cov-report=xml tests
@@ -435,10 +473,56 @@ jobs:
       - name: Install PyInstaller tooling
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . "pyinstaller>=6.20,<7"
+          python -m pip install -e . "Pillow>=11,<13" "pyinstaller>=6.20,<7"
+          python -m pip check
 
       - name: Build standalone Windows executable
         run: python scripts/build_standalone.py
+
+      - name: Authenticode sign and RFC 3161 timestamp executable
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          if (-not $env:WINDOWS_SIGNING_CERTIFICATE_BASE64 -or
+              -not $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD) {
+            throw "Windows Authenticode signing secrets are required for releases."
+          }
+          $timestampUrl = if ($env:WINDOWS_TIMESTAMP_URL) {
+            $env:WINDOWS_TIMESTAMP_URL
+          } else {
+            "https://timestamp.digicert.com"
+          }
+          $certificate = Join-Path $env:RUNNER_TEMP "trustcheck-signing.pfx"
+          $binary = (Resolve-Path "dist\standalone\trustcheck.exe").Path
+          try {
+            [IO.File]::WriteAllBytes(
+              $certificate,
+              [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE_BASE64)
+            )
+            & signtool.exe sign `
+              /fd SHA256 `
+              /td SHA256 `
+              /tr $timestampUrl `
+              /f $certificate `
+              /p $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD `
+              $binary
+            if ($LASTEXITCODE -ne 0) {
+              throw "Authenticode signing or RFC 3161 timestamping failed."
+            }
+            & signtool.exe verify /pa /all /v $binary
+            if ($LASTEXITCODE -ne 0) {
+              throw "Authenticode verification failed."
+            }
+            $signature = Get-AuthenticodeSignature -FilePath $binary
+            if ($signature.Status -ne "Valid" -or -not $signature.TimeStamperCertificate) {
+              throw "Executable does not have a valid timestamped Authenticode signature."
+            }
+          } finally {
+            Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Smoke test and name release executable
         id: executable
@@ -467,6 +551,36 @@ jobs:
           "path=$releasePath" >> $env:GITHUB_OUTPUT
           "name=$releaseName" >> $env:GITHUB_OUTPUT
 
+      - name: Build unsigned Microsoft Store MSIX
+        id: msix
+        shell: pwsh
+        env:
+          EXECUTABLE_PATH: ${{ steps.executable.outputs.path }}
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if (-not $env:MSIX_IDENTITY_NAME -or -not $env:MSIX_PUBLISHER) {
+            throw "MSIX_IDENTITY_NAME and MSIX_PUBLISHER repository variables are required."
+          }
+          $releaseVersion = $env:TAG_NAME.TrimStart("v")
+          $layout = Join-Path $env:RUNNER_TEMP "trustcheck-msix-layout"
+          $msixName = "trustcheck-$releaseVersion-windows-x86_64-store.msix"
+          $msixPath = Join-Path "release\windows" $msixName
+          python scripts/build_msix_layout.py `
+            --executable $env:EXECUTABLE_PATH `
+            --logo "docs\assets\images\logo.png" `
+            --layout $layout `
+            --version $releaseVersion `
+            --identity-name $env:MSIX_IDENTITY_NAME `
+            --publisher $env:MSIX_PUBLISHER
+          & MakeAppx.exe pack /d $layout /p $msixPath /o
+          if ($LASTEXITCODE -ne 0) {
+            throw "Microsoft Store MSIX packaging failed."
+          }
+          "path=$msixPath" >> $env:GITHUB_OUTPUT
+          "name=$msixName" >> $env:GITHUB_OUTPUT
+
       - name: Generate executable checksum
         shell: pwsh
         env:
@@ -477,10 +591,24 @@ jobs:
           "$hash  $env:EXECUTABLE_NAME" |
             Set-Content -Encoding ascii "$env:EXECUTABLE_PATH.sha256"
 
+      - name: Generate MSIX checksum
+        shell: pwsh
+        env:
+          MSIX_NAME: ${{ steps.msix.outputs.name }}
+          MSIX_PATH: ${{ steps.msix.outputs.path }}
+        run: |
+          $hash = (Get-FileHash $env:MSIX_PATH -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $env:MSIX_NAME" | Set-Content -Encoding ascii "$env:MSIX_PATH.sha256"
+
       - name: Attest executable build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
         with:
           subject-path: ${{ steps.executable.outputs.path }}
+
+      - name: Attest MSIX build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        with:
+          subject-path: ${{ steps.msix.outputs.path }}
 
       - name: Upload executable for Microsoft Defender scan
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -489,6 +617,8 @@ jobs:
           path: |
             ${{ steps.executable.outputs.path }}
             ${{ steps.executable.outputs.path }}.sha256
+            ${{ steps.msix.outputs.path }}
+            ${{ steps.msix.outputs.path }}.sha256
           if-no-files-found: error
 
   windows-defender-scan:
@@ -609,7 +739,85 @@ jobs:
           path: |
             windows-executable/*.exe
             windows-executable/*.exe.sha256
+            windows-executable/*.msix
+            windows-executable/*.msix.sha256
           if-no-files-found: error
+
+  windows-clean-install:
+    needs: windows-defender-scan
+    runs-on: windows-latest
+
+    steps:
+      - name: Download scanned Windows distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: windows-executable-${{ github.sha }}
+          path: windows-distributions
+
+      - name: Install and smoke test signed executable
+        shell: pwsh
+        run: |
+          $source = Get-ChildItem "windows-distributions" -Filter "*.exe" -File |
+            Select-Object -First 1
+          $signature = Get-AuthenticodeSignature -FilePath $source.FullName
+          if ($signature.Status -ne "Valid" -or -not $signature.TimeStamperCertificate) {
+            throw "Downloaded executable signature or timestamp is invalid."
+          }
+          $installRoot = Join-Path $env:LOCALAPPDATA "Programs\Trustcheck"
+          New-Item -ItemType Directory -Force $installRoot | Out-Null
+          Copy-Item -LiteralPath $source.FullName -Destination "$installRoot\trustcheck.exe"
+          $env:PATH = "$installRoot;$env:PATH"
+          trustcheck --help | Out-Null
+          trustcheck inspect requests | Out-Null
+
+  test-msix-installation:
+    needs: windows-defender-scan
+    runs-on: windows-latest
+
+    steps:
+      - name: Download Microsoft Store MSIX
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: windows-executable-${{ github.sha }}
+          path: windows-distributions
+
+      - name: Test MSIX installation and execution alias
+        shell: pwsh
+        env:
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+        run: |
+          $msix = Get-ChildItem "windows-distributions" -Filter "*.msix" -File |
+            Select-Object -First 1
+          $certificate = New-SelfSignedCertificate `
+            -Type Custom `
+            -Subject $env:MSIX_PUBLISHER `
+            -KeyUsage DigitalSignature `
+            -CertStoreLocation "Cert:\CurrentUser\My"
+          $plainPassword = [guid]::NewGuid().ToString()
+          $password = ConvertTo-SecureString $plainPassword -AsPlainText -Force
+          $pfx = Join-Path $env:RUNNER_TEMP "trustcheck-msix-test.pfx"
+          $cer = Join-Path $env:RUNNER_TEMP "trustcheck-msix-test.cer"
+          try {
+            Export-PfxCertificate -Cert $certificate -FilePath $pfx -Password $password |
+              Out-Null
+            Export-Certificate -Cert $certificate -FilePath $cer | Out-Null
+            Import-Certificate -FilePath $cer -CertStoreLocation `
+              "Cert:\CurrentUser\TrustedPeople" | Out-Null
+            & signtool.exe sign /fd SHA256 /f $pfx /p $plainPassword $msix.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "Disposable MSIX test signing failed."
+            }
+            Add-AppxPackage -Path $msix.FullName
+            trustcheck.exe --help | Out-Null
+            trustcheck.exe inspect requests | Out-Null
+          } finally {
+            Get-AppxPackage -Name $env:MSIX_IDENTITY_NAME | Remove-AppxPackage `
+              -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $pfx, $cer -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($certificate.Thumbprint)" `
+              -Force -ErrorAction SilentlyContinue
+          }
 
   publish-pypi:
     needs: coverage-build
@@ -673,6 +881,19 @@ jobs:
             - `dist/SHA256SUMS.txt`
             - `dist/trustcheck-sbom.json`
             - standalone `trustcheck-*-windows-x86_64.exe` with checksum
+            - unsigned `trustcheck-*-store.msix` for Microsoft Store submission
+
+            Verify the direct Windows executable before use:
+
+            ```powershell
+            Get-AuthenticodeSignature .\trustcheck-*-windows-x86_64.exe | Format-List
+            Get-FileHash .\trustcheck-*-windows-x86_64.exe -Algorithm SHA256
+            ```
+
+            The Authenticode status must be `Valid`, include a timestamp
+            certificate, and match the adjacent `.sha256` file. The Store signs
+            the MSIX during submission; the workflow tests its execution alias
+            with a disposable certificate before upload.
 
             GitHub Action:
             - Immutable: `uses: Halfblood-Prince/trustcheck@${{ github.ref_name }}`
@@ -746,6 +967,8 @@ jobs:
   upload-windows-executable:
     needs:
       - windows-defender-scan
+      - windows-clean-install
+      - test-msix-installation
       - publish-github-action
     runs-on: ubuntu-latest
 

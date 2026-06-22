@@ -108,6 +108,9 @@ locations such as `package.whl!/module.py` with a best-effort line number.
 ## Stability
 
 - SARIF fingerprints are stable across runs and checkout directories.
+- The scheduled `SARIF integration` workflow generates a deliberately
+  vulnerable fixture twice, validates identical fingerprints, and performs a
+  real upload to GitHub code scanning under a dedicated category.
 - CycloneDX serial numbers, SPDX namespaces, OpenVEX document IDs, package
   purls, and statement IDs are deterministic for equivalent evidence.
 - Generation timestamps are intentionally current and are not identity inputs.

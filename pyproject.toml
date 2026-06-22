@@ -44,6 +44,10 @@ dependencies = [
 
 [project.optional-dependencies]
 keyring = ["keyring>=25,<27"]
+test = [
+  "hypothesis>=6.100,<7",
+  "Pillow>=11,<13",
+]
 
 [project.scripts]
 trustcheck = "trustcheck.cli:main"
@@ -92,6 +96,12 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mutmut]
+source_paths = ["src/"]
+pytest_add_cli_args_test_selection = ["tests/test_property_invariants.py"]
+timeout_multiplier = 20.0
+timeout_constant = 2.0
 
 [tool.coverage.run]
 branch = true

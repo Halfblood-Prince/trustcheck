@@ -1,14 +1,57 @@
 # Config and offline mode
 
-You can provide network settings through a JSON config file and optionally combine that with environment variables or CLI flags.
+Trustcheck discovers reusable project settings and combines them with environment
+variables and CLI flags.
 
 ## Config file shape
 
-`--config-file` expects a JSON object. The `network`, `advisories`, and
-`performance` fields,
-when present, must also be objects.
+Configuration is discovered in this order:
 
-Example:
+1. an explicit `--config-file PATH`
+2. `.trustcheck.toml` in the current directory
+3. `[tool.trustcheck]` in `pyproject.toml`
+
+Explicit files may be JSON, standalone TOML, or `pyproject.toml`. The existing
+JSON shape remains supported. The `network`, `advisories`, and `performance`
+fields, when present, must be objects or TOML tables.
+
+Project-level TOML example:
+
+```toml
+[tool.trustcheck]
+policy = "strict"
+with_osv = true
+with_kev = true
+scan_profile = "standard"
+artifact_scope = "target"
+
+[tool.trustcheck.network]
+timeout = 20.0
+retries = 4
+cache_dir = ".trustcheck-cache"
+```
+
+The equivalent standalone `.trustcheck.toml` omits the `tool.trustcheck`
+prefix:
+
+```toml
+policy = "strict"
+with_osv = true
+with_kev = true
+scan_profile = "standard"
+artifact_scope = "target"
+
+[network]
+timeout = 20.0
+retries = 4
+cache_dir = ".trustcheck-cache"
+```
+
+Supported project-level settings are `policy`, `with_osv`, `with_kev`,
+`scan_profile`, and `artifact_scope`. Existing provider, performance, and
+network settings use their nested tables.
+
+JSON example:
 
 ```json
 {
@@ -56,14 +99,19 @@ The CLI also recognizes these environment variables:
 - `TRUSTCHECK_CACHE_DIR`
 - `TRUSTCHECK_OFFLINE`
 - `TRUSTCHECK_MAX_WORKERS`
+- `TRUSTCHECK_POLICY`
+- `TRUSTCHECK_WITH_OSV`
+- `TRUSTCHECK_WITH_KEV`
+- `TRUSTCHECK_SCAN_PROFILE`
+- `TRUSTCHECK_ARTIFACT_SCOPE`
 
 ## Precedence
 
-The effective network configuration is resolved from:
+All supported settings use this precedence:
 
 1. CLI flags
 2. environment variables
-3. config file values
+3. discovered or explicit project configuration
 4. built-in defaults
 
 ## Offline mode

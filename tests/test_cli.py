@@ -17,6 +17,7 @@ from trustcheck.cli import (
     EXIT_POLICY_FAILURE,
     EXIT_UPSTREAM_FAILURE,
     ScanTarget,
+    _apply_project_config,
     _build_debug_request_hook,
     _build_scan_targets,
     _build_vulnerability_client,
@@ -30,6 +31,7 @@ from trustcheck.cli import (
     _extract_scan_requirements_from_toml,
     _format_upstream_error,
     _index_configuration_from_args,
+    _load_config_file,
     _load_scan_targets,
     _load_scan_targets_from_toml,
     _locked_versions_from_requirements,
@@ -2798,6 +2800,178 @@ class CliBehaviorTests(unittest.TestCase):
                 exit_code = main(["inspect", "gridoptim", "--config-file", str(config_path)])
 
         self.assertEqual(exit_code, EXIT_OK)
+
+    def test_discovers_standalone_toml_before_pyproject(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "pyproject.toml").write_text(
+                "[tool.trustcheck]\npolicy = \"default\"\n",
+                encoding="utf-8",
+            )
+            (root / ".trustcheck.toml").write_text(
+                "policy = \"strict\"\n"
+                "with_osv = true\n"
+                "[network]\n"
+                "timeout = 4.5\n",
+                encoding="utf-8",
+            )
+            with patch("trustcheck.cli.Path.cwd", return_value=root):
+                payload = _load_config_file(None)
+
+        self.assertEqual(payload["policy"], "strict")
+        self.assertEqual(payload["with_osv"], True)
+        self.assertEqual(payload["network"], {"timeout": 4.5})
+
+    def test_loads_tool_trustcheck_from_explicit_pyproject(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pyproject.toml"
+            path.write_text(
+                "[project]\nname = \"example\"\n"
+                "[tool.trustcheck]\n"
+                "policy = \"strict\"\n"
+                "with_kev = true\n"
+                "scan_profile = \"standard\"\n"
+                "artifact_scope = \"target\"\n",
+                encoding="utf-8",
+            )
+            payload = _load_config_file(str(path))
+
+        self.assertEqual(
+            payload,
+            {
+                "policy": "strict",
+                "with_kev": True,
+                "scan_profile": "standard",
+                "artifact_scope": "target",
+            },
+        )
+
+    def test_config_loader_covers_discovery_and_format_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("trustcheck.cli.Path.cwd", return_value=root):
+                self.assertEqual(_load_config_file(None), {})
+
+            missing_table = root / "pyproject.toml"
+            missing_table.write_text("[project]\nname = \"example\"\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "does not contain"):
+                _load_config_file(str(missing_table))
+            with patch("trustcheck.cli.Path.cwd", return_value=root):
+                self.assertEqual(_load_config_file(None), {})
+
+            wrapped = root / "wrapped.toml"
+            wrapped.write_text(
+                "[tool.trustcheck]\npolicy = \"strict\"\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(_load_config_file(str(wrapped)), {"policy": "strict"})
+
+            invalid_suffix = root / "config.yaml"
+            invalid_suffix.write_text("policy: strict\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"\.json or \.toml"):
+                _load_config_file(str(invalid_suffix))
+
+            invalid_toml_shape = root / "invalid.toml"
+            invalid_toml_shape.write_text("policy = \"strict\"\n", encoding="utf-8")
+            with patch("trustcheck.cli.tomllib.load", return_value=[]):
+                with self.assertRaisesRegex(ValueError, "configuration table"):
+                    _load_config_file(str(invalid_toml_shape))
+
+    def test_invalid_project_config_returns_data_error_without_network(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / ".trustcheck.toml"
+            config.write_text("unknown_setting = true\n", encoding="utf-8")
+            stderr = io.StringIO()
+
+            with redirect_stderr(stderr):
+                exit_code = main(
+                    ["inspect", "gridoptim", "--config-file", str(config)]
+                )
+
+        self.assertEqual(exit_code, EXIT_DATA_ERROR)
+        self.assertIn("invalid configuration", stderr.getvalue())
+        self.assertIn("unknown_setting", stderr.getvalue())
+
+    def test_project_config_precedence_is_cli_then_environment_then_file(self) -> None:
+        parser = build_parser()
+        configured = {
+            "policy": "default",
+            "with_osv": True,
+            "with_kev": True,
+            "scan_profile": "fast",
+            "artifact_scope": "all",
+        }
+        args = parser.parse_args(["scan", "requests"])
+        args._explicit_config_fields = set()
+        with patch.dict(
+            "os.environ",
+            {
+                "TRUSTCHECK_POLICY": "strict",
+                "TRUSTCHECK_WITH_OSV": "false",
+                "TRUSTCHECK_WITH_KEV": "false",
+                "TRUSTCHECK_SCAN_PROFILE": "full",
+                "TRUSTCHECK_ARTIFACT_SCOPE": "sdist",
+            },
+        ):
+            _apply_project_config(args, configured)
+
+        self.assertEqual(args.policy, "strict")
+        self.assertFalse(args.with_osv)
+        self.assertFalse(args.with_kev)
+        self.assertEqual(args.scan_profile, "full")
+        self.assertEqual(args.artifact_scope, "sdist")
+
+        cli_args = parser.parse_args(
+            [
+                "scan",
+                "requests",
+                "--policy",
+                "default",
+                "--with-osv",
+                "--with-kev",
+                "--standard",
+                "--artifact-scope",
+                "target",
+            ]
+        )
+        cli_args._explicit_config_fields = {
+            "policy",
+            "with_osv",
+            "with_kev",
+            "scan_profile",
+            "artifact_scope",
+        }
+        with patch.dict(
+            "os.environ",
+            {
+                "TRUSTCHECK_POLICY": "strict",
+                "TRUSTCHECK_WITH_OSV": "false",
+                "TRUSTCHECK_WITH_KEV": "false",
+                "TRUSTCHECK_SCAN_PROFILE": "full",
+                "TRUSTCHECK_ARTIFACT_SCOPE": "all",
+            },
+        ):
+            _apply_project_config(cli_args, configured)
+
+        self.assertEqual(cli_args.policy, "default")
+        self.assertTrue(cli_args.with_osv)
+        self.assertTrue(cli_args.with_kev)
+        self.assertEqual(cli_args.scan_profile, "standard")
+        self.assertEqual(cli_args.artifact_scope, "target")
+
+    def test_project_config_rejects_invalid_boolean_environment_value(self) -> None:
+        args = build_parser().parse_args(["scan", "requests"])
+        args._explicit_config_fields = set()
+
+        with patch.dict("os.environ", {"TRUSTCHECK_WITH_OSV": "sometimes"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "TRUSTCHECK_WITH_OSV must be one of"):
+                _apply_project_config(args, {})
+
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "project config value must be a boolean"):
+                _apply_project_config(args, {"with_osv": 1})
+            with self.assertRaisesRegex(ValueError, "must be one of"):
+                _apply_project_config(args, {"policy": "almost-strict"})
 
     def test_cli_env_overrides_network_settings(self) -> None:
         def fake_inspect_package(*args, **kwargs):

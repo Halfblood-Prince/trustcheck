@@ -6,6 +6,15 @@ The project follows Semantic Versioning for the supported public API described i
 
 ## Unreleased
 
+### Added
+
+- Added JSON/TOML project configuration with automatic `.trustcheck.toml` and
+  `[tool.trustcheck]` discovery and CLI-over-environment precedence.
+- Added dependency-bound, scheduled live-upstream, real SARIF-upload, mutation,
+  property-based, and expanded adversarial fuzz testing workflows.
+- Added timestamped Authenticode signing, clean-runner executable validation,
+  and Microsoft Store MSIX packaging and execution-alias tests.
+
 ## [2.1.0] - 2026-06-22
 
 Package release `2.1.0` emits machine-readable report schema `1.10.0`.
@@ -18,7 +27,6 @@ Package release `2.1.0` emits machine-readable report schema `1.10.0`.
   spawned resource-bounded workers, and plugin execution diagnostics.
 - Published signed raw benchmark results with exact environments, cache phases,
   timings, peak RSS, corpus hashes, and advisory disagreements.
-- Restored Python 3.10 support with CI and release-matrix coverage.
 - Added monorepo discovery, aggregate JSON/SARIF, stable relative locations,
   previous-scan baselines, and glob-scoped policy overrides.
 - Added remediation confidence, breaking-change warnings, changelog links,
@@ -168,8 +176,7 @@ Package release `2.1.0` emits machine-readable report schema `1.10.0`.
 
 - Replaced the `pypi-attestations` runtime dependency with an internal PEP 740 adapter that delegates certificate, transparency-log, signature, and identity verification directly to Sigstore.
 - Raised vulnerable Sigstore transitive dependency floors and added a Windows-only fallback to Sigstore's embedded trusted-root snapshot when TUF refresh cannot create symlinks without elevated privileges.
-- Use standard-library `tomllib` on Python 3.11+ and the conditional `tomli`
-  compatibility package on Python 3.10.
+- Use standard-library `tomllib` on Python 3.11+.
 - Moved coverage badge generation and publication into GitHub Actions, with the generated SVG maintained on a dedicated `coverage-badge` branch instead of in the source tree.
 - Renamed the reusable GitHub Action and Marketplace display name to `TrustCheck Package Scanner`.
 - Expanded the Snap Store listing with richer feature copy, quick-start examples, project links, and a dedicated storefront icon.

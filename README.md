@@ -99,6 +99,10 @@ stored in an in-process keyring backend:
 pip install "trustcheck[keyring]"
 ```
 
+Project defaults can live in `.trustcheck.toml` or under `[tool.trustcheck]` in
+`pyproject.toml`. CLI flags override environment variables, which override
+project configuration. See the [configuration guide](https://halfblood-prince.github.io/trustcheck/cli/configuration/).
+
 Or install the Snap Store package:
 
 ```bash

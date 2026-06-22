@@ -23,6 +23,7 @@ jobs:
           - fuzz_provenance
           - fuzz_artifacts
           - fuzz_exports
+          - fuzz_indexes
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -30,7 +31,9 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
-      - run: python -m pip install . atheris==3.0.0
+      - run: |
+          python -m pip install . atheris==3.0.0
+          python -m pip check
       - name: Fuzz ${{ matrix.target }}
         run: >-
           python fuzz/${{ matrix.target }}.py

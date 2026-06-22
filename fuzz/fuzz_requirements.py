@@ -5,7 +5,9 @@ import sys
 import atheris
 
 with atheris.instrument_imports():
+    from packaging.markers import default_environment
     from packaging.requirements import InvalidRequirement, Requirement
+    from packaging.utils import InvalidName, canonicalize_name
 
     from trustcheck.cli import _clean_requirement_line, _strip_requirement_hashes
     from trustcheck.resolver import _logical_requirement_lines, _requirement_risks
@@ -22,8 +24,13 @@ def test_one_input(data: bytes) -> None:
         _requirement_risks(stripped)
         if stripped:
             try:
-                Requirement(stripped)
-            except InvalidRequirement:
+                requirement = Requirement(stripped)
+                canonicalize_name(requirement.name, validate=True)
+                if requirement.marker is not None:
+                    requirement.marker.evaluate(default_environment())
+                if requirement.url is not None:
+                    _requirement_risks(f"{requirement.name} @ {requirement.url}")
+            except (InvalidName, InvalidRequirement):
                 pass
 
 

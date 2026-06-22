@@ -2,7 +2,9 @@
 
 The Atheris harnesses cover requirements, all supported lockfile parser
 families, provenance envelopes and SLSA predicates, wheel/sdist metadata and
-ZIP/TAR headers (including wheel `RECORD`), and SARIF/SPDX/CycloneDX exports.
+ZIP/TAR headers (including wheel `RECORD`), SARIF/SPDX/CycloneDX exports,
+malformed PEP 508 markers and direct URLs, Unicode project names, and
+mixed-index dependency-confusion graphs.
 
 Atheris is supported on Linux. Run one target from an installed checkout:
 

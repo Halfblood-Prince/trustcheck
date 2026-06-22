@@ -169,7 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--version", help="Specific version to inspect.")
     inspect_parser.add_argument(
         "--config-file",
-        help="Path to a JSON config file with optional network settings.",
+        help="Path to a JSON, TOML, or pyproject.toml configuration file.",
     )
     inspect_parser.add_argument(
         "--expected-repo",
@@ -413,7 +413,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan_parser.add_argument(
         "--config-file",
-        help="Path to a JSON config file with optional network settings.",
+        help="Path to a JSON, TOML, or pyproject.toml configuration file.",
     )
     scan_parser.add_argument(
         "--format",
@@ -492,7 +492,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     environment_parser.add_argument(
         "--config-file",
-        help="Path to a JSON config file with optional network settings.",
+        help="Path to a JSON, TOML, or pyproject.toml configuration file.",
     )
     environment_parser.add_argument(
         "--format",
@@ -817,7 +817,24 @@ def _add_runtime_arguments(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(raw_argv)
+    args._explicit_config_fields = _explicit_config_fields(raw_argv)
+    try:
+        config_payload = _load_config_file(args.config_file)
+        _apply_project_config(args, config_payload)
+    except (
+        OSError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        tomllib.TOMLDecodeError,
+    ) as exc:
+        return _handle_error(
+            f"error: invalid configuration: {exc}",
+            EXIT_DATA_ERROR,
+            debug=args.debug,
+        )
     if args.max_workers is not None and args.max_workers < 1:
         parser.error("--max-workers must be at least 1")
     if args.command == "scan":
@@ -849,9 +866,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error(
                 "--format must be one of: "
                 + ", ".join(sorted(supported_formats))
-            )
+        )
         if args.command == "inspect":
-            config_payload = _load_config_file(args.config_file)
             args.max_workers = _resolve_max_workers(args, config_payload)
             progress_callback = None
             dependency_progress_callback = None
@@ -1026,7 +1042,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 parser.error("scan requires PROJECT or -f/--file")
             if not args.filename and (args.plan_fixes or args.fix):
                 parser.error("remediation requires -f/--file")
-            config_payload = _load_config_file(args.config_file)
             args.max_workers = _resolve_max_workers(args, config_payload)
             progress_callback = None
             dependency_progress_callback = None
@@ -1133,7 +1148,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 plugin_manager=plugin_manager,
             )
         if args.command == "environment":
-            config_payload = _load_config_file(args.config_file)
             args.max_workers = _resolve_max_workers(args, config_payload)
             progress_callback = None
             dependency_progress_callback = None
@@ -2742,12 +2756,144 @@ def _config_string(
 
 
 def _load_config_file(path: str | None) -> dict[str, object]:
-    if not path:
-        return {}
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if path:
+        return _load_config_path(Path(path), explicit=True)
+    standalone = Path.cwd() / ".trustcheck.toml"
+    if standalone.is_file():
+        return _load_config_path(standalone, explicit=False)
+    pyproject = Path.cwd() / "pyproject.toml"
+    if pyproject.is_file():
+        return _load_config_path(pyproject, explicit=False)
+    return {}
+
+
+def _load_config_path(path: Path, *, explicit: bool) -> dict[str, object]:
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    elif suffix == ".toml":
+        with path.open("rb") as config_file:
+            payload = tomllib.load(config_file)
+        if path.name == "pyproject.toml":
+            tool = payload.get("tool")
+            trustcheck = tool.get("trustcheck") if isinstance(tool, dict) else None
+            if trustcheck is None:
+                if explicit:
+                    raise ValueError("pyproject.toml does not contain [tool.trustcheck]")
+                return {}
+            payload = trustcheck
+        elif "tool" in payload and len(payload) == 1:
+            tool = payload.get("tool")
+            trustcheck = tool.get("trustcheck") if isinstance(tool, dict) else None
+            if isinstance(trustcheck, dict):
+                payload = trustcheck
+    else:
+        raise ValueError("config file must use a .json or .toml extension")
     if not isinstance(payload, dict):
-        raise ValueError("config file must contain a top-level JSON object")
+        if suffix == ".json":
+            raise ValueError("config file must contain a top-level JSON object")
+        raise ValueError("config file must contain a configuration table")
     return payload
+
+
+def _apply_project_config(
+    args: argparse.Namespace,
+    config: dict[str, object],
+) -> None:
+    explicit = set(getattr(args, "_explicit_config_fields", ()))
+    allowed = {
+        "policy",
+        "with_osv",
+        "with_kev",
+        "scan_profile",
+        "artifact_scope",
+        "network",
+        "advisories",
+        "performance",
+    }
+    unknown = sorted(set(config) - allowed)
+    if unknown:
+        raise ValueError("unknown project config setting(s): " + ", ".join(unknown))
+
+    args.policy = _resolve_choice(
+        getattr(args, "policy", None) if "policy" in explicit else None,
+        env_name="TRUSTCHECK_POLICY",
+        config_value=config.get("policy"),
+        default="default",
+        choices=set(BUILTIN_POLICIES),
+    )
+    if hasattr(args, "with_osv"):
+        args.with_osv = _resolve_bool(
+            args.with_osv if "with_osv" in explicit else False,
+            env_name="TRUSTCHECK_WITH_OSV",
+            config_value=config.get("with_osv"),
+            default=False,
+        )
+    if hasattr(args, "with_kev"):
+        args.with_kev = _resolve_bool(
+            args.with_kev if "with_kev" in explicit else False,
+            env_name="TRUSTCHECK_WITH_KEV",
+            config_value=config.get("with_kev"),
+            default=False,
+        )
+    if hasattr(args, "scan_profile"):
+        args.scan_profile = _resolve_choice(
+            args.scan_profile if "scan_profile" in explicit else None,
+            env_name="TRUSTCHECK_SCAN_PROFILE",
+            config_value=config.get("scan_profile"),
+            default="fast",
+            choices={"fast", "standard", "full"},
+        )
+    if hasattr(args, "artifact_scope"):
+        args.artifact_scope = _resolve_choice(
+            args.artifact_scope if "artifact_scope" in explicit else None,
+            env_name="TRUSTCHECK_ARTIFACT_SCOPE",
+            config_value=config.get("artifact_scope"),
+            default="target",
+            choices={"target", "sdist", "all"},
+        )
+
+
+def _explicit_config_fields(argv: Sequence[str]) -> set[str]:
+    flags = {
+        "--policy": "policy",
+        "--with-osv": "with_osv",
+        "--with-kev": "with_kev",
+        "--fast": "scan_profile",
+        "--standard": "scan_profile",
+        "--full": "scan_profile",
+        "--artifact-scope": "artifact_scope",
+    }
+    explicit: set[str] = set()
+    for token in argv:
+        flag = token.split("=", 1)[0]
+        destination = flags.get(flag)
+        if destination is not None:
+            explicit.add(destination)
+    return explicit
+
+
+def _resolve_choice(
+    cli_value: str | None,
+    *,
+    env_name: str,
+    config_value: object,
+    default: str,
+    choices: set[str],
+) -> str:
+    value: object = cli_value
+    if value is None:
+        value = os.getenv(env_name)
+    if value is None:
+        value = config_value
+    if value is None:
+        value = default
+    if not isinstance(value, str) or value not in choices:
+        raise ValueError(
+            f"{env_name} or project config must be one of: "
+            + ", ".join(sorted(choices))
+        )
+    return value
 
 
 def _resolve_float(
@@ -2811,12 +2957,25 @@ def _resolve_bool(
         return True
     env_value = os.getenv(env_name)
     if env_value is not None:
-        return env_value.strip().lower() in {"1", "true", "yes", "on"}
+        return _parse_bool(env_value, field=env_name)
     if config_value is not None:
         if isinstance(config_value, bool):
             return config_value
-        return str(config_value).strip().lower() in {"1", "true", "yes", "on"}
+        if isinstance(config_value, str):
+            return _parse_bool(config_value, field=f"{env_name} project config value")
+        raise ValueError(f"{env_name} project config value must be a boolean")
     return default
+
+
+def _parse_bool(value: str, *, field: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        f"{field} must be one of: 0, 1, false, true, no, yes, off, on"
+    )
 
 
 def _build_debug_request_hook(

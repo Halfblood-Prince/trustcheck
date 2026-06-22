@@ -23,7 +23,9 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
             ROOT / ".github" / "workflows" / "publish.yml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("needs: verify-tag", _job_block(workflow, "qa"))
+        qa = _job_block(workflow, "qa")
+        self.assertIn("- verify-tag", qa)
+        self.assertIn("- live-integration-freshness", qa)
         self.assertIn("needs: qa", _job_block(workflow, "matrix-build"))
         self.assertIn("needs: matrix-build", _job_block(workflow, "coverage-build"))
 
@@ -47,6 +49,11 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
         build = _job_block(workflow, "build-windows-executable")
 
         self.assertIn('"pyinstaller>=6.20,<7"', build)
+        self.assertIn('"Pillow>=11,<13"', build)
+        self.assertIn("Authenticode sign and RFC 3161 timestamp executable", build)
+        self.assertIn("WINDOWS_SIGNING_CERTIFICATE_BASE64", build)
+        self.assertIn("/tr $timestampUrl", build)
+        self.assertIn("signtool.exe verify /pa /all /v", build)
         self.assertIn("Set standalone release version", build)
         self.assertIn(
             '"SETUPTOOLS_SCM_PRETEND_VERSION=$releaseVersion" >> $env:GITHUB_ENV',
@@ -58,6 +65,9 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
             build,
         )
         self.assertIn("python scripts/build_standalone.py", build)
+        self.assertIn("Build unsigned Microsoft Store MSIX", build)
+        self.assertIn("python scripts/build_msix_layout.py", build)
+        self.assertIn("MakeAppx.exe pack", build)
         self.assertIn("dist\\standalone\\trustcheck.exe", build)
         self.assertIn("& $binary --version", build)
         self.assertIn("& $binary --help", build)
@@ -68,6 +78,20 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
             build,
         )
         self.assertIn("windows-executable-unscanned-${{ github.sha }}", build)
+
+    def test_windows_distributions_run_in_fresh_install_jobs(self) -> None:
+        workflow = (ROOT / ".github/workflows/publish.yml").read_text(
+            encoding="utf-8"
+        )
+        direct = _job_block(workflow, "windows-clean-install")
+        msix = _job_block(workflow, "test-msix-installation")
+
+        self.assertIn("Get-AuthenticodeSignature", direct)
+        self.assertIn("trustcheck --help", direct)
+        self.assertIn("trustcheck inspect requests", direct)
+        self.assertIn("Add-AppxPackage", msix)
+        self.assertIn("trustcheck.exe --help", msix)
+        self.assertIn("trustcheck.exe inspect requests", msix)
 
     def test_defender_scans_the_executable_from_the_build_job(self) -> None:
         workflow = (

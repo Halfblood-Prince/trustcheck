@@ -1,0 +1,41 @@
+name: Live integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 2 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-integration-main
+  cancel-in-progress: false
+
+jobs:
+  live-upstreams:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pytest
+          python -m pip check
+
+      - name: Test live PyPI, provenance, advisories, and snapshots
+        env:
+          TRUSTCHECK_RUN_LIVE: "1"
+        run: python -m pytest -q tests/test_integration_live.py
