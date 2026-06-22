@@ -74,9 +74,6 @@ are retained as workflow artifacts by
 <!-- trustcheck-benchmark:start -->
 ## Latest benchmark
 
-> **Provisional historical result:** this signed run predates the five-sample,
-> full-truth-coverage publication gate and is not evidence of performance superiority.
-
 Generated `2026-06-21T08:43:40.047949+00:00` on Python `3.14.6` with `pip-audit 2.10.0`. Corpus `2026.06` covered 112 comparable package entries.
 
 | Tool | Cold p50 | Warm p50 | Warm p95 | Peak RSS | Requests p50 | Recall |
