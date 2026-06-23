@@ -14,6 +14,8 @@ The project follows Semantic Versioning for the supported public API described i
   property-based, and expanded adversarial fuzz testing workflows.
 - Added timestamped Authenticode signing, clean-runner executable validation,
   and Microsoft Store MSIX packaging and execution-alias tests.
+- Added Docker image build and smoke testing in CI, plus release-time
+  multi-platform GHCR image publication.
 
 ## [2.1.0] - 2026-06-22
 

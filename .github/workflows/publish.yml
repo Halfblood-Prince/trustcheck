@@ -10,6 +10,7 @@ permissions:
   attestations: write
   contents: write
   id-token: write
+  packages: write
 
 env:
   SETUPTOOLS_SCM_PRETEND_VERSION: ${{ github.ref_name }}
@@ -842,6 +843,73 @@ jobs:
           packages-dir: dist/packages
           verbose: true
 
+  publish-docker:
+    needs:
+      - coverage-build
+      - verify-tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up QEMU for multi-platform builds
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Prepare Docker image metadata
+        id: docker_metadata
+        env:
+          ACTION_MAJOR_TAG: ${{ needs['verify-tag'].outputs.action_major_tag }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          release_version="${RELEASE_TAG#v}"
+          major_version="${ACTION_MAJOR_TAG#v}"
+          {
+            echo "tags<<EOF"
+            echo "${image}:${RELEASE_TAG}"
+            echo "${image}:${release_version}"
+            echo "${image}:${ACTION_MAJOR_TAG}"
+            echo "${image}:${major_version}"
+            echo "${image}:latest"
+            echo "EOF"
+            echo "labels<<EOF"
+            echo "org.opencontainers.image.title=Trustcheck"
+            echo "org.opencontainers.image.description=Package trust and provenance verification for PyPI consumers."
+            echo "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            echo "org.opencontainers.image.revision=${GITHUB_SHA}"
+            echo "org.opencontainers.image.version=${release_version}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish multi-platform Docker images
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          tags: ${{ steps.docker_metadata.outputs.tags }}
+          labels: ${{ steps.docker_metadata.outputs.labels }}
+          build-args: |
+            TRUSTCHECK_VERSION=${{ github.ref_name }}
+          provenance: mode=max
+          sbom: true
+
   publish-github-action:
     needs:
       - coverage-build
@@ -873,8 +941,9 @@ jobs:
           append_body: true
           body: |
             Published from immutable commit `${{ github.sha }}`.
-            The release workflow publishes PyPI, GitHub Action, and Snap Store
-            distributions after shared tag verification, QA, matrix, and coverage builds.
+            The release workflow publishes PyPI, GitHub Action, Snap Store, and
+            GHCR Docker distributions after shared tag verification, QA, matrix,
+            and coverage builds.
 
             Release artifacts:
             - `dist/*`
@@ -882,6 +951,7 @@ jobs:
             - `dist/trustcheck-sbom.json`
             - standalone `trustcheck-*-windows-x86_64.exe` with checksum
             - unsigned `trustcheck-*-store.msix` for Microsoft Store submission
+            - GHCR Docker images for `linux/amd64`, `linux/arm64`, and `linux/arm/v7`
 
             Verify the direct Windows executable before use:
 
