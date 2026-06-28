@@ -11,7 +11,7 @@ evaluation fails:
 
 ```yaml
 steps:
-  - uses: actions/checkout@v6
+  - uses: actions/checkout@v7
   - uses: Halfblood-Prince/trustcheck@v1
     with:
       target: requirements.txt
@@ -116,7 +116,7 @@ permissions:
   pull-requests: write
 
 steps:
-  - uses: actions/checkout@v6
+  - uses: actions/checkout@v7
     with:
       fetch-depth: 0
   - uses: Halfblood-Prince/trustcheck@v1

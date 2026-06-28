@@ -482,7 +482,7 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertNotIn("contents: write", workflow)
         self.assertNotIn("pull-requests: write", workflow)
         self.assertIn("group: benchmark-results-${{ github.ref }}", workflow)
-        self.assertIn("uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10", workflow)
+        self.assertIn("uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", workflow)
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn("--output benchmarks/results/latest.json", workflow)
         self.assertIn("pip-audit==2.10.1", workflow)

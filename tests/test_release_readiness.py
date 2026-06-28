@@ -13,8 +13,8 @@ from trustcheck.cli import build_parser, main
 from trustcheck.contract import JSON_SCHEMA_ID, JSON_SCHEMA_VERSION
 
 ROOT = Path(__file__).parents[1]
-RELEASE_VERSION = "2.1.0"
-RELEASE_DATE = "2026-06-22"
+RELEASE_VERSION = "2.1.1"
+RELEASE_DATE = "2026-06-28"
 
 
 def _documented_trustcheck_commands() -> list[tuple[Path, list[str]]]:

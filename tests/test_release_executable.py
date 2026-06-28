@@ -74,7 +74,7 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
         self.assertIn("trustcheck-$releaseVersion-windows-x86_64.exe", build)
         self.assertIn("Get-FileHash", build)
         self.assertIn(
-            "actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32",
+            "actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373",
             build,
         )
         self.assertIn("windows-executable-unscanned-${{ github.sha }}", build)

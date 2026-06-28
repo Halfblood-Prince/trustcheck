@@ -158,7 +158,7 @@ before merge:
 
 ```yaml
 steps:
-  - uses: actions/checkout@v6
+  - uses: actions/checkout@v7
   - uses: Halfblood-Prince/trustcheck@v1
     with:
       target: requirements.txt

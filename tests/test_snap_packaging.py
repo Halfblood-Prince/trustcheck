@@ -122,7 +122,7 @@ class SnapPackagingTests(unittest.TestCase):
             "trustcheck --help",
             "trustcheck inspect sampleproject",
             "unexpected_verification_error",
-            "actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32",
+            "actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373",
             "Upload verified snap",
         )
         positions = [qa.index(marker) for marker in ordered_markers]

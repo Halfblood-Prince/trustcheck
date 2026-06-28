@@ -6,6 +6,10 @@ The project follows Semantic Versioning for the supported public API described i
 
 ## Unreleased
 
+## [2.1.1] - 2026-06-28
+
+Package release `2.1.1` emits machine-readable report schema `1.10.0`.
+
 ### Added
 
 - Added JSON/TOML project configuration with automatic `.trustcheck.toml` and
@@ -16,6 +20,12 @@ The project follows Semantic Versioning for the supported public API described i
   and Microsoft Store MSIX packaging and execution-alias tests.
 - Added Docker image build and smoke testing in CI, plus release-time
   multi-platform GHCR image publication.
+
+### Changed
+
+- Added main-branch CI publication for GHCR Docker preview images.
+- Updated pinned GitHub Actions and Docker workflow actions to the latest
+  release versions suggested by Dependabot.
 
 ## [2.1.0] - 2026-06-22
 
@@ -216,6 +226,7 @@ Package release `1.9.0` emits machine-readable report schema `1.4.0`.
 - Aligned the README, documentation site, CLI help, changelog, and JSON contract documentation around the same supported feature set.
 - Replaced temporary Discord issue and security links with stable GitHub project pages and private vulnerability reporting.
 
-[Unreleased]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.0.5...v2.1.0
 [1.9.0]: https://github.com/Halfblood-Prince/trustcheck/compare/v1.8.0...v1.9.0

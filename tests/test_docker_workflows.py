@@ -47,13 +47,38 @@ class DockerWorkflowTests(unittest.TestCase):
         docker = _job_block(workflow, "docker-build-smoke-test")
 
         self.assertIn("needs: qa", docker)
-        self.assertIn("uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10", docker)
+        self.assertIn("packages: write", docker)
+        self.assertIn("uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", docker)
         self.assertIn(
             "docker build --build-arg TRUSTCHECK_VERSION=0.0.0+docker -t trustcheck:ci .",
             docker,
         )
         self.assertIn("docker run --rm trustcheck:ci --version", docker)
         self.assertIn("docker run --rm trustcheck:ci --help", docker)
+        self.assertIn(
+            "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            docker,
+        )
+        self.assertIn(
+            "uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5",
+            docker,
+        )
+        self.assertIn(
+            "uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee",
+            docker,
+        )
+        self.assertIn(
+            "uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf",
+            docker,
+        )
+        self.assertIn("registry: ghcr.io", docker)
+        self.assertIn('image="ghcr.io/${GITHUB_REPOSITORY,,}"', docker)
+        self.assertIn('echo "${image}:main"', docker)
+        self.assertIn('echo "${image}:sha-${GITHUB_SHA}"', docker)
+        self.assertIn("push: true", docker)
+        self.assertIn("TRUSTCHECK_VERSION=0.0.0+docker", docker)
+        self.assertIn("provenance: mode=max", docker)
+        self.assertIn("sbom: true", docker)
 
     def test_release_publishes_multi_platform_docker_images(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
@@ -65,19 +90,19 @@ class DockerWorkflowTests(unittest.TestCase):
         self.assertIn("- coverage-build", docker)
         self.assertIn("- verify-tag", docker)
         self.assertIn(
-            "uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
+            "uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3",
             docker,
         )
         self.assertIn(
-            "uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+            "uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5",
             docker,
         )
         self.assertIn(
-            "uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
+            "uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee",
             docker,
         )
         self.assertIn(
-            "uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
+            "uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf",
             docker,
         )
         self.assertIn("registry: ghcr.io", docker)

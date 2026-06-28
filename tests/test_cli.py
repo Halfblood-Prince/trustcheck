@@ -2596,7 +2596,7 @@ class CliBehaviorTests(unittest.TestCase):
                 build_type="https://slsa.dev/container-based-build/v1",
                 workflow_path=".github/workflows/release.yml",
                 workflow_ref="refs/tags/v2.2.0",
-                action_references=["actions/checkout@v6"],
+                action_references=["actions/checkout@v7"],
                 issues=[
                     ProvenanceIssue(
                         code="unpinned_action",
@@ -2673,7 +2673,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("embedded payloads:", stdout.getvalue())
         self.assertIn("parse note:", stdout.getvalue())
         self.assertIn("SLSA provenance:", stdout.getvalue())
-        self.assertIn("actions/checkout@v6", stdout.getvalue())
+        self.assertIn("actions/checkout@v7", stdout.getvalue())
         self.assertIn("issue: [medium] unpinned_action", stdout.getvalue())
         self.assertIn("vulnerabilities:", stdout.getvalue())
         self.assertIn("cvss=9.1", stdout.getvalue())
