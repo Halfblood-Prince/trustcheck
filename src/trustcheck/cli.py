@@ -858,9 +858,14 @@ def _add_runtime_arguments(
     resumable: bool = False,
 ) -> None:
     parser.add_argument(
-        "--max-workers",
+        "--workers",
+        dest="max_workers",
         type=int,
-        help="Bound concurrent network and target work; defaults to 8.",
+        metavar="N",
+        help=(
+            "Bound concurrent network and target work; defaults to 8. "
+            "Use -1 for all available CPU cores."
+        ),
     )
     parser.add_argument(
         "--advisory-snapshot",
@@ -946,8 +951,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             EXIT_DATA_ERROR,
             debug=args.debug,
         )
-    if args.max_workers is not None and args.max_workers < 1:
-        parser.error("--max-workers must be at least 1")
+    if (
+        args.max_workers is not None
+        and args.max_workers != -1
+        and not 1 <= args.max_workers <= 64
+    ):
+        parser.error("--workers must be -1 or between 1 and 64")
     if args.command == "scan":
         scan_command.validate_args(args, parser)
 
@@ -2454,9 +2463,22 @@ def _resolve_max_workers(
         config_value=performance_config.get("max_workers"),
         default=8,
     )
+    return _normalize_worker_count(workers)
+
+
+def _normalize_worker_count(workers: int) -> int:
+    if workers == -1:
+        return _available_worker_count()
     if workers < 1 or workers > 64:
-        raise ValueError("max_workers must be between 1 and 64")
+        raise ValueError("max_workers must be -1 or between 1 and 64")
     return workers
+
+
+def _available_worker_count() -> int:
+    try:
+        return max(1, len(os.sched_getaffinity(0)))  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
 
 
 def _config_bool(config: dict[str, object], name: str) -> bool:

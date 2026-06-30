@@ -1684,7 +1684,7 @@ class ResumeScanTests(unittest.TestCase):
                         "requirements.txt",
                         "--format",
                         "json",
-                        "--max-workers",
+                        "--workers",
                         "2",
                         "--resume-state",
                         str(state),
@@ -1706,7 +1706,7 @@ class ResumeScanTests(unittest.TestCase):
                         "requirements.txt",
                         "--format",
                         "json",
-                        "--max-workers",
+                        "--workers",
                         "2",
                         "--resume-state",
                         str(state),
@@ -1810,7 +1810,7 @@ class ResumeScanTests(unittest.TestCase):
 
     def test_cli_runtime_validation_and_callbacks(self) -> None:
         invalid_commands = [
-            ["inspect", "demo", "--max-workers", "0"],
+            ["inspect", "demo", "--workers", "0"],
             ["inspect", "demo", "--format", "missing"],
         ]
         for command in invalid_commands:
@@ -1901,16 +1901,25 @@ class ActionAndServiceExtensionTests(unittest.TestCase):
             ActionSettings.from_environment(
                 {
                     "TRUSTCHECK_ACTION_TARGET": "demo",
-                    "TRUSTCHECK_ACTION_MAX_WORKERS": "bad",
+                    "TRUSTCHECK_ACTION_WORKERS": "bad",
                 }
             )
         with self.assertRaisesRegex(ActionInputError, "between"):
             ActionSettings.from_environment(
                 {
                     "TRUSTCHECK_ACTION_TARGET": "demo",
-                    "TRUSTCHECK_ACTION_MAX_WORKERS": "65",
+                    "TRUSTCHECK_ACTION_WORKERS": "65",
                 }
             )
+        self.assertEqual(
+            ActionSettings.from_environment(
+                {
+                    "TRUSTCHECK_ACTION_TARGET": "demo",
+                    "TRUSTCHECK_ACTION_WORKERS": "-1",
+                }
+            ).max_workers,
+            -1,
+        )
         with self.assertRaisesRegex(ActionInputError, "number"):
             ActionSettings.from_environment(
                 {
@@ -1949,7 +1958,7 @@ class ActionAndServiceExtensionTests(unittest.TestCase):
                 plugin_config="plugins.json",
             )
             arguments = build_cli_arguments(settings, workspace=workspace)
-            self.assertIn("--max-workers", arguments)
+            self.assertIn("--workers", arguments)
             self.assertIn("--advisory-snapshot", arguments)
             self.assertIn("--write-advisory-snapshot", arguments)
             self.assertIn("--max-advisory-age", arguments)
@@ -1984,6 +1993,15 @@ class ActionAndServiceExtensionTests(unittest.TestCase):
                     ),
                     workspace=workspace,
                 )
+            minus_one_arguments = build_cli_arguments(
+                ActionSettings(
+                    target="requirements.txt",
+                    max_workers=-1,
+                ),
+                workspace=workspace,
+            )
+            self.assertIn("--workers", minus_one_arguments)
+            self.assertIn("-1", minus_one_arguments)
 
     def test_nullable_pypi_vulnerability_lists_are_normalized(self) -> None:
         payload = VulnerabilityPayload.model_validate(

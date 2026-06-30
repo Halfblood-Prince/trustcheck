@@ -130,7 +130,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=2,
         help="Retry accepted-exit commands that emit no output.",
     )
-    parser.add_argument("--max-workers", type=int, default=8)
+    parser.add_argument("--workers", dest="max_workers", type=int, default=8)
     parser.add_argument(
         "--output",
         default="benchmarks/results/latest.json",
@@ -631,7 +631,7 @@ def _trustcheck_command(
         "--with-osv",
         "--format",
         "json",
-        "--max-workers",
+        "--workers",
         str(max_workers),
     ]
     if not resolve_dependencies:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import tempfile
 from pathlib import Path
 
@@ -13,6 +13,8 @@ MAX_DYNAMIC_SECONDS = 30.0
 MAX_DYNAMIC_CPU_SECONDS = 10
 MAX_DYNAMIC_MEMORY = "512m"
 MAX_DYNAMIC_OUTPUT_LINES = 25
+# This path is a private tmpfs mount inside the disposable analysis container.
+CONTAINER_TEMPFS = "/tmp:rw,nosuid,nodev,size=256m"  # nosec B108
 
 
 def analyze_artifact_dynamic(
@@ -68,7 +70,7 @@ def analyze_artifact_dynamic(
             "ALL",
             "--read-only",
             "--tmpfs",
-            "/tmp:rw,nosuid,nodev,size=256m",
+            CONTAINER_TEMPFS,
             "--volume",
             f"{artifact_path.parent.resolve()}:/work:ro",
             "--workdir",
@@ -81,7 +83,7 @@ def analyze_artifact_dynamic(
         ]
         result.command = [*docker_command[:-1], "<dynamic-analysis-runner>"]
         try:
-            completed = subprocess.run(
+            completed = subprocess.run(  # nosec B603
                 docker_command,
                 capture_output=True,
                 check=False,

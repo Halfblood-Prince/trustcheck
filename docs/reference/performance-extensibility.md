@@ -2,12 +2,13 @@
 
 ## Bounded concurrency
 
-`--max-workers N` bounds target scans, artifact downloads, provenance requests,
+`--workers N` bounds target scans, artifact downloads, provenance requests,
 static archive checks, advisory providers, OSV advisory fetches, and enrichment
-work. The default is `8`; accepted values are `1` through `64`.
+work. The default is `8`; accepted values are `1` through `64`, or `-1` for all
+available CPU cores.
 
 ```bash
-trustcheck scan -f requirements.txt --with-osv --max-workers 8
+trustcheck scan -f requirements.txt --with-osv --workers 8
 ```
 
 Results remain in resolved-input order even when workers finish out of order.
@@ -22,7 +23,7 @@ speeding up these operations, so Trustcheck uses bounded CPU threads instead.
 
 The same setting is available as `TRUSTCHECK_MAX_WORKERS`,
 `performance.max_workers` in the JSON config file, and the GitHub Action
-`max-workers` input.
+`workers` input.
 
 ## Artifact scope
 

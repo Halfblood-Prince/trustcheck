@@ -46,6 +46,7 @@ from trustcheck.cli import (
     _render_scan_text,
     _render_text_report,
     _resolve_bool,
+    _resolve_max_workers,
     _resolve_scan_target_version,
     _resolve_scan_target_version_for_scan,
     _resolver_from_args,
@@ -281,6 +282,8 @@ class CliBehaviorTests(unittest.TestCase):
             ["scan", "-f", "requirements.txt", "--no-deps"]
         )
         self.assertTrue(direct_args.no_deps)
+        worker_args = parser.parse_args(["scan", "requests", "--workers", "-1"])
+        self.assertEqual(worker_args.max_workers, -1)
 
         environment_args = parser.parse_args(
             ["environment", "--path", "one", "--path", "two"]
@@ -2967,6 +2970,19 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(cli_args.scan_profile, "standard")
         self.assertEqual(cli_args.artifact_scope, "target")
         self.assertTrue(cli_args.dynamic_analysis)
+
+    def test_workers_minus_one_uses_all_available_cores(self) -> None:
+        args = SimpleNamespace(max_workers=-1)
+
+        with patch("trustcheck.cli._available_worker_count", return_value=12):
+            self.assertEqual(_resolve_max_workers(args, {}), 12)
+
+        with patch.dict("os.environ", {"TRUSTCHECK_MAX_WORKERS": "-1"}, clear=True):
+            with patch("trustcheck.cli._available_worker_count", return_value=6):
+                self.assertEqual(
+                    _resolve_max_workers(SimpleNamespace(max_workers=None), {}),
+                    6,
+                )
 
     def test_project_config_rejects_invalid_boolean_environment_value(self) -> None:
         args = build_parser().parse_args(["scan", "requests"])

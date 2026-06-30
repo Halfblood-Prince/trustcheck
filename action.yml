@@ -74,8 +74,8 @@ inputs:
     description: Whitespace- or newline-separated project names added to the typosquatting reference set.
     required: false
     default: ""
-  max-workers:
-    description: Maximum concurrent scan, advisory, and network workers (1-64).
+  workers:
+    description: Concurrent scan, advisory, and network workers (1-64, or -1 for all available CPU cores).
     required: false
     default: "8"
   sandbox:
@@ -260,7 +260,7 @@ runs:
         TRUSTCHECK_ACTION_KEYRING_PROVIDER: ${{ inputs['keyring-provider'] }}
         TRUSTCHECK_ACTION_ALLOW_DEPENDENCY_CONFUSION: ${{ inputs['allow-dependency-confusion'] }}
         TRUSTCHECK_ACTION_TRUSTED_PROJECTS: ${{ inputs['trusted-projects'] }}
-        TRUSTCHECK_ACTION_MAX_WORKERS: ${{ inputs['max-workers'] }}
+        TRUSTCHECK_ACTION_WORKERS: ${{ inputs['workers'] }}
         TRUSTCHECK_ACTION_SANDBOX: ${{ inputs['sandbox'] }}
         TRUSTCHECK_ACTION_SANDBOX_IMAGE: ${{ inputs['sandbox-image'] }}
         TRUSTCHECK_ACTION_ADVISORY_SNAPSHOTS: ${{ inputs['advisory-snapshots'] }}

@@ -128,12 +128,15 @@ class ActionSettings:
             )
         try:
             max_workers = int(
-                environment.get("TRUSTCHECK_ACTION_MAX_WORKERS", "8")
+                environment.get(
+                    "TRUSTCHECK_ACTION_WORKERS",
+                    environment.get("TRUSTCHECK_ACTION_MAX_WORKERS", "8"),
+                )
             )
         except ValueError as exc:
-            raise ActionInputError("'max-workers' must be an integer") from exc
-        if max_workers < 1 or max_workers > 64:
-            raise ActionInputError("'max-workers' must be between 1 and 64")
+            raise ActionInputError("'workers' must be an integer") from exc
+        if max_workers != -1 and not 1 <= max_workers <= 64:
+            raise ActionInputError("'workers' must be -1 or between 1 and 64")
         try:
             max_advisory_age = float(
                 environment.get("TRUSTCHECK_ACTION_MAX_ADVISORY_AGE", "168")
@@ -359,8 +362,8 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
         )
     if settings.max_fix_attempts < 1:
         raise ActionInputError("'max-fix-attempts' must be at least 1")
-    if settings.max_workers < 1 or settings.max_workers > 64:
-        raise ActionInputError("'max-workers' must be between 1 and 64")
+    if settings.max_workers != -1 and not 1 <= settings.max_workers <= 64:
+        raise ActionInputError("'workers' must be -1 or between 1 and 64")
     if settings.sandbox not in SANDBOX_MODES:
         raise ActionInputError(
             "'sandbox' must be off, warn, auto, container, bubblewrap, or strict"
@@ -525,7 +528,7 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
     if not scan_mode:
         for project in settings.trusted_projects:
             arguments.extend(["--trusted-project", project])
-    arguments.extend(["--max-workers", str(settings.max_workers)])
+    arguments.extend(["--workers", str(settings.max_workers)])
     arguments.extend(["--sandbox", settings.sandbox])
     if settings.sandbox_image:
         arguments.extend(["--sandbox-image", settings.sandbox_image])

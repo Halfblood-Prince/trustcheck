@@ -218,7 +218,7 @@ wheel for the requested target, with an sdist fallback.
 
 ```bash
 trustcheck scan -f requirements.txt --standard
-trustcheck scan sampleproject --version 4.0.0 --full --max-workers 8
+trustcheck scan sampleproject --version 4.0.0 --full --workers 8
 trustcheck scan sampleproject --full --artifact-scope all --strict
 ```
 
@@ -369,7 +369,7 @@ Run a bounded, resumable scan and publish an advisory snapshot:
 ```bash
 trustcheck scan -f requirements.txt \
   --with-osv \
-  --max-workers 8 \
+  --workers 8 \
   --resume-state .trustcheck/scan-state.json \
   --write-advisory-snapshot .trustcheck/advisories.json \
   --sign-advisory-snapshot

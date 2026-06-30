@@ -135,7 +135,7 @@ trustcheck scan -f requirements.txt --standard
 Run full analysis on the target-compatible install artifact:
 
 ```bash
-trustcheck scan sampleproject --version 4.0.0 --full --max-workers 8
+trustcheck scan sampleproject --version 4.0.0 --full --workers 8
 ```
 
 Review the complete release under strict policy:
