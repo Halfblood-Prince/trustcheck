@@ -40,6 +40,15 @@ Example:
   "allowed_publisher_organizations": ["github:pypa"],
   "vulnerability_mode": "kev",
   "fail_on_severity": "medium",
+  "malicious_package_thresholds": {
+    "low": 1,
+    "elevated": 25,
+    "high": 50,
+    "critical": 75
+  },
+  "malicious_rule_thresholds": {
+    "native_signature_absent": 100
+  },
   "suppressions": [
     {
       "id": "CVE-2026-1234",
@@ -62,6 +71,11 @@ Example:
   identity must match
 - `vulnerability_mode`: `ignore`, `any`, `critical`, `kev`, or `fixable`
 - `fail_on_severity`: `none`, `medium`, or `high`
+- `malicious_package_thresholds`: optional aggregate score bands for
+  `low`, `elevated`, `high`, and `critical`; values must be ordered from low
+  to critical and between 0 and 100
+- `malicious_rule_thresholds`: optional per-rule minimum scores required
+  before a heuristic contributes to the aggregate malicious-package score
 - `suppressions`: advisory-ID or alias exceptions with required `owner`,
   `justification`, and ISO `expires`
 

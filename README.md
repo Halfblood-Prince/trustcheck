@@ -71,7 +71,7 @@ artifact is scanned with ClamAV. Clean binaries, checksums, and scanner reports
 are retained as workflow artifacts by
 [Binary Security](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/binary-security.yml).
 
-<!-- trustcheck-benchmark:start -->
+
 ## Latest benchmark
 
 Generated `2026-06-21T08:43:40.047949+00:00` on Python `3.14.6` with `pip-audit 2.10.0`. Corpus `2026.06` covered 112 comparable package entries.
@@ -83,7 +83,7 @@ Generated `2026-06-21T08:43:40.047949+00:00` on Python `3.14.6` with `pip-audit 
 
 Alias-aware agreement: `0.759197` across `109` compared packages and `227` matched advisories.
 Resolver exact match: `True` (trustcheck `22`, pip-audit `22`).
-<!-- trustcheck-benchmark:end -->
+
 ## Installation
 
 Install from PyPI:
@@ -129,7 +129,7 @@ PyPI installation requirements:
 - Python `>=3.11`
 - Network access to PyPI
 
-Machine-readable reports currently use JSON schema `1.10.0`. Package and report
+Machine-readable reports currently use JSON schema `1.11.0`. Package and report
 schema versions are independent so documentation-only package releases do not
 force contract churn.
 
@@ -441,6 +441,11 @@ and compares wheel and sdist metadata. PE, ELF, and Mach-O files are inspected
 for imported libraries, embedded signature presence, entropy, and embedded
 payload signatures. It reads archive bytes only and never imports the
 inspected package.
+
+For behavior evidence, `--dynamic-analysis` is available as an explicit opt-in.
+It executes downloaded artifacts in a disposable Docker container with no
+network, a non-root user, dropped capabilities, and strict CPU, memory, process,
+and wall-clock limits. It is never enabled by default.
 
 Name, index, ownership, repository, and release-cadence heuristics run during
 normal inspection. Add organization-specific reference names with repeatable

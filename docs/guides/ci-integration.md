@@ -133,6 +133,10 @@ grant `contents: write` and `pull-requests: write`, and requires an
 authenticated `gh` CLI. Draft is the default; set `pr-ready: "true"` to request
 review immediately.
 
+Trustcheck's own CI also runs GitHub Dependency Review on pull requests. That
+lightweight gate blocks newly introduced vulnerable dependencies at moderate or
+higher severity and denies AGPL/GPL license introductions before merge.
+
 ## Inputs
 
 | Input | Default | Description |

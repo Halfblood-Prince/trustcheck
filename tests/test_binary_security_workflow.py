@@ -67,15 +67,15 @@ class BinarySecurityWorkflowTests(unittest.TestCase):
         self.assertNotIn("pypi_attestations", builder)
         self.assertIn("from trustcheck.cli import main", entrypoint)
 
-    def test_runtime_depends_on_sigstore_without_pypi_attestations(self) -> None:
+    def test_runtime_depends_directly_on_sigstore_and_not_its_transitives(self) -> None:
         project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
         self.assertIn('"sigstore>=4.3,<5"', project)
-        self.assertIn('"tuf>=7,<8"', project)
         self.assertIn('"urllib3>=2.7,<3"', project)
-        self.assertIn('"idna>=3.15,<4"', project)
-        self.assertIn('"PyJWT>=2.13,<3"', project)
         self.assertIn('"cryptography>=48.0.1,<49"', project)
+        self.assertNotIn('"tuf>=7,<8"', project)
+        self.assertNotIn('"idna>=3.15,<4"', project)
+        self.assertNotIn('"PyJWT>=2.13,<3"', project)
         self.assertNotIn("tomli", project)
         self.assertNotIn("pypi-attestations", project)
         self.assertFalse((ROOT / "src" / "trustcheck" / "parse_toml.py").exists())

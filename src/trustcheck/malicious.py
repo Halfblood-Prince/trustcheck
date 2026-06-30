@@ -6,7 +6,7 @@ import re
 import statistics
 import struct
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -200,6 +200,49 @@ _MACHO_DYLIB_COMMANDS = {
     0x23,
     0x23 | 0x80000000,
 }
+DEFAULT_SCORE_THRESHOLDS = {
+    "low": 1,
+    "elevated": 25,
+    "high": 50,
+    "critical": 75,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class HeuristicRuleCalibration:
+    false_positive_rate: float
+    confidence: str
+    rule_version: str
+    score_threshold: int = 1
+
+
+RULE_CALIBRATIONS: dict[str, HeuristicRuleCalibration] = {
+    "ast_credential_environment": HeuristicRuleCalibration(0.18, "high", "2026.06"),
+    "ast_credential_file_access": HeuristicRuleCalibration(0.12, "medium", "2026.06"),
+    "ast_credential_network_chain": HeuristicRuleCalibration(0.04, "medium", "2026.06"),
+    "ast_custom_install_hook": HeuristicRuleCalibration(0.09, "high", "2026.06"),
+    "ast_dynamic_execution": HeuristicRuleCalibration(0.16, "high", "2026.06"),
+    "ast_install_time_execution_chain": HeuristicRuleCalibration(0.03, "high", "2026.06"),
+    "ast_keyring_access": HeuristicRuleCalibration(0.06, "high", "2026.06"),
+    "ast_network_call": HeuristicRuleCalibration(0.28, "high", "2026.06"),
+    "ast_obfuscated_process_chain": HeuristicRuleCalibration(0.05, "medium", "2026.06"),
+    "ast_payload_decode": HeuristicRuleCalibration(0.22, "high", "2026.06"),
+    "ast_persistence": HeuristicRuleCalibration(0.08, "medium", "2026.06"),
+    "ast_subprocess_call": HeuristicRuleCalibration(0.20, "high", "2026.06"),
+    "declared_repository_change": HeuristicRuleCalibration(0.07, "high", "2026.06"),
+    "dependency_confusion_index_collision": HeuristicRuleCalibration(0.03, "high", "2026.06"),
+    "maintainer_identity_change": HeuristicRuleCalibration(0.25, "medium", "2026.06"),
+    "native_embedded_payload": HeuristicRuleCalibration(0.10, "medium", "2026.06"),
+    "native_high_entropy": HeuristicRuleCalibration(0.35, "low", "2026.06"),
+    "native_payload_network_chain": HeuristicRuleCalibration(0.05, "medium", "2026.06"),
+    "native_sensitive_import": HeuristicRuleCalibration(0.18, "medium", "2026.06"),
+    "native_signature_absent": HeuristicRuleCalibration(0.42, "low", "2026.06"),
+    "project_ownership_change": HeuristicRuleCalibration(0.10, "medium", "2026.06"),
+    "release_after_dormancy": HeuristicRuleCalibration(0.20, "high", "2026.06"),
+    "release_burst": HeuristicRuleCalibration(0.18, "high", "2026.06"),
+    "release_cadence_acceleration": HeuristicRuleCalibration(0.23, "medium", "2026.06"),
+    "typosquatting_name_similarity": HeuristicRuleCalibration(0.08, "medium", "2026.06"),
+}
 
 
 def analyze_python_source(
@@ -356,7 +399,11 @@ def assess_package(
     artifact_findings: Sequence[HeuristicFinding] = (),
     artifact_analysis: bool = False,
     trusted_projects: Iterable[str] = (),
+    score_thresholds: Mapping[str, int] | None = None,
+    rule_thresholds: Mapping[str, int] | None = None,
 ) -> MaliciousPackageAssessment:
+    resolved_score_thresholds = normalize_score_thresholds(score_thresholds)
+    resolved_rule_thresholds = normalize_rule_thresholds(rule_thresholds)
     trusted_names = {
         str(canonicalize_name(name))
         for name in (*DEFAULT_TRUSTED_PROJECTS, *trusted_projects)
@@ -380,26 +427,34 @@ def assess_package(
     )
     findings.extend(artifact_findings)
     findings = _deduplicate_findings(findings)
-    score = heuristic_score(findings)
+    score = heuristic_score(findings, rule_thresholds=resolved_rule_thresholds)
     return MaliciousPackageAssessment(
         score=score,
-        level=_score_level(score),
+        level=_score_level(score, thresholds=resolved_score_thresholds),
         artifact_analysis=artifact_analysis,
         trusted_name_count=len(trusted_names),
         findings=sorted(
             findings,
             key=lambda item: (-item.score, item.category, item.code, item.location or ""),
         ),
+        score_thresholds=resolved_score_thresholds,
+        rule_thresholds=resolved_rule_thresholds,
     )
 
 
-def heuristic_score(findings: Sequence[HeuristicFinding]) -> int:
+def heuristic_score(
+    findings: Sequence[HeuristicFinding],
+    *,
+    rule_thresholds: Mapping[str, int] | None = None,
+) -> int:
     confidence_weight = {"low": 0.5, "medium": 0.75, "high": 1.0}
+    thresholds = normalize_rule_thresholds(rule_thresholds)
     weighted = sorted(
         (
             finding.score * confidence_weight.get(finding.confidence, 0.5)
             for finding in findings
             if finding.score > 0
+            and finding.score >= thresholds.get(finding.code, finding.score_threshold)
         ),
         reverse=True,
     )
@@ -409,6 +464,52 @@ def heuristic_score(findings: Sequence[HeuristicFinding]) -> int:
             sum(value * (0.65**index) for index, value in enumerate(weighted))
         ),
     )
+
+
+def normalize_score_thresholds(
+    thresholds: Mapping[str, int] | None,
+) -> dict[str, int]:
+    resolved = dict(DEFAULT_SCORE_THRESHOLDS)
+    if thresholds is not None:
+        unknown = sorted(set(thresholds) - set(DEFAULT_SCORE_THRESHOLDS))
+        if unknown:
+            raise ValueError(
+                "unknown malicious-package score threshold(s): "
+                + ", ".join(unknown)
+            )
+        resolved.update({key: int(value) for key, value in thresholds.items()})
+    ordered = ["low", "elevated", "high", "critical"]
+    for key in ordered:
+        value = resolved[key]
+        if value < 0 or value > 100:
+            raise ValueError(
+                "malicious-package score thresholds must be between 0 and 100"
+            )
+    if any(
+        resolved[left] > resolved[right]
+        for left, right in zip(ordered, ordered[1:])
+    ):
+        raise ValueError(
+            "malicious-package score thresholds must be ordered "
+            "low <= elevated <= high <= critical"
+        )
+    return resolved
+
+
+def normalize_rule_thresholds(
+    thresholds: Mapping[str, int] | None,
+) -> dict[str, int]:
+    if thresholds is None:
+        return {}
+    normalized: dict[str, int] = {}
+    for code, raw_value in thresholds.items():
+        value = int(raw_value)
+        if value < 0 or value > 100:
+            raise ValueError(
+                "malicious-package rule thresholds must be between 0 and 100"
+            )
+        normalized[str(code)] = value
+    return normalized
 
 
 class _SourceVisitor(ast.NodeVisitor):
@@ -1167,16 +1268,27 @@ def _finding(
     location: str | None = None,
     artifact: str | None = None,
 ) -> HeuristicFinding:
+    calibration = RULE_CALIBRATIONS.get(
+        code,
+        HeuristicRuleCalibration(
+            false_positive_rate=0.25,
+            confidence=confidence,
+            rule_version="1.0",
+        ),
+    )
     return HeuristicFinding(
         code=code,
         category=category,
         severity=severity,
-        confidence=confidence,
+        confidence=calibration.confidence,
         score=score,
         message=message,
         evidence=list(evidence),
         location=location,
         artifact=artifact,
+        rule_version=calibration.rule_version,
+        false_positive_rate=calibration.false_positive_rate,
+        score_threshold=calibration.score_threshold,
     )
 
 
@@ -1199,14 +1311,19 @@ def _deduplicate_findings(
     return list(deduplicated.values())
 
 
-def _score_level(score: int) -> str:
-    if score >= 75:
+def _score_level(
+    score: int,
+    *,
+    thresholds: Mapping[str, int] | None = None,
+) -> str:
+    resolved = normalize_score_thresholds(thresholds)
+    if score >= resolved["critical"]:
         return "critical"
-    if score >= 50:
+    if score >= resolved["high"]:
         return "high"
-    if score >= 25:
+    if score >= resolved["elevated"]:
         return "elevated"
-    if score > 0:
+    if score >= resolved["low"]:
         return "low"
     return "none"
 

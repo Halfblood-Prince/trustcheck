@@ -27,6 +27,8 @@ from trustcheck.models import (
     DependencyInspection,
     DependencySummary,
     FileProvenance,
+    HeuristicFinding,
+    MaliciousPackageAssessment,
     ProvenanceConsistency,
     PublisherIdentity,
     PublisherTrustSummary,
@@ -353,6 +355,12 @@ class PolicyCoverageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fail_on_severity"):
             policy_from_mapping({"fail_on_severity": "low"})
 
+        with self.assertRaisesRegex(ValueError, "malicious-package score thresholds"):
+            policy_from_mapping({"malicious_package_thresholds": {"high": 20}})
+
+        with self.assertRaisesRegex(ValueError, "malicious-package rule thresholds"):
+            policy_from_mapping({"malicious_rule_thresholds": {"ast_network_call": 101}})
+
         with self.assertRaisesRegex(ValueError, "organization allowlist"):
             policy_from_mapping(
                 {
@@ -435,6 +443,42 @@ class PolicyCoverageTests(unittest.TestCase):
         self.assertEqual(
             [violation.code for violation in unverified.violations],
             ["publisher_organization_unverified"],
+        )
+
+    def test_malicious_package_thresholds_are_policy_configurable(self) -> None:
+        report = make_report()
+        report.malicious_package = MaliciousPackageAssessment(
+            findings=[
+                HeuristicFinding(
+                    code="ast_credential_network_chain",
+                    category="credential-access",
+                    severity="critical",
+                    confidence="medium",
+                    score=75,
+                    message="Credential access and network capability are combined.",
+                )
+            ]
+        )
+        strict_threshold = PolicySettings(
+            fail_on_severity="high",
+            malicious_package_thresholds={
+                "low": 1,
+                "elevated": 25,
+                "high": 70,
+                "critical": 90,
+            },
+        )
+        relaxed_threshold = PolicySettings(fail_on_severity="high")
+
+        strict = evaluate_policy(report, strict_threshold)
+        self.assertTrue(strict.passed)
+        self.assertEqual(report.malicious_package.level, "elevated")
+
+        relaxed = evaluate_policy(report, relaxed_threshold)
+        self.assertFalse(relaxed.passed)
+        self.assertIn(
+            "malicious_package_heuristics",
+            {violation.code for violation in relaxed.violations},
         )
 
     def test_vulnerability_modes_and_expiring_suppressions(self) -> None:

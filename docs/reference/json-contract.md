@@ -14,18 +14,18 @@ interface for a single PyPI package.
 
 ## Current schema identifiers
 
-- `JSON_SCHEMA_VERSION = "1.10.0"`
-- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.10.0"`
+- `JSON_SCHEMA_VERSION = "1.11.0"`
+- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.11.0"`
 
-Package versions and report schema versions are independent. Schema `1.10.0`
-adds interpreted SLSA provenance, expanded consistency and release-drift
-evidence, and verified-publisher organization policy settings.
+Package versions and report schema versions are independent. Schema `1.11.0`
+adds malicious-package calibration metadata, policy threshold evidence, and
+opt-in dynamic-analysis results.
 
 ## Top-level shape
 
 ```json
 {
-  "schema_version": "1.10.0",
+  "schema_version": "1.11.0",
   "report": {
     "project": "demo",
     "version": "1.2.3",
@@ -139,6 +139,13 @@ evidence, and verified-publisher organization policy settings.
       "artifact_analysis": false,
       "trusted_name_count": 56,
       "findings": [],
+      "score_thresholds": {
+        "low": 1,
+        "elevated": 25,
+        "high": 50,
+        "critical": 75
+      },
+      "rule_thresholds": {},
       "disclaimer": "These findings are heuristic indicators for review, not proof that the package is malicious."
     },
     "dependencies": [
@@ -262,9 +269,15 @@ With `--inspect-artifacts` or `inspect_artifacts=True`, the block includes:
 - metadata mismatches between PyPI, wheel, and sdist evidence
 - `source_files_analyzed` and bounded AST parse errors
 - `heuristic_findings` with category, severity, confidence, score, evidence,
-  source location, and artifact name
+  source location, artifact name, rule version, false-positive rate, and score
+  threshold
 - `native_binaries` with PE, ELF, or Mach-O format, architecture, imports,
   embedded signature presence, entropy, embedded payloads, and parse notes
+
+Every item in `report.files` also contains a `dynamic_analysis` object. It is
+disabled by default. When `--dynamic-analysis` is set, the object records the
+Docker sandbox, no-network and non-root execution settings, resource limits,
+exit code, bounded output excerpts, and any sandbox error.
 
 ## Malicious-package heuristic fields
 
@@ -274,7 +287,10 @@ normal package inspection; `artifact_analysis` indicates whether
 
 The aggregate `score` is bounded to 0-100 and maps to `none`, `low`,
 `elevated`, `high`, or `critical`. Each finding preserves its own score,
-confidence, evidence, artifact, and best-effort source location.
+confidence, estimated false-positive rate, rule version, score threshold,
+evidence, artifact, and best-effort source location. The assessment records the
+aggregate `score_thresholds` and per-rule `rule_thresholds` active when the
+report was evaluated.
 
 The assessment is deliberately heuristic. Neither a finding nor a high score
 is proof of malware. Consumers must preserve the `heuristic` marker and

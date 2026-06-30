@@ -111,6 +111,22 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("--upgrade-strategy eager", workflow)
         self.assertGreaterEqual(workflow.count("python -m pip check"), 6)
 
+    def test_ci_gates_pull_requests_with_dependency_review(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("dependency-review:", workflow)
+        self.assertIn("if: github.event_name == 'pull_request'", workflow)
+        self.assertIn("pull-requests: read", workflow)
+        self.assertIn(
+            "actions/dependency-review-action@"
+            "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
+            workflow,
+        )
+        self.assertIn("fail-on-severity: moderate", workflow)
+        self.assertIn("deny-licenses: AGPL-1.0, AGPL-3.0, GPL-2.0, GPL-3.0", workflow)
+
     def test_live_integration_is_nightly_and_blocks_stale_releases(self) -> None:
         live = (ROOT / ".github/workflows/live-integration.yml").read_text(
             encoding="utf-8"

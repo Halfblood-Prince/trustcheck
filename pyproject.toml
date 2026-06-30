@@ -32,13 +32,10 @@ classifiers = [
 ]
 dependencies = [
   "cryptography>=48.0.1,<49",
-  "idna>=3.15,<4",
   "packaging>=24,<27",
-  "PyJWT>=2.13,<3",
   "pydantic>=2.12,<3",
   "sigstore>=4.3,<5",
   "tomlkit>=0.13,<1",
-  "tuf>=7,<8",
   "urllib3>=2.7,<3",
 ]
 
@@ -47,6 +44,7 @@ keyring = ["keyring>=25,<27"]
 test = [
   "hypothesis>=6.100,<7",
   "Pillow>=11,<13",
+  "pytest>=8,<10",
 ]
 
 [project.scripts]

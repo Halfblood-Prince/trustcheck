@@ -106,6 +106,9 @@ class HeuristicFinding:
     location: str | None = None
     artifact: str | None = None
     heuristic: bool = True
+    rule_version: str = "1.0"
+    false_positive_rate: float | None = None
+    score_threshold: int = 1
 
 
 @dataclass(slots=True)
@@ -152,6 +155,28 @@ class ArtifactInspection:
 
 
 @dataclass(slots=True)
+class DynamicAnalysisResult:
+    enabled: bool = False
+    executed: bool = False
+    sandbox: str = "docker"
+    warning: str = (
+        "Dynamic analysis executes untrusted package code in a disposable "
+        "container; it is never enabled by default."
+    )
+    network: str = "none"
+    user: str = "non-root"
+    cpu_limit: str = "1 CPU, 10 CPU seconds"
+    memory_limit: str = "512 MiB"
+    timeout_seconds: float = 30.0
+    image: str | None = None
+    command: list[str] = field(default_factory=list)
+    exit_code: int | None = None
+    stdout: list[str] = field(default_factory=list)
+    stderr: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass(slots=True)
 class FileProvenance:
     filename: str
     url: str
@@ -165,6 +190,7 @@ class FileProvenance:
     slsa_provenance: list[SlsaProvenance] = field(default_factory=list)
     error: str | None = None
     artifact: ArtifactInspection = field(default_factory=ArtifactInspection)
+    dynamic_analysis: DynamicAnalysisResult = field(default_factory=DynamicAnalysisResult)
 
 
 @dataclass(slots=True)
@@ -223,6 +249,15 @@ class MaliciousPackageAssessment:
     artifact_analysis: bool = False
     trusted_name_count: int = 0
     findings: list[HeuristicFinding] = field(default_factory=list)
+    score_thresholds: dict[str, int] = field(
+        default_factory=lambda: {
+            "low": 1,
+            "elevated": 25,
+            "high": 50,
+            "critical": 75,
+        }
+    )
+    rule_thresholds: dict[str, int] = field(default_factory=dict)
     disclaimer: str = (
         "These findings are heuristic indicators for review, not proof that "
         "the package is malicious."
@@ -277,6 +312,15 @@ class PolicyEvaluation:
     allowed_publisher_organizations: list[str] = field(default_factory=list)
     allow_metadata_only: bool = True
     vulnerability_mode: str = "ignore"
+    malicious_package_thresholds: dict[str, int] = field(
+        default_factory=lambda: {
+            "low": 1,
+            "elevated": 25,
+            "high": 50,
+            "critical": 75,
+        }
+    )
+    malicious_rule_thresholds: dict[str, int] = field(default_factory=dict)
     suppressions_applied: int = 0
     suppressions_expired: int = 0
     violations: list[PolicyViolation] = field(default_factory=list)

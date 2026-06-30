@@ -6,6 +6,13 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from .malicious import (
+    DEFAULT_SCORE_THRESHOLDS,
+    _score_level,
+    heuristic_score,
+    normalize_rule_thresholds,
+    normalize_score_thresholds,
+)
 from .models import (
     PolicyEvaluation,
     PolicyViolation,
@@ -38,6 +45,10 @@ class PolicySettings:
     allowed_publisher_organizations: list[str] = field(default_factory=list)
     vulnerability_mode: VulnerabilityMode = "ignore"
     fail_on_severity: SeverityLevel = "none"
+    malicious_package_thresholds: dict[str, int] = field(
+        default_factory=lambda: dict(DEFAULT_SCORE_THRESHOLDS)
+    )
+    malicious_rule_thresholds: dict[str, int] = field(default_factory=dict)
     suppressions: list[VulnerabilitySuppression] = field(default_factory=list)
 
 
@@ -98,11 +109,18 @@ def evaluate_policy(
     plugin_manager: PluginManager | None = None,
 ) -> PolicyEvaluation:
     violations: list[PolicyViolation] = []
+    settings.malicious_package_thresholds = normalize_score_thresholds(
+        settings.malicious_package_thresholds
+    )
+    settings.malicious_rule_thresholds = normalize_rule_thresholds(
+        settings.malicious_rule_thresholds
+    )
     suppressions_applied, suppressions_expired = _apply_suppressions(
         report.vulnerabilities,
         settings.suppressions,
         now=now,
     )
+    _apply_malicious_thresholds(report, settings)
 
     if settings.require_verified_provenance == "all":
         if not report.files:
@@ -271,6 +289,8 @@ def evaluate_policy(
         ),
         allow_metadata_only=settings.allow_metadata_only,
         vulnerability_mode=settings.vulnerability_mode,
+        malicious_package_thresholds=dict(settings.malicious_package_thresholds),
+        malicious_rule_thresholds=dict(settings.malicious_rule_thresholds),
         suppressions_applied=suppressions_applied,
         suppressions_expired=suppressions_expired,
         violations=_dedupe_violations(violations),
@@ -352,7 +372,85 @@ def _validate_policy_settings(settings: PolicySettings) -> None:
             settings.allowed_publisher_organizations
         )
     )
+    settings.malicious_package_thresholds = normalize_score_thresholds(
+        settings.malicious_package_thresholds
+    )
+    settings.malicious_rule_thresholds = normalize_rule_thresholds(
+        settings.malicious_rule_thresholds
+    )
     _validate_suppressions(settings.suppressions)
+
+
+def _apply_malicious_thresholds(
+    report: TrustReport,
+    settings: PolicySettings,
+) -> None:
+    if not report.malicious_package.findings:
+        report.malicious_package.score_thresholds = dict(
+            settings.malicious_package_thresholds
+        )
+        report.malicious_package.rule_thresholds = dict(
+            settings.malicious_rule_thresholds
+        )
+        report.malicious_package.level = _score_level(
+            report.malicious_package.score,
+            thresholds=settings.malicious_package_thresholds,
+        )
+        return
+
+    score = heuristic_score(
+        report.malicious_package.findings,
+        rule_thresholds=settings.malicious_rule_thresholds,
+    )
+    report.malicious_package.score = score
+    report.malicious_package.score_thresholds = dict(
+        settings.malicious_package_thresholds
+    )
+    report.malicious_package.rule_thresholds = dict(
+        settings.malicious_rule_thresholds
+    )
+    report.malicious_package.level = _score_level(
+        score,
+        thresholds=settings.malicious_package_thresholds,
+    )
+    report.risk_flags = [
+        flag
+        for flag in report.risk_flags
+        if flag.code != "malicious_package_heuristics"
+    ]
+    if score < settings.malicious_package_thresholds["elevated"]:
+        return
+    severity = (
+        "high"
+        if score >= settings.malicious_package_thresholds["high"]
+        else "medium"
+    )
+    report.risk_flags.append(
+        RiskFlag(
+            code="malicious_package_heuristics",
+            severity=severity,
+            message=(
+                "Static analysis found malicious-package heuristic indicators; "
+                "this is not proof of malware."
+            ),
+            why=[
+                (
+                    f"{finding.code}"
+                    f"{f' at {finding.location}' if finding.location else ''}: "
+                    f"{finding.message} "
+                    f"(rule {finding.rule_version}, "
+                    f"false-positive rate {finding.false_positive_rate})"
+                )
+                for finding in report.malicious_package.findings[:5]
+            ],
+            remediation=[
+                "Review the cited source, metadata, index, and native-code evidence.",
+                "Confirm package ownership and repository history through an "
+                "independent trusted channel.",
+                "Analyze high-scoring artifacts in an isolated sandbox before use.",
+            ],
+        )
+    )
 
 
 def _parse_suppressions(value: object) -> list[VulnerabilitySuppression]:

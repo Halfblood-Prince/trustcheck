@@ -35,8 +35,6 @@ jobs:
 
       - name: Dependency audit
         run: |
-          # PYSEC-2025-183 currently has no patched PyJWT release and is disputed by
-          # the supplier because key strength is chosen by the application.
           python -m pip_audit --skip-editable --ignore-vuln PYSEC-2025-183
 
       - name: Generate SBOM
@@ -52,6 +50,25 @@ jobs:
         uses: gacts/gitleaks@c9a0338361dc45a01aa7ebaaa5330179f3c62873 # v1
         with:
           path: .
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          deny-licenses: AGPL-1.0, AGPL-3.0, GPL-2.0, GPL-3.0
 
   qa:
     needs: security-scans

@@ -4,6 +4,7 @@ import struct
 import unittest
 
 from trustcheck.malicious import (
+    RULE_CALIBRATIONS,
     _cstring,
     _damerau_levenshtein,
     _deduplicate_findings,
@@ -24,6 +25,8 @@ from trustcheck.malicious import (
     heuristic_score,
     inspect_native_binary,
     native_binary_findings,
+    normalize_rule_thresholds,
+    normalize_score_thresholds,
 )
 from trustcheck.models import HeuristicFinding
 
@@ -269,6 +272,22 @@ helper()
         self.assertIsNone(error)
         self.assertEqual([finding.code for finding in findings], ["ast_network_call"])
         self.assertLess(heuristic_score(findings), 25)
+
+    def test_rule_calibration_is_attached_to_findings(self) -> None:
+        findings, error = analyze_python_source(
+            "demo/client.py",
+            b"import subprocess\nsubprocess.run(['python', '-V'])\n",
+        )
+        finding = findings[0]
+
+        self.assertIsNone(error)
+        self.assertEqual(finding.rule_version, "2026.06")
+        self.assertEqual(finding.false_positive_rate, 0.20)
+        self.assertEqual(finding.score_threshold, 1)
+        self.assertEqual(
+            finding.confidence,
+            RULE_CALIBRATIONS["ast_subprocess_call"].confidence,
+        )
 
 
 class NativeBinaryTests(unittest.TestCase):
@@ -589,6 +608,28 @@ class PackageAssessmentTests(unittest.TestCase):
         self.assertEqual(len(assessment.findings), 1)
         self.assertEqual(assessment.score, 8)
 
+    def test_policy_rule_thresholds_can_suppress_score_contribution(self) -> None:
+        finding = HeuristicFinding(
+            code="ast_network_call",
+            category="network",
+            severity="low",
+            confidence="high",
+            score=8,
+            message="Network",
+        )
+        assessment = assess_package(
+            "internal-project",
+            current_info={"version": "1.0.0"},
+            current_ownership={},
+            current_repositories=[],
+            artifact_findings=(finding,),
+            rule_thresholds={"ast_network_call": 9},
+        )
+
+        self.assertEqual(assessment.score, 0)
+        self.assertEqual(assessment.level, "none")
+        self.assertEqual(assessment.rule_thresholds, {"ast_network_call": 9})
+
     def test_empty_and_malformed_history_inputs_do_not_create_findings(self) -> None:
         for payload in (None, {"releases": []}, {"releases": {"x": "bad"}}):
             with self.subTest(payload=payload):
@@ -608,6 +649,25 @@ class PackageAssessmentTests(unittest.TestCase):
         self.assertEqual(_score_level(25), "elevated")
         self.assertEqual(_score_level(50), "high")
         self.assertEqual(_score_level(75), "critical")
+        self.assertEqual(
+            _score_level(
+                60,
+                thresholds={"low": 1, "elevated": 25, "high": 70, "critical": 90},
+            ),
+            "elevated",
+        )
+        self.assertEqual(
+            normalize_score_thresholds({"high": 70})["high"],
+            70,
+        )
+        self.assertEqual(
+            normalize_rule_thresholds({"ast_network_call": 9}),
+            {"ast_network_call": 9},
+        )
+        with self.assertRaisesRegex(ValueError, "ordered"):
+            normalize_score_thresholds({"high": 20})
+        with self.assertRaisesRegex(ValueError, "between 0 and 100"):
+            normalize_rule_thresholds({"ast_network_call": 101})
 
 
 class HelperTests(unittest.TestCase):

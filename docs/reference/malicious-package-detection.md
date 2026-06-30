@@ -60,10 +60,31 @@ PE, ELF, and Mach-O members are structurally parsed for:
 Signature presence is not signature verification. Trustcheck does not
 disassemble, emulate, sandbox, or execute native code.
 
+## Dynamic analysis
+
+`--dynamic-analysis` is deliberately separate from the static archive, AST, and
+native-binary checks. It executes downloaded artifacts in a disposable Docker
+container, so it is never enabled by default.
+
+The container is started with:
+
+- `--network none`
+- a non-root `65534:65534` user
+- dropped Linux capabilities and `no-new-privileges`
+- a read-only root filesystem plus a temporary `/tmp`
+- one CPU, a 10-second CPU ulimit, 512 MiB RAM, a 128-process limit, and a
+  30-second wall-clock timeout
+
+The dynamic runner installs the artifact into an isolated temporary virtual
+environment with `pip --no-deps --no-index --no-build-isolation`. This may
+execute untrusted build hooks, especially for source distributions. Treat the
+result as behavior evidence from a constrained sandbox, not as proof of safety.
+
 ## Scoring
 
-Findings have their own severity, confidence, and score. Confidence-weighted
-scores are combined with diminishing weight and capped at 100:
+Findings have their own severity, calibrated confidence, rule version,
+estimated false-positive rate, and score. Confidence-weighted scores are
+combined with diminishing weight and capped at 100:
 
 | Score | Level |
 | --- | --- |
@@ -76,6 +97,13 @@ scores are combined with diminishing weight and capped at 100:
 Scores of 25 or higher create the normal
 `malicious_package_heuristics` risk flag. Existing policy severity controls can
 therefore require review or block high-scoring results.
+
+Custom policy files can tune `malicious_package_thresholds` for aggregate
+`low`, `elevated`, `high`, and `critical` bands, and
+`malicious_rule_thresholds` for per-rule score contribution thresholds. For
+example, setting `"malicious_rule_thresholds": {"native_signature_absent": 100}`
+keeps unsigned native binaries in the report while preventing that weak signal
+from contributing to the aggregate score.
 
 ## Interpretation
 

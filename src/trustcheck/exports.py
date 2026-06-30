@@ -5,120 +5,70 @@ import json
 import re
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from html import escape as html_escape
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path, PureWindowsPath
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 from urllib import parse
 
 from packaging.utils import canonicalize_name
 
 from .contract import deserialize_report
+from .export_models import (
+    CYCLONEDX_NAMESPACE as CYCLONEDX_NAMESPACE,
+)
+from .export_models import (
+    INDUSTRY_OUTPUT_FORMATS as INDUSTRY_OUTPUT_FORMATS,
+)
+from .export_models import (
+    OPENVEX_CONTEXT,
+    SARIF_SCHEMA,
+)
+from .export_models import (
+    OUTPUT_FORMATS as OUTPUT_FORMATS,
+)
+from .export_models import (
+    ExportPackage as ExportPackage,
+)
+from .export_models import (
+    SourceLocation as SourceLocation,
+)
+from .export_models import (
+    package_purl as package_purl,
+)
+from .export_models import (
+    recommended_extension as recommended_extension,
+)
+from .export_xml import (
+    _is_xml_character as _is_xml_character,
+)
+from .export_xml import (
+    _xml_escape as _xml_escape,
+)
+from .export_xml import (
+    _xml_local_name as _xml_local_name,
+)
+from .export_xml import (
+    _xml_properties as _xml_properties,
+)
+from .export_xml import (
+    _xml_tag as _xml_tag,
+)
+from .export_xml import (
+    _xml_text as _xml_text,
+)
+from .export_xml import (
+    _XmlElement as _XmlElement,
+)
+from .export_xml import (
+    _XmlTree as _XmlTree,
+)
 from .models import HeuristicFinding, SlsaProvenance, TrustReport, VulnerabilityRecord
 from .resolver import ArtifactReference
 
 if TYPE_CHECKING:
     from .plugins import PluginManager
-
-OUTPUT_FORMATS: Final = (
-    "text",
-    "json",
-    "sarif",
-    "cyclonedx-json",
-    "cyclonedx-xml",
-    "spdx-json",
-    "openvex",
-    "markdown",
-)
-INDUSTRY_OUTPUT_FORMATS: Final = OUTPUT_FORMATS[2:]
-SARIF_SCHEMA = (
-    "https://docs.oasis-open.org/sarif/sarif/v2.1.0/"
-    "errata01/os/schemas/sarif-schema-2.1.0.json"
-)
-CYCLONEDX_NAMESPACE = "http://cyclonedx.org/schema/bom/1.6"
-OPENVEX_CONTEXT = "https://openvex.dev/ns/v0.2.0"
-
-
-class _XmlElement:
-    def __init__(
-        self,
-        tag: str,
-        attributes: Mapping[str, str] | None = None,
-    ) -> None:
-        self.tag = tag
-        self.attributes = dict(attributes or {})
-        self.children: list[_XmlElement] = []
-        self.text: str | None = None
-
-
-class _XmlTree:
-    """Minimal serializer-only XML tree for deterministic CycloneDX output."""
-
-    @staticmethod
-    def Element(
-        tag: str,
-        attributes: Mapping[str, str] | None = None,
-    ) -> _XmlElement:
-        return _XmlElement(tag, attributes)
-
-    @staticmethod
-    def SubElement(
-        parent: _XmlElement,
-        tag: str,
-        attributes: Mapping[str, str] | None = None,
-    ) -> _XmlElement:
-        element = _XmlElement(tag, attributes)
-        parent.children.append(element)
-        return element
-
-    @staticmethod
-    def serialize(element: _XmlElement) -> str:
-        document = _serialize_xml_element(element, level=0, is_root=True)
-        return "<?xml version='1.0' encoding='utf-8'?>\n" + document
-
-
-@dataclass(frozen=True, slots=True)
-class SourceLocation:
-    uri: str
-    line: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ExportPackage:
-    report: TrustReport
-    source: SourceLocation | None = None
-    artifacts: tuple[ArtifactReference, ...] = ()
-
-    @property
-    def purl(self) -> str:
-        return package_purl(self.report.project, self.report.version)
-
-
-def package_purl(project: str, version: str) -> str:
-    name = parse.quote(canonicalize_name(project), safe=".-_~")
-    encoded_version = parse.quote(version, safe=".-_~+")
-    return f"pkg:pypi/{name}@{encoded_version}"
-
-
-def recommended_extension(output_format: str) -> str:
-    extensions = {
-        "text": ".txt",
-        "json": ".json",
-        "sarif": ".sarif",
-        "cyclonedx-json": ".cdx.json",
-        "cyclonedx-xml": ".cdx.xml",
-        "spdx-json": ".spdx.json",
-        "openvex": ".openvex.json",
-        "markdown": ".md",
-    }
-    try:
-        return extensions[output_format]
-    except KeyError as exc:
-        raise ValueError(f"unsupported output format: {output_format}") from exc
-
 
 def render_export(
     output_format: str,
@@ -376,6 +326,9 @@ def _sarif_document(
                         "heuristic": True,
                         "confidence": finding.confidence,
                         "score": finding.score,
+                        "ruleVersion": finding.rule_version,
+                        "falsePositiveRate": finding.false_positive_rate,
+                        "scoreThreshold": finding.score_threshold,
                         "category": finding.category,
                         "evidence": finding.evidence,
                         "artifact": finding.artifact,
@@ -953,6 +906,9 @@ def _cyclonedx_properties(
                     "severity": finding.severity,
                     "confidence": finding.confidence,
                     "score": finding.score,
+                    "rule_version": finding.rule_version,
+                    "false_positive_rate": finding.false_positive_rate,
+                    "score_threshold": finding.score_threshold,
                     "message": finding.message,
                     "evidence": finding.evidence,
                     "location": finding.location,
@@ -1501,7 +1457,8 @@ def _spdx_annotations(
         (
             f"{spdx_id}:trustcheck:malicious-package-heuristic:{finding.code}:"
             f"{finding.severity}:{finding.confidence}:{finding.score}:"
-            f"{finding.message}:not-proof-of-malware"
+            f"rule={finding.rule_version}:fpr={finding.false_positive_rate}:"
+            f"threshold={finding.score_threshold}:{finding.message}:not-proof-of-malware"
         )
         for finding in report.malicious_package.findings
     )
@@ -1580,7 +1537,9 @@ def _spdx_trust_comment(package: ExportPackage) -> str:
         (
             f"trustcheck:malicious-package-heuristic:{finding.code}="
             f"{finding.severity};confidence={finding.confidence};"
-            f"score={finding.score};message={finding.message}"
+            f"score={finding.score};rule={finding.rule_version};"
+            f"fpr={finding.false_positive_rate};threshold={finding.score_threshold};"
+            f"message={finding.message}"
         )
         for finding in report.malicious_package.findings
     )
@@ -1780,8 +1739,8 @@ def _markdown_document(
                     "",
                     f"> {_markdown_escape(report.malicious_package.disclaimer)}",
                     "",
-                    "| Finding | Severity | Confidence | Score | Location |",
-                    "| --- | --- | --- | --- | --- |",
+                    "| Finding | Severity | Confidence | Score | Rule | FPR | Location |",
+                    "| --- | --- | --- | --- | --- | --- | --- |",
                 ]
             )
             for finding in report.malicious_package.findings:
@@ -1797,6 +1756,8 @@ def _markdown_document(
                     f"{_markdown_escape(finding.severity)} | "
                     f"{_markdown_escape(finding.confidence)} | "
                     f"{finding.score} | "
+                    f"{_markdown_escape(finding.rule_version)} | "
+                    f"{_optional_number(finding.false_positive_rate)} | "
                     f"{_markdown_escape(location)} |"
                 )
         artifacts = _all_artifacts(package)
@@ -2174,92 +2135,3 @@ def _dedupe_dicts(
 
 def _json_text(value: object) -> str:
     return json.dumps(value, indent=2, sort_keys=True)
-
-
-def _xml_tag(name: str) -> str:
-    return f"{{{CYCLONEDX_NAMESPACE}}}{name}"
-
-
-def _xml_text(parent: _XmlElement, name: str, value: str) -> None:
-    element = _XmlTree.SubElement(parent, _xml_tag(name))
-    element.text = value
-
-
-def _xml_properties(
-    parent: _XmlElement,
-    properties: object,
-) -> None:
-    if not isinstance(properties, list) or not properties:
-        return
-    properties_element = _XmlTree.SubElement(
-        parent,
-        _xml_tag("properties"),
-    )
-    for item in properties:
-        if not isinstance(item, Mapping):
-            continue
-        property_element = _XmlTree.SubElement(
-            properties_element,
-            _xml_tag("property"),
-            {"name": str(item.get("name") or "trustcheck:property")},
-        )
-        property_element.text = str(item.get("value") or "")
-
-
-def _serialize_xml_element(
-    element: _XmlElement,
-    *,
-    level: int,
-    is_root: bool,
-) -> str:
-    indentation = "  " * level
-    tag = _xml_local_name(element.tag)
-    attributes = dict(element.attributes)
-    if is_root:
-        attributes = {"xmlns": CYCLONEDX_NAMESPACE, **attributes}
-    rendered_attributes = "".join(
-        f' {name}="{_xml_escape(value, attribute=True)}"'
-        for name, value in attributes.items()
-    )
-    if not element.children:
-        if element.text is None:
-            return f"{indentation}<{tag}{rendered_attributes} />"
-        return (
-            f"{indentation}<{tag}{rendered_attributes}>"
-            f"{_xml_escape(element.text)}</{tag}>"
-        )
-    children = "\n".join(
-        _serialize_xml_element(child, level=level + 1, is_root=False)
-        for child in element.children
-    )
-    text = _xml_escape(element.text) if element.text is not None else ""
-    return (
-        f"{indentation}<{tag}{rendered_attributes}>{text}\n"
-        f"{children}\n"
-        f"{indentation}</{tag}>"
-    )
-
-
-def _xml_local_name(tag: str) -> str:
-    if tag.startswith("{"):
-        _, _, local_name = tag.partition("}")
-        return local_name
-    return tag
-
-
-def _xml_escape(value: object, *, attribute: bool = False) -> str:
-    sanitized = "".join(
-        character
-        for character in str(value)
-        if _is_xml_character(ord(character))
-    )
-    return html_escape(sanitized, quote=attribute)
-
-
-def _is_xml_character(codepoint: int) -> bool:
-    return (
-        codepoint in {0x09, 0x0A, 0x0D}
-        or 0x20 <= codepoint <= 0xD7FF
-        or 0xE000 <= codepoint <= 0xFFFD
-        or 0x10000 <= codepoint <= 0x10FFFF
-    )

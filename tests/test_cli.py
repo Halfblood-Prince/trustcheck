@@ -251,6 +251,7 @@ class CliBehaviorTests(unittest.TestCase):
                 "auto",
                 "--sandbox-image",
                 "registry.example/resolver@sha256:" + "b" * 64,
+                "--dynamic-analysis",
             ]
         )
         self.assertEqual(scan_args.constraint, ["constraints.txt"])
@@ -265,6 +266,7 @@ class CliBehaviorTests(unittest.TestCase):
             scan_args.sandbox_image,
             "registry.example/resolver@sha256:" + "b" * 64,
         )
+        self.assertTrue(scan_args.dynamic_analysis)
         self.assertEqual(
             _target_environment_from_args(scan_args),
             TargetEnvironment(
@@ -2827,11 +2829,11 @@ class CliBehaviorTests(unittest.TestCase):
             path = Path(directory) / "pyproject.toml"
             path.write_text(
                 "[project]\nname = \"example\"\n"
-                "[tool.trustcheck]\n"
-                "policy = \"strict\"\n"
-                "with_kev = true\n"
-                "scan_profile = \"standard\"\n"
-                "artifact_scope = \"target\"\n",
+            "[tool.trustcheck]\n"
+            "policy = \"strict\"\n"
+            "with_kev = true\n"
+            "scan_profile = \"standard\"\n"
+            "artifact_scope = \"target\"\n",
                 encoding="utf-8",
             )
             payload = _load_config_file(str(path))
@@ -2900,6 +2902,7 @@ class CliBehaviorTests(unittest.TestCase):
             "with_kev": True,
             "scan_profile": "fast",
             "artifact_scope": "all",
+            "dynamic_analysis": True,
         }
         args = parser.parse_args(["scan", "requests"])
         args._explicit_config_fields = set()
@@ -2911,6 +2914,7 @@ class CliBehaviorTests(unittest.TestCase):
                 "TRUSTCHECK_WITH_KEV": "false",
                 "TRUSTCHECK_SCAN_PROFILE": "full",
                 "TRUSTCHECK_ARTIFACT_SCOPE": "sdist",
+                "TRUSTCHECK_DYNAMIC_ANALYSIS": "false",
             },
         ):
             _apply_project_config(args, configured)
@@ -2920,6 +2924,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertFalse(args.with_kev)
         self.assertEqual(args.scan_profile, "full")
         self.assertEqual(args.artifact_scope, "sdist")
+        self.assertFalse(args.dynamic_analysis)
 
         cli_args = parser.parse_args(
             [
@@ -2932,6 +2937,7 @@ class CliBehaviorTests(unittest.TestCase):
                 "--standard",
                 "--artifact-scope",
                 "target",
+                "--dynamic-analysis",
             ]
         )
         cli_args._explicit_config_fields = {
@@ -2940,6 +2946,7 @@ class CliBehaviorTests(unittest.TestCase):
             "with_kev",
             "scan_profile",
             "artifact_scope",
+            "dynamic_analysis",
         }
         with patch.dict(
             "os.environ",
@@ -2949,6 +2956,7 @@ class CliBehaviorTests(unittest.TestCase):
                 "TRUSTCHECK_WITH_KEV": "false",
                 "TRUSTCHECK_SCAN_PROFILE": "full",
                 "TRUSTCHECK_ARTIFACT_SCOPE": "all",
+                "TRUSTCHECK_DYNAMIC_ANALYSIS": "false",
             },
         ):
             _apply_project_config(cli_args, configured)
@@ -2958,6 +2966,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertTrue(cli_args.with_kev)
         self.assertEqual(cli_args.scan_profile, "standard")
         self.assertEqual(cli_args.artifact_scope, "target")
+        self.assertTrue(cli_args.dynamic_analysis)
 
     def test_project_config_rejects_invalid_boolean_environment_value(self) -> None:
         args = build_parser().parse_args(["scan", "requests"])

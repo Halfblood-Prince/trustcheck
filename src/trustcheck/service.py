@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass, field
-from threading import Lock
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
 
 from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
@@ -35,6 +31,7 @@ from .advisories import (
 from .artifacts import compare_artifact_metadata, inspect_artifact_isolated
 from .attestations import Distribution as AttestedDistribution
 from .attestations import Provenance, VerificationError
+from .dynamic import DEFAULT_DYNAMIC_IMAGE, analyze_artifact_dynamic
 from .malicious import assess_package, finding_for_artifact
 from .models import (
     ArtifactDiagnostic,
@@ -47,8 +44,6 @@ from .models import (
     PublisherIdentity,
     PublisherTrustSummary,
     ReleaseDriftSummary,
-    ReportDiagnostics,
-    RequestFailureDiagnostic,
     RiskFlag,
     TrustReport,
     VulnerabilityRecord,
@@ -57,257 +52,50 @@ from .policy import advisory_evaluation_for
 from .provenance import SLSA_PROVENANCE_V1, analyze_slsa_provenance
 from .pypi import PackageClient, PypiClient, PypiClientError
 from .resolver import ArtifactReference, PipResolver, ResolutionError, TargetEnvironment
+from .service_state import (
+    _RECOMMENDATION_ORDER,
+    SCAN_PROFILES,
+    DependencyTraversalContext,
+    DiagnosticsCollector,
+    PackageHistoryContext,
+    ScanProfile,
+)
+from .service_state import (
+    MAX_TOTAL_ARTIFACT_BYTES as MAX_TOTAL_ARTIFACT_BYTES,
+)
+from .service_state import (
+    SCAN_PROFILE_NAMES as SCAN_PROFILE_NAMES,
+)
+from .service_state import (
+    ArtifactDigestCache as ArtifactDigestCache,
+)
+from .service_state import (
+    DependencyProgressCallback as DependencyProgressCallback,
+)
+from .service_state import (
+    ProgressCallback as ProgressCallback,
+)
+from .service_urls import (
+    GITHUB_REPO_SUBPATHS as GITHUB_REPO_SUBPATHS,
+)
+from .service_urls import (
+    GITHUB_RESERVED_SEGMENTS as GITHUB_RESERVED_SEGMENTS,
+)
+from .service_urls import (
+    _is_explicit_repository_label,
+)
+from .service_urls import (
+    _normalize_repo_url as _normalize_repo_url,
+)
+from .service_urls import (
+    _normalize_supported_forge_url as _normalize_supported_forge_url,
+)
+from .service_urls import (
+    _publisher_repository_url as _publisher_repository_url,
+)
 
 if TYPE_CHECKING:
     from .plugins import PluginManager
-
-GITHUB_RESERVED_SEGMENTS = {
-    "about",
-    "account",
-    "apps",
-    "blog",
-    "collections",
-    "contact",
-    "customer-stories",
-    "enterprise",
-    "events",
-    "explore",
-    "features",
-    "gist",
-    "git-guides",
-    "github",
-    "images",
-    "issues",
-    "join",
-    "login",
-    "marketplace",
-    "new",
-    "notifications",
-    "orgs",
-    "organizations",
-    "pricing",
-    "pulls",
-    "search",
-    "security",
-    "settings",
-    "site",
-    "sponsors",
-    "team",
-    "teams",
-    "topics",
-    "trending",
-    "users",
-}
-GITHUB_REPO_SUBPATHS = {
-    "actions",
-    "blob",
-    "commit",
-    "commits",
-    "compare",
-    "discussions",
-    "issues",
-    "packages",
-    "projects",
-    "pull",
-    "pulls",
-    "releases",
-    "security",
-    "tags",
-    "tree",
-    "wiki",
-}
-
-ProgressCallback = Callable[[str, int, int], None]
-DependencyProgressCallback = Callable[[str, int, int, bool], None]
-
-_RECOMMENDATION_ORDER = {
-    "verified": 0,
-    "metadata-only": 1,
-    "review-required": 2,
-    "high-risk": 3,
-}
-MAX_TOTAL_ARTIFACT_BYTES = 512 * 1024 * 1024
-
-SCAN_PROFILE_NAMES = ("fast", "standard", "full")
-
-
-@dataclass(frozen=True, slots=True)
-class ScanProfile:
-    name: str
-    collect_provenance: bool
-    inspect_artifacts: bool
-    release_history: bool
-    heuristics: bool
-
-
-SCAN_PROFILES = {
-    "fast": ScanProfile(
-        name="fast",
-        collect_provenance=False,
-        inspect_artifacts=False,
-        release_history=False,
-        heuristics=False,
-    ),
-    "standard": ScanProfile(
-        name="standard",
-        collect_provenance=True,
-        inspect_artifacts=False,
-        release_history=False,
-        heuristics=False,
-    ),
-    "full": ScanProfile(
-        name="full",
-        collect_provenance=True,
-        inspect_artifacts=True,
-        release_history=True,
-        heuristics=True,
-    ),
-}
-
-
-class ArtifactDigestCache:
-    """Share downloaded artifacts by digest and coalesce concurrent fetches."""
-
-    def __init__(self, *, max_total_bytes: int = MAX_TOTAL_ARTIFACT_BYTES) -> None:
-        self._payloads: dict[str, bytes] = {}
-        self._pending: dict[str, Future[bytes]] = {}
-        self._lock = Lock()
-        self._max_total_bytes = max_total_bytes
-        self._total_bytes = 0
-
-    def fetch(
-        self,
-        url: str,
-        expected_sha256: str | None,
-        loader: Callable[[str], bytes],
-    ) -> bytes:
-        key = (
-            f"sha256:{expected_sha256.lower()}"
-            if expected_sha256
-            else f"url:{url}"
-        )
-        with self._lock:
-            cached = self._payloads.get(key)
-            if cached is not None:
-                return cached
-            pending = self._pending.get(key)
-            owner = pending is None
-            if pending is None:
-                pending = Future()
-                self._pending[key] = pending
-        if not owner:
-            return pending.result()
-
-        try:
-            payload = loader(url)
-            observed_digest = hashlib.new("sha256", payload).hexdigest()
-            observed_key = f"sha256:{observed_digest}"
-            with self._lock:
-                if (
-                    observed_key not in self._payloads
-                    and self._total_bytes + len(payload) > self._max_total_bytes
-                ):
-                    raise PypiClientError(
-                        "aggregate artifact downloads exceed the "
-                        f"{self._max_total_bytes}-byte scan limit",
-                        code="upstream",
-                        subcode="response_too_large",
-                    )
-                if observed_key not in self._payloads:
-                    self._total_bytes += len(payload)
-                self._payloads[observed_key] = payload
-                if not expected_sha256 or expected_sha256.lower() == observed_digest:
-                    self._payloads[key] = payload
-            pending.set_result(payload)
-            return payload
-        except BaseException as exc:
-            pending.set_exception(exc)
-            raise
-        finally:
-            with self._lock:
-                self._pending.pop(key, None)
-
-
-@dataclass(slots=True)
-class DependencyTraversalContext:
-    seen: set[str] = field(default_factory=set)
-
-
-@dataclass(slots=True)
-class PackageHistoryContext:
-    project_payload: Mapping[str, object] | None = None
-    previous_version: str | None = None
-    previous_payload: Mapping[str, object] | None = None
-
-
-class DiagnosticsCollector:
-    def __init__(self) -> None:
-        self._lock = Lock()
-        self.request_count = 0
-        self.retry_count = 0
-        self.cache_hit_count = 0
-        self.request_failures: list[RequestFailureDiagnostic] = []
-        self.artifact_failures: list[ArtifactDiagnostic] = []
-
-    def on_request_event(self, event: str, payload: dict[str, Any]) -> None:
-        with self._lock:
-            if event == "request":
-                self.request_count += 1
-            elif event == "retry":
-                self.retry_count += 1
-            elif event == "cache_hit":
-                self.cache_hit_count += 1
-            elif event == "failure":
-                self.request_failures.append(
-                    RequestFailureDiagnostic(
-                        url=str(payload.get("url") or ""),
-                        attempt=int(payload.get("attempt") or 0),
-                        code=str(payload.get("code") or "upstream"),
-                        subcode=str(payload.get("subcode") or "unknown"),
-                        message=str(payload.get("message") or ""),
-                        transient=bool(payload.get("transient")),
-                        status_code=(
-                            int(payload["status_code"])
-                            if payload.get("status_code") is not None
-                            else None
-                        ),
-                    )
-                )
-
-    def add_artifact_failure(
-        self,
-        *,
-        filename: str,
-        stage: str,
-        code: str,
-        subcode: str,
-        message: str,
-    ) -> None:
-        with self._lock:
-            self.artifact_failures.append(
-                ArtifactDiagnostic(
-                    filename=filename,
-                    stage=stage,
-                    code=code,
-                    subcode=subcode,
-                    message=message,
-                )
-            )
-
-    def to_report_diagnostics(self, client: PackageClient) -> ReportDiagnostics:
-        return ReportDiagnostics(
-            timeout=float(getattr(client, "timeout", 10.0)),
-            max_retries=int(getattr(client, "max_retries", 2)),
-            backoff_factor=float(getattr(client, "backoff_factor", 0.25)),
-            offline=bool(getattr(client, "offline", False)),
-            cache_dir=getattr(client, "cache_dir", None),
-            request_count=self.request_count,
-            retry_count=self.retry_count,
-            cache_hit_count=self.cache_hit_count,
-            request_failures=self.request_failures,
-            artifact_failures=self.artifact_failures,
-        )
-
 
 def _resolve_scan_profile(name: str | None) -> ScanProfile | None:
     if name is None:
@@ -341,6 +129,8 @@ def inspect_package(
     include_osv: bool = False,
     vulnerability_only: bool = False,
     inspect_artifacts: bool = False,
+    dynamic_analysis: bool = False,
+    dynamic_analysis_image: str = DEFAULT_DYNAMIC_IMAGE,
     osv_client: OsvClient | None = None,
     vulnerability_client: VulnerabilityIntelligenceClient | None = None,
     locked_versions: Mapping[str, str] | None = None,
@@ -363,8 +153,8 @@ def inspect_package(
     if max_workers < 1:
         raise ValueError("max_workers must be at least 1")
     if profile is not None:
-        vulnerability_only = not profile.collect_provenance
-        inspect_artifacts = profile.inspect_artifacts
+        vulnerability_only = not profile.collect_provenance and not dynamic_analysis
+        inspect_artifacts = profile.inspect_artifacts or dynamic_analysis
     client = client or PypiClient()
     diagnostics = DiagnosticsCollector()
     dependency_context = _dependency_context or DependencyTraversalContext()
@@ -470,6 +260,8 @@ def inspect_package(
             progress_callback=progress_callback,
             diagnostics=diagnostics,
             inspect_artifacts=inspect_artifacts,
+            dynamic_analysis=dynamic_analysis,
+            dynamic_analysis_image=dynamic_analysis_image,
             expected_requires_dist=declared_dependencies,
             expected_artifacts=expected_artifacts,
             plugin_manager=plugin_manager,
@@ -547,6 +339,8 @@ def inspect_package(
                 include_vulnerabilities=include_vulnerabilities,
                 include_osv=include_osv,
                 inspect_artifacts=inspect_artifacts,
+                dynamic_analysis=dynamic_analysis,
+                dynamic_analysis_image=dynamic_analysis_image,
                 osv_client=osv_client,
                 vulnerability_client=vulnerability_client,
                 locked_versions=normalized_locked_versions,
@@ -577,6 +371,8 @@ def _collect_files(
     progress_callback: ProgressCallback | None = None,
     diagnostics: DiagnosticsCollector | None = None,
     inspect_artifacts: bool = False,
+    dynamic_analysis: bool = False,
+    dynamic_analysis_image: str = DEFAULT_DYNAMIC_IMAGE,
     expected_requires_dist: list[str] | None = None,
     expected_artifacts: Sequence[ArtifactReference] = (),
     plugin_manager: PluginManager | None = None,
@@ -610,6 +406,8 @@ def _collect_files(
                 client,
                 diagnostics=diagnostics,
                 inspect_artifacts=inspect_artifacts,
+                dynamic_analysis=dynamic_analysis,
+                dynamic_analysis_image=dynamic_analysis_image,
                 expected_requires_dist=expected_requires_dist,
                 plugin_manager=plugin_manager,
                 artifact_cache=cache,
@@ -630,6 +428,8 @@ def _collect_files(
                 client,
                 diagnostics=diagnostics,
                 inspect_artifacts=inspect_artifacts,
+                dynamic_analysis=dynamic_analysis,
+                dynamic_analysis_image=dynamic_analysis_image,
                 expected_requires_dist=expected_requires_dist,
                 plugin_manager=plugin_manager,
                 artifact_cache=cache,
@@ -652,6 +452,8 @@ def _collect_file(
     *,
     diagnostics: DiagnosticsCollector | None,
     inspect_artifacts: bool,
+    dynamic_analysis: bool,
+    dynamic_analysis_image: str,
     expected_requires_dist: list[str] | None,
     plugin_manager: PluginManager | None,
     artifact_cache: ArtifactDigestCache,
@@ -749,6 +551,38 @@ def _collect_file(
                     message=str(exc),
                 )
     try:
+        if dynamic_analysis:
+            try:
+                if artifact_bytes is None:
+                    if download_error is not None:
+                        raise download_error
+                    artifact_bytes = download()
+                provenance.observed_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+                provenance.dynamic_analysis = analyze_artifact_dynamic(
+                    filename,
+                    artifact_bytes,
+                    image=dynamic_analysis_image,
+                )
+                if provenance.dynamic_analysis.error and diagnostics is not None:
+                    diagnostics.add_artifact_failure(
+                        filename=filename,
+                        stage="dynamic-analysis",
+                        code="dynamic",
+                        subcode="dynamic_analysis_failed",
+                        message=provenance.dynamic_analysis.error,
+                    )
+            except PypiClientError as exc:
+                provenance.dynamic_analysis.enabled = True
+                provenance.dynamic_analysis.image = dynamic_analysis_image
+                provenance.dynamic_analysis.error = str(exc)
+                if diagnostics is not None:
+                    diagnostics.add_artifact_failure(
+                        filename=filename,
+                        stage="dynamic-analysis",
+                        code=exc.code,
+                        subcode=exc.subcode,
+                        message=str(exc),
+                    )
         prov_payload = client.get_provenance(project, version, filename)
         attestation_provenance = Provenance.model_validate(prov_payload)
         bundles = attestation_provenance.attestation_bundles
@@ -1110,6 +944,8 @@ def _inspect_dependencies(
     include_vulnerabilities: bool,
     include_osv: bool,
     inspect_artifacts: bool,
+    dynamic_analysis: bool,
+    dynamic_analysis_image: str,
     osv_client: OsvClient | None,
     vulnerability_client: VulnerabilityIntelligenceClient | None,
     locked_versions: Mapping[str, str],
@@ -1143,6 +979,8 @@ def _inspect_dependencies(
             include_vulnerabilities=include_vulnerabilities,
             include_osv=include_osv,
             inspect_artifacts=inspect_artifacts,
+            dynamic_analysis=dynamic_analysis,
+            dynamic_analysis_image=dynamic_analysis_image,
             osv_client=osv_client,
             vulnerability_client=vulnerability_client,
             locked_versions=locked_versions,
@@ -1180,6 +1018,8 @@ def _inspect_dependency_requirement(
     include_vulnerabilities: bool,
     include_osv: bool,
     inspect_artifacts: bool,
+    dynamic_analysis: bool,
+    dynamic_analysis_image: str,
     osv_client: OsvClient | None,
     vulnerability_client: VulnerabilityIntelligenceClient | None,
     locked_versions: Mapping[str, str],
@@ -1257,6 +1097,8 @@ def _inspect_dependency_requirement(
             include_vulnerabilities=include_vulnerabilities,
             include_osv=include_osv,
             inspect_artifacts=inspect_artifacts,
+            dynamic_analysis=dynamic_analysis,
+            dynamic_analysis_image=dynamic_analysis_image,
             osv_client=osv_client,
             vulnerability_client=vulnerability_client,
             _dependency_context=dependency_context,
@@ -2229,93 +2071,6 @@ def _is_missing_provenance_failure(diagnostic: ArtifactDiagnostic | None) -> boo
             or "not found" in diagnostic.message.lower()
         )
     )
-
-
-def _normalize_repo_url(url: str | None) -> str:
-    if not url:
-        return ""
-
-    ssh_match = re.fullmatch(r"git@(?P<host>github\.com|gitlab\.com):(?P<path>.+)", url.strip())
-    if ssh_match:
-        host = ssh_match.group("host")
-        path = ssh_match.group("path")
-        return _normalize_supported_forge_url(host, path)
-
-    parsed = urlparse(url.strip())
-    if not parsed.scheme and not parsed.netloc:
-        if url.count("/") == 1:
-            return _normalize_supported_forge_url("github.com", url)
-        return ""
-
-    host = parsed.hostname.lower() if parsed.hostname else ""
-    path = parsed.path or ""
-
-    if parsed.scheme.lower() == "ssh" and parsed.username == "git" and host:
-        return _normalize_supported_forge_url(host, path)
-
-    if parsed.scheme.lower().startswith("git+"):
-        nested = urlparse(url[len("git+"):])
-        host = nested.hostname.lower() if nested.hostname else ""
-        path = nested.path or ""
-
-    return _normalize_supported_forge_url(host, path)
-
-
-def _publisher_repository_url(kind: str, repository: str | None) -> str | None:
-    if not repository:
-        return repository
-    if repository.startswith(("http://", "https://")):
-        return _normalize_repo_url(repository) or repository
-    kind_normalized = kind.lower()
-    if "github" in kind_normalized:
-        return _normalize_repo_url(f"https://github.com/{repository}") or repository
-    if "gitlab" in kind_normalized:
-        return _normalize_repo_url(f"https://gitlab.com/{repository}") or repository
-    return repository
-
-
-def _is_explicit_repository_label(label: str) -> bool:
-    label_norm = label.strip().lower()
-    explicit_labels = {
-        "source",
-        "source code",
-        "repository",
-        "repo",
-        "code",
-        "source repository",
-    }
-    return label_norm in explicit_labels
-
-
-def _normalize_supported_forge_url(host: str, path: str) -> str:
-    host_normalized = host.lower().removesuffix(":")
-    cleaned_path = path.strip().lstrip("/").rstrip("/")
-    cleaned_path = cleaned_path.removesuffix(".git")
-
-    if host_normalized == "github.com":
-        segments = [segment for segment in cleaned_path.split("/") if segment]
-        if len(segments) < 2:
-            return ""
-        if segments[0].lower() in GITHUB_RESERVED_SEGMENTS:
-            return ""
-        if len(segments) > 2 and segments[2].lower() not in GITHUB_REPO_SUBPATHS:
-            return ""
-        owner, repo = segments[0].lower(), segments[1].lower()
-        return f"https://github.com/{owner}/{repo}"
-
-    if host_normalized == "gitlab.com":
-        had_gitlab_subpath = "/-/" in cleaned_path
-        if had_gitlab_subpath:
-            cleaned_path = cleaned_path.split("/-/", maxsplit=1)[0]
-        segments = [segment for segment in cleaned_path.split("/") if segment]
-        if len(segments) < 2:
-            return ""
-        if not had_gitlab_subpath and len(segments) > 3:
-            return ""
-        namespace = "/".join(segment.lower() for segment in segments)
-        return f"https://gitlab.com/{namespace}"
-
-    return ""
 
 
 def _build_coverage_summary(files: list[FileProvenance]) -> CoverageSummary:

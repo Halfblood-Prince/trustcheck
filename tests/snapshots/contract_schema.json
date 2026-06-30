@@ -443,6 +443,115 @@
       "title": "DependencySummaryPayload",
       "type": "object"
     },
+    "DynamicAnalysisResultPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Command",
+          "type": "array"
+        },
+        "cpu_limit": {
+          "default": "1 CPU, 10 CPU seconds",
+          "title": "Cpu Limit",
+          "type": "string"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "executed": {
+          "default": false,
+          "title": "Executed",
+          "type": "boolean"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exit Code"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image"
+        },
+        "memory_limit": {
+          "default": "512 MiB",
+          "title": "Memory Limit",
+          "type": "string"
+        },
+        "network": {
+          "default": "none",
+          "title": "Network",
+          "type": "string"
+        },
+        "sandbox": {
+          "default": "docker",
+          "title": "Sandbox",
+          "type": "string"
+        },
+        "stderr": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stderr",
+          "type": "array"
+        },
+        "stdout": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stdout",
+          "type": "array"
+        },
+        "timeout_seconds": {
+          "default": 30.0,
+          "title": "Timeout Seconds",
+          "type": "number"
+        },
+        "user": {
+          "default": "non-root",
+          "title": "User",
+          "type": "string"
+        },
+        "warning": {
+          "default": "Dynamic analysis executes untrusted package code in a disposable container; it is never enabled by default.",
+          "title": "Warning",
+          "type": "string"
+        }
+      },
+      "title": "DynamicAnalysisResultPayload",
+      "type": "object"
+    },
     "FileProvenancePayload": {
       "additionalProperties": false,
       "properties": {
@@ -453,6 +562,9 @@
           "default": 0,
           "title": "Attestation Count",
           "type": "integer"
+        },
+        "dynamic_analysis": {
+          "$ref": "#/$defs/DynamicAnalysisResultPayload"
         },
         "error": {
           "anyOf": [
@@ -569,6 +681,18 @@
           "title": "Evidence",
           "type": "array"
         },
+        "false_positive_rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "False Positive Rate"
+        },
         "heuristic": {
           "default": true,
           "title": "Heuristic",
@@ -590,8 +714,18 @@
           "title": "Message",
           "type": "string"
         },
+        "rule_version": {
+          "default": "1.0",
+          "title": "Rule Version",
+          "type": "string"
+        },
         "score": {
           "title": "Score",
+          "type": "integer"
+        },
+        "score_threshold": {
+          "default": 1,
+          "title": "Score Threshold",
           "type": "integer"
         },
         "severity": {
@@ -635,10 +769,24 @@
           "title": "Level",
           "type": "string"
         },
+        "rule_thresholds": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Rule Thresholds",
+          "type": "object"
+        },
         "score": {
           "default": 0,
           "title": "Score",
           "type": "integer"
+        },
+        "score_thresholds": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Score Thresholds",
+          "type": "object"
         },
         "trusted_name_count": {
           "default": 0,
@@ -816,6 +964,20 @@
           "default": "none",
           "title": "Fail On Severity",
           "type": "string"
+        },
+        "malicious_package_thresholds": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Malicious Package Thresholds",
+          "type": "object"
+        },
+        "malicious_rule_thresholds": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Malicious Rule Thresholds",
+          "type": "object"
         },
         "passed": {
           "default": true,
@@ -2095,7 +2257,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:trustcheck:report:1.10.0",
+  "$id": "urn:trustcheck:report:1.11.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -2103,8 +2265,8 @@
       "$ref": "#/$defs/TrustReportPayload"
     },
     "schema_version": {
-      "const": "1.10.0",
-      "default": "1.10.0",
+      "const": "1.11.0",
+      "default": "1.11.0",
       "title": "Schema Version",
       "type": "string"
     }

@@ -9,402 +9,88 @@ import re
 import shutil
 import subprocess  # nosec B404
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Final, Literal
 
 import tomlkit
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
-from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 from tomlkit.items import AoT, Array, InlineTable, Table
 
 from .lockfiles import is_supported_lockfile, load_lockfile, load_pip_tools_lock
 from .models import TrustReport, VulnerabilityRecord
-from .resolver import ArtifactReference, Resolution, ResolutionError, ResolvedDistribution
-
-REMEDIATION_SCHEMA_VERSION: Final = "1.2.0"
-REMEDIATION_SCHEMA_ID: Final = (
-    f"urn:trustcheck:remediation:{REMEDIATION_SCHEMA_VERSION}"
+from .remediation_models import (
+    REMEDIATION_SCHEMA_ID as REMEDIATION_SCHEMA_ID,
 )
-
-RemediationStatus = Literal[
-    "not-needed",
-    "planned",
-    "validated",
-    "applied",
-    "pull-request-created",
-    "blocked",
-    "failed",
-]
-ResolveCandidate = Callable[[Sequence[str]], Resolution]
-ScanCandidate = Callable[[Resolution], Mapping[str, TrustReport]]
-CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
-
-
-def _key(name: str) -> str:
-    return str(canonicalize_name(name))
-
-
-class RemediationError(RuntimeError):
-    """Raised when a remediation cannot be prepared or applied safely."""
-
-
-@dataclass(frozen=True, slots=True)
-class RemediationUpgrade:
-    project: str
-    from_version: str
-    to_version: str
-    advisory_ids: tuple[str, ...] = ()
-    direct: bool = False
-    reason: str = ""
-    compatibility_confidence: str = "medium"
-    breaking_change_warning: str | None = None
-    changelog_url: str | None = None
-    transitive_explanation: str | None = None
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "project": self.project,
-            "from_version": self.from_version,
-            "to_version": self.to_version,
-            "advisory_ids": list(self.advisory_ids),
-            "direct": self.direct,
-            "reason": self.reason,
-            "compatibility_confidence": self.compatibility_confidence,
-            "breaking_change_warning": self.breaking_change_warning,
-            "changelog_url": self.changelog_url,
-            "transitive_explanation": self.transitive_explanation,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class BlockedFix:
-    project: str
-    version: str
-    advisory_ids: tuple[str, ...]
-    reason: str
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "project": self.project,
-            "version": self.version,
-            "advisory_ids": list(self.advisory_ids),
-            "reason": self.reason,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class SemanticEdit:
-    path: str
-    project: str
-    from_version: str
-    to_version: str
-    kind: str
-
-    def to_dict(self) -> dict[str, str]:
-        return asdict(self)
-
-
-@dataclass(frozen=True, slots=True)
-class FilePatch:
-    path: str
-    before_sha256: str
-    after_sha256: str
-    diff: str
-    edits: tuple[SemanticEdit, ...] = ()
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "path": self.path,
-            "before_sha256": self.before_sha256,
-            "after_sha256": self.after_sha256,
-            "diff": self.diff,
-            "edits": [edit.to_dict() for edit in self.edits],
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class DependencyGraphNode:
-    project: str
-    normalized_name: str
-    version: str
-    requested: bool = False
-    source_type: str = "index"
-    editable: bool = False
-    vcs: str | None = None
-    vcs_commit: str | None = None
-    index_url: str | None = None
-    source_url: str | None = None
-    requirements: tuple[str, ...] = ()
-    artifacts: tuple[dict[str, object], ...] = ()
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "project": self.project,
-            "normalized_name": self.normalized_name,
-            "version": self.version,
-            "requested": self.requested,
-            "source_type": self.source_type,
-            "editable": self.editable,
-            "vcs": self.vcs,
-            "vcs_commit": self.vcs_commit,
-            "index_url": self.index_url,
-            "source_url": self.source_url,
-            "requirements": list(self.requirements),
-            "artifacts": list(self.artifacts),
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class DependencyGraphEdge:
-    parent: str
-    child: str
-    requirement: str
-    marker: str | None = None
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "parent": self.parent,
-            "child": self.child,
-            "requirement": self.requirement,
-            "marker": self.marker,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class DependencyGraph:
-    packages: tuple[DependencyGraphNode, ...]
-    edges: tuple[DependencyGraphEdge, ...]
-    sha256: str
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "sha256": self.sha256,
-            "package_count": len(self.packages),
-            "edge_count": len(self.edges),
-            "packages": [package.to_dict() for package in self.packages],
-            "edges": [edge.to_dict() for edge in self.edges],
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class AdvisoryRemoval:
-    project: str
-    from_version: str
-    to_version: str
-    advisory_ids: tuple[str, ...]
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "project": self.project,
-            "from_version": self.from_version,
-            "to_version": self.to_version,
-            "advisory_ids": list(self.advisory_ids),
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class LockfileHashValidation:
-    path: str
-    format: str
-    applicable: bool
-    package_count: int = 0
-    artifact_count: int = 0
-    hashed_artifact_count: int = 0
-    valid: bool = True
-    errors: tuple[str, ...] = ()
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "path": self.path,
-            "format": self.format,
-            "applicable": self.applicable,
-            "package_count": self.package_count,
-            "artifact_count": self.artifact_count,
-            "hashed_artifact_count": self.hashed_artifact_count,
-            "valid": self.valid,
-            "errors": list(self.errors),
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class RemediationValidation:
-    resolution_passed: bool = False
-    rescan_passed: bool = False
-    targeted_advisories_removed: bool = False
-    no_new_vulnerabilities: bool = False
-    no_new_policy_violations: bool = False
-    index_provenance_preserved: bool = False
-    policy_passed: bool = False
-    errors: tuple[str, ...] = ()
-
-    @property
-    def accepted(self) -> bool:
-        return all(
-            (
-                self.resolution_passed,
-                self.rescan_passed,
-                self.targeted_advisories_removed,
-                self.no_new_vulnerabilities,
-                self.no_new_policy_violations,
-                self.index_provenance_preserved,
-            )
-        ) and not self.errors
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "resolution_passed": self.resolution_passed,
-            "rescan_passed": self.rescan_passed,
-            "targeted_advisories_removed": self.targeted_advisories_removed,
-            "no_new_vulnerabilities": self.no_new_vulnerabilities,
-            "no_new_policy_violations": self.no_new_policy_violations,
-            "index_provenance_preserved": self.index_provenance_preserved,
-            "policy_passed": self.policy_passed,
-            "accepted": self.accepted,
-            "errors": list(self.errors),
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class PostFixResult:
-    command: tuple[str, ...]
-    reproduced_resolution: bool
-    dependency_graph_sha256: str
-    reports_sha256: str
-    validation: RemediationValidation
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "command": list(self.command),
-            "reproduced_resolution": self.reproduced_resolution,
-            "dependency_graph_sha256": self.dependency_graph_sha256,
-            "reports_sha256": self.reports_sha256,
-            "validation": self.validation.to_dict(),
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class PullRequestResult:
-    created: bool = False
-    url: str | None = None
-    branch: str | None = None
-    worktree: str | None = None
-    error: str | None = None
-
-    def to_dict(self) -> dict[str, object]:
-        return asdict(self)
-
-
-@dataclass(slots=True)
-class RemediationPlan:
-    source: str
-    status: RemediationStatus = "planned"
-    minimal: bool = False
-    attempts: int = 0
-    max_attempts: int = 256
-    upgrades: list[RemediationUpgrade] = field(default_factory=list)
-    blocked: list[BlockedFix] = field(default_factory=list)
-    planned_edits: list[SemanticEdit] = field(default_factory=list)
-    patches: list[FilePatch] = field(default_factory=list)
-    commands: list[list[str]] = field(default_factory=list)
-    before_graph: DependencyGraph | None = None
-    after_graph: DependencyGraph | None = None
-    advisory_ids_removed: list[AdvisoryRemoval] = field(default_factory=list)
-    lockfile_hash_validation: list[LockfileHashValidation] = field(default_factory=list)
-    post_fix_result: PostFixResult | None = None
-    validation: RemediationValidation = field(default_factory=RemediationValidation)
-    pull_request: PullRequestResult | None = None
-    message: str = ""
-    minimal_secure_upgrade_proof: dict[str, object] = field(default_factory=dict)
-    candidate_resolution: Resolution | None = field(default=None, repr=False)
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "$schema": REMEDIATION_SCHEMA_ID,
-            "schema_version": REMEDIATION_SCHEMA_VERSION,
-            "source": self.source,
-            "status": self.status,
-            "minimal": self.minimal,
-            "attempts": self.attempts,
-            "max_attempts": self.max_attempts,
-            "upgrades": [upgrade.to_dict() for upgrade in self.upgrades],
-            "blocked": [blocked.to_dict() for blocked in self.blocked],
-            "planned_edits": [edit.to_dict() for edit in self.planned_edits],
-            "patches": [patch.to_dict() for patch in self.patches],
-            "commands": self.commands,
-            "dependency_graphs": {
-                "before": (
-                    self.before_graph.to_dict()
-                    if self.before_graph is not None
-                    else None
-                ),
-                "after": (
-                    self.after_graph.to_dict()
-                    if self.after_graph is not None
-                    else None
-                ),
-            },
-            "advisory_ids_removed": [
-                item.to_dict() for item in self.advisory_ids_removed
-            ],
-            "lockfile_hash_validation": [
-                item.to_dict() for item in self.lockfile_hash_validation
-            ],
-            "post_fix_result": (
-                self.post_fix_result.to_dict()
-                if self.post_fix_result is not None
-                else None
-            ),
-            "validation": self.validation.to_dict(),
-            "pull_request": (
-                self.pull_request.to_dict()
-                if self.pull_request is not None
-                else None
-            ),
-            "message": self.message,
-            "minimal_secure_upgrade_proof": self.minimal_secure_upgrade_proof,
-        }
-
-    def write_json(self, path: str | Path) -> None:
-        output = Path(path)
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(
-            json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RemediationTarget:
-    distribution: ResolvedDistribution
-    report: TrustReport
-    source_type: str = "index"
-
-
-@dataclass(slots=True)
-class PreparedRemediation:
-    plan: RemediationPlan
-    root: Path
-    source_root: Path
-    changed_files: dict[Path, bytes] = field(default_factory=dict)
-    _temporary_directory: tempfile.TemporaryDirectory[str] | None = field(
-        default=None,
-        repr=False,
-    )
-
-    def close(self) -> None:
-        if self._temporary_directory is not None:
-            self._temporary_directory.cleanup()
-            self._temporary_directory = None
-
-    def __enter__(self) -> PreparedRemediation:
-        return self
-
-    def __exit__(self, *_args: object) -> None:
-        self.close()
+from .remediation_models import (
+    REMEDIATION_SCHEMA_VERSION as REMEDIATION_SCHEMA_VERSION,
+)
+from .remediation_models import (
+    AdvisoryRemoval as AdvisoryRemoval,
+)
+from .remediation_models import (
+    BlockedFix as BlockedFix,
+)
+from .remediation_models import (
+    CommandRunner as CommandRunner,
+)
+from .remediation_models import (
+    DependencyGraph as DependencyGraph,
+)
+from .remediation_models import (
+    DependencyGraphEdge as DependencyGraphEdge,
+)
+from .remediation_models import (
+    DependencyGraphNode as DependencyGraphNode,
+)
+from .remediation_models import (
+    FilePatch as FilePatch,
+)
+from .remediation_models import (
+    LockfileHashValidation as LockfileHashValidation,
+)
+from .remediation_models import (
+    PostFixResult as PostFixResult,
+)
+from .remediation_models import (
+    PreparedRemediation as PreparedRemediation,
+)
+from .remediation_models import (
+    PullRequestResult as PullRequestResult,
+)
+from .remediation_models import (
+    RemediationError as RemediationError,
+)
+from .remediation_models import (
+    RemediationPlan as RemediationPlan,
+)
+from .remediation_models import (
+    RemediationStatus as RemediationStatus,
+)
+from .remediation_models import (
+    RemediationTarget as RemediationTarget,
+)
+from .remediation_models import (
+    RemediationUpgrade as RemediationUpgrade,
+)
+from .remediation_models import (
+    RemediationValidation as RemediationValidation,
+)
+from .remediation_models import (
+    ResolveCandidate as ResolveCandidate,
+)
+from .remediation_models import (
+    ScanCandidate as ScanCandidate,
+)
+from .remediation_models import (
+    SemanticEdit as SemanticEdit,
+)
+from .remediation_models import (
+    _key,
+)
+from .remediation_render import render_remediation_text as render_remediation_text
+from .resolver import ArtifactReference, Resolution, ResolutionError, ResolvedDistribution
 
 
 def plan_remediation(
@@ -799,7 +485,6 @@ def validate_candidate(
             errors.append(
                 f"{name} remains affected by {', '.join(remaining)}"
             )
-
     baseline_vulnerabilities = baseline_vulnerabilities or _vulnerability_identifiers(
         baseline_reports
     )
@@ -1184,52 +869,6 @@ def create_pull_request(
     prepared.plan.status = "pull-request-created"
     prepared.plan.message = "validated remediation was published as a pull request"
     return result
-
-
-def render_remediation_text(plan: RemediationPlan) -> str:
-    lines = [
-        f"remediation: {plan.status}",
-        f"minimal: {'yes' if plan.minimal else 'no'}",
-        f"attempts: {plan.attempts}/{plan.max_attempts}",
-    ]
-    if plan.minimal_secure_upgrade_proof:
-        lines.append(
-            "minimal secure upgrade proof: "
-            + (
-                "proven"
-                if plan.minimal_secure_upgrade_proof.get("proven")
-                else "not proven"
-            )
-        )
-    if plan.message:
-        lines.append(f"message: {plan.message}")
-    if plan.upgrades:
-        lines.append("upgrades:")
-        lines.extend(
-            "  - "
-            f"{item.project}: {item.from_version} -> {item.to_version} "
-            f"({', '.join(item.advisory_ids)}; confidence={item.compatibility_confidence})"
-            for item in plan.upgrades
-        )
-        for item in plan.upgrades:
-            if item.breaking_change_warning:
-                lines.append(f"    warning: {item.breaking_change_warning}")
-            if item.transitive_explanation:
-                lines.append(f"    cause: {item.transitive_explanation}")
-            if item.changelog_url:
-                lines.append(f"    changelog: {item.changelog_url}")
-    if plan.blocked:
-        lines.append("blocked:")
-        lines.extend(
-            f"  - {item.project} {item.version}: {item.reason}"
-            for item in plan.blocked
-        )
-    if plan.patches:
-        lines.append("patches:")
-        lines.extend(f"  - {patch.path}" for patch in plan.patches)
-    if plan.pull_request and plan.pull_request.url:
-        lines.append(f"pull request: {plan.pull_request.url}")
-    return "\n".join(lines)
 
 
 def dependency_graph_from_resolution(resolution: Resolution) -> DependencyGraph:

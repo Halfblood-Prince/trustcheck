@@ -12,6 +12,7 @@ from .models import (
     CoverageSummary,
     DependencyInspection,
     DependencySummary,
+    DynamicAnalysisResult,
     FileProvenance,
     HeuristicFinding,
     MaliciousPackageAssessment,
@@ -34,10 +35,10 @@ from .models import (
     VulnerabilitySuppression,
 )
 
-JSON_SCHEMA_VERSION: Final = "1.10.0"
+JSON_SCHEMA_VERSION: Final = "1.11.0"
 JSON_SCHEMA_ID = f"urn:trustcheck:report:{JSON_SCHEMA_VERSION}"
-SchemaVersion: TypeAlias = Literal["1.10.0"]
-DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.10.0"
+SchemaVersion: TypeAlias = Literal["1.11.0"]
+DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.11.0"
 
 
 class RiskFlagPayload(BaseModel):
@@ -150,6 +151,9 @@ class HeuristicFindingPayload(BaseModel):
     location: str | None = None
     artifact: str | None = None
     heuristic: bool = True
+    rule_version: str = "1.0"
+    false_positive_rate: float | None = None
+    score_threshold: int = 1
 
 
 class NativeBinaryInspectionPayload(BaseModel):
@@ -197,6 +201,29 @@ class ArtifactInspectionPayload(BaseModel):
     error: str | None = None
 
 
+class DynamicAnalysisResultPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    executed: bool = False
+    sandbox: str = "docker"
+    warning: str = (
+        "Dynamic analysis executes untrusted package code in a disposable "
+        "container; it is never enabled by default."
+    )
+    network: str = "none"
+    user: str = "non-root"
+    cpu_limit: str = "1 CPU, 10 CPU seconds"
+    memory_limit: str = "512 MiB"
+    timeout_seconds: float = 30.0
+    image: str | None = None
+    command: list[str] = Field(default_factory=list)
+    exit_code: int | None = None
+    stdout: list[str] = Field(default_factory=list)
+    stderr: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
 class FileProvenancePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -212,6 +239,9 @@ class FileProvenancePayload(BaseModel):
     slsa_provenance: list[SlsaProvenancePayload] = Field(default_factory=list)
     error: str | None = None
     artifact: ArtifactInspectionPayload = Field(default_factory=ArtifactInspectionPayload)
+    dynamic_analysis: DynamicAnalysisResultPayload = Field(
+        default_factory=DynamicAnalysisResultPayload
+    )
 
 
 class CoverageSummaryPayload(BaseModel):
@@ -275,6 +305,15 @@ class MaliciousPackageAssessmentPayload(BaseModel):
     artifact_analysis: bool = False
     trusted_name_count: int = 0
     findings: list[HeuristicFindingPayload] = Field(default_factory=list)
+    score_thresholds: dict[str, int] = Field(
+        default_factory=lambda: {
+            "low": 1,
+            "elevated": 25,
+            "high": 50,
+            "critical": 75,
+        }
+    )
+    rule_thresholds: dict[str, int] = Field(default_factory=dict)
     disclaimer: str = (
         "These findings are heuristic indicators for review, not proof that "
         "the package is malicious."
@@ -333,6 +372,15 @@ class PolicyEvaluationPayload(BaseModel):
     allowed_publisher_organizations: list[str] = Field(default_factory=list)
     allow_metadata_only: bool = True
     vulnerability_mode: str = "ignore"
+    malicious_package_thresholds: dict[str, int] = Field(
+        default_factory=lambda: {
+            "low": 1,
+            "elevated": 25,
+            "high": 50,
+            "critical": 75,
+        }
+    )
+    malicious_rule_thresholds: dict[str, int] = Field(default_factory=dict)
     suppressions_applied: int = 0
     suppressions_expired: int = 0
     violations: list[PolicyViolationPayload] = Field(default_factory=list)
@@ -493,6 +541,9 @@ def deserialize_report(payload: Mapping[str, object]) -> TrustReport:
                             for finding in item["artifact"]["heuristic_findings"]
                         ],
                     }
+                ),
+                "dynamic_analysis": DynamicAnalysisResult(
+                    **item["dynamic_analysis"]
                 ),
             }
         )

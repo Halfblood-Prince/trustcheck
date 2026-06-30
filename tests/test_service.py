@@ -13,6 +13,7 @@ from test_artifacts import build_wheel
 from trustcheck.attestations import VerificationError
 from trustcheck.models import (
     DependencyInspection,
+    DynamicAnalysisResult,
     FileProvenance,
     PolicyViolation,
     PublisherIdentity,
@@ -542,6 +543,32 @@ class ServiceBranchTests(unittest.TestCase):
             [failure.stage for failure in report.diagnostics.artifact_failures],
             ["artifact-download", "provenance-fetch"],
         )
+
+    def test_dynamic_analysis_is_opt_in_and_separate_from_static_inspection(self) -> None:
+        dynamic_result = DynamicAnalysisResult(
+            enabled=True,
+            executed=True,
+            image="python:3.12-slim",
+            exit_code=0,
+        )
+        with patch("trustcheck.service.Provenance") as provenance_model, patch(
+            "trustcheck.service.analyze_artifact_dynamic",
+            return_value=dynamic_result,
+        ) as dynamic:
+            provenance_model.model_validate.return_value = make_provenance(
+                attestations=[]
+            )
+            report = inspect_package(
+                "gridoptim",
+                client=cast(Any, FakeClient(download_map={
+                    "https://files.pythonhosted.org/packages/gridoptim.whl": b"wheel"
+                })),
+                dynamic_analysis=True,
+            )
+
+        self.assertFalse(report.files[0].artifact.inspected)
+        self.assertTrue(report.files[0].dynamic_analysis.executed)
+        dynamic.assert_called_once()
 
 
 class InspectPackageTests(unittest.TestCase):

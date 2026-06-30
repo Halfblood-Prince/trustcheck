@@ -47,6 +47,8 @@ trustcheck --version
 - `--with-deps`: inspect direct runtime dependencies and summarize the highest-risk dependency
 - `--with-transitive-deps`: inspect direct and transitive runtime dependencies recursively
 - `--inspect-artifacts`: statically inspect downloaded wheels and sdists
+- `--dynamic-analysis`: execute downloaded artifacts in a disposable Docker
+  container with no network, a non-root user, and strict CPU/RAM/time limits
 - `scan --fast`: resolve dependencies and query advisories only (default)
 - `scan --standard`: add provenance for artifacts in the selected scope
 - `scan --full`: add static, native-binary, release-history, and heuristic analysis
@@ -391,6 +393,11 @@ architecture, signature-record presence, entropy, and embedded payload
 signatures. When combined with dependency inspection, the same static checks
 are applied to inspected dependency artifacts.
 
+`--dynamic-analysis` is the explicit exception: it executes the downloaded
+artifact inside a disposable Docker container using `--network none`, a
+non-root user, a read-only root filesystem, dropped capabilities, and bounded
+CPU, memory, process, and wall-clock limits. It is never enabled by default.
+
 Typosquatting, dependency-confusion, ownership, repository, and release-cadence
 heuristics run without `--inspect-artifacts`. Add local reference names with
 repeatable `--trusted-project NAME`. Findings and scores are explicitly
@@ -415,8 +422,8 @@ resolved versions, index origins, artifact candidates, and hashes are retained
 in machine-readable output.
 
 Package releases and the machine-readable report schema are versioned
-independently. Deep provenance analysis is represented in report schema
-`1.10.0`.
+independently. Deep provenance analysis and malicious-package calibration are
+represented in report schema `1.11.0`.
 
 For top-level package analysis, a complete absence of published provenance is typically surfaced as `review-required`. Stronger negative evidence such as failed verification, inconsistent provenance, or known vulnerabilities still drives `high-risk` outcomes.
 

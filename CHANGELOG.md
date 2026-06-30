@@ -6,9 +6,27 @@ The project follows Semantic Versioning for the supported public API described i
 
 ## Unreleased
 
+### Added
+
+- Added calibrated malicious-package heuristic metadata, policy-configurable
+  aggregate and per-rule thresholds, and advanced the schema to `1.11.0`.
+- Added opt-in `--dynamic-analysis` execution in a disposable, no-network,
+  non-root Docker sandbox with CPU, memory, process, and wall-clock limits.
+- Added a pinned GitHub Dependency Review pull-request gate for vulnerable
+  dependency and denied-license changes.
+
+### Changed
+
+- Split CLI command orchestration, CLI rendering and target loading, service
+  support helpers, remediation models/rendering, and export model/XML helpers
+  into focused modules while preserving the existing public import facade.
+- Removed direct public runtime dependency declarations for transitive
+  Sigstore requirements `PyJWT`, `idna`, and `tuf`; the action lockfile still
+  constrains the resolved transitive set.
+
 ## [2.1.1] - 2026-06-28
 
-Package release `2.1.1` emits machine-readable report schema `1.10.0`.
+Package release `2.1.1` emits machine-readable report schema `1.11.0`.
 
 ### Added
 

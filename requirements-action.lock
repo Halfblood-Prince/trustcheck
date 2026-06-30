@@ -301,7 +301,6 @@ idna==3.18 \
     # via
     #   email-validator
     #   requests
-    #   trustcheck (pyproject.toml)
 markdown-it-py==4.2.0 \
     --hash=sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49 \
     --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a
@@ -467,9 +466,7 @@ pygments==2.20.0 \
 pyjwt==2.13.0 \
     --hash=sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423 \
     --hash=sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728
-    # via
-    #   sigstore
-    #   trustcheck (pyproject.toml)
+    # via sigstore
 pyopenssl==26.2.0 \
     --hash=sha256:4f9d971bc5298b8bc1fab282803da04bf000c755d4ad9d99b52de2569ca19a70 \
     --hash=sha256:8c6fcecd1183a7fc897548dfe388b0cdb7f37e018200d8409cf33959dbe35387
@@ -534,9 +531,7 @@ tomlkit==0.15.0 \
 tuf==7.0.0 \
     --hash=sha256:572bdbdc9ff4a82278a0d4773e6100863b9b33023f27575e84ca65b486dd0d79 \
     --hash=sha256:9d2e6723538e0d5a3e482b6de805fcfe64481448d5853039ba6b06ba541efd7f
-    # via
-    #   sigstore
-    #   trustcheck (pyproject.toml)
+    # via sigstore
 typing-extensions==4.15.0 \
     --hash=sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466 \
     --hash=sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548

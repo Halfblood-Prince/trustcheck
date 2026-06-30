@@ -89,6 +89,23 @@
           "wheel_version": null
         },
         "attestation_count": 1,
+        "dynamic_analysis": {
+          "command": [],
+          "cpu_limit": "1 CPU, 10 CPU seconds",
+          "enabled": false,
+          "error": null,
+          "executed": false,
+          "exit_code": null,
+          "image": null,
+          "memory_limit": "512 MiB",
+          "network": "none",
+          "sandbox": "docker",
+          "stderr": [],
+          "stdout": [],
+          "timeout_seconds": 30.0,
+          "user": "non-root",
+          "warning": "Dynamic analysis executes untrusted package code in a disposable container; it is never enabled by default."
+        },
         "error": null,
         "filename": "demo-1.2.3-py3-none-any.whl",
         "has_provenance": true,
@@ -154,7 +171,14 @@
       "disclaimer": "These findings are heuristic indicators for review, not proof that the package is malicious.",
       "findings": [],
       "level": "none",
+      "rule_thresholds": {},
       "score": 0,
+      "score_thresholds": {
+        "critical": 75,
+        "elevated": 25,
+        "high": 50,
+        "low": 1
+      },
       "trusted_name_count": 0
     },
     "ownership": {
@@ -173,6 +197,13 @@
       "allowed_publisher_organizations": [],
       "enforced": false,
       "fail_on_severity": "none",
+      "malicious_package_thresholds": {
+        "critical": 75,
+        "elevated": 25,
+        "high": 50,
+        "low": 1
+      },
+      "malicious_rule_thresholds": {},
       "passed": true,
       "profile": "default",
       "require_expected_repository_match": false,
@@ -307,5 +338,5 @@
       }
     ]
   },
-  "schema_version": "1.10.0"
+  "schema_version": "1.11.0"
 }
