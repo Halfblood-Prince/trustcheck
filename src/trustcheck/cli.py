@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import timedelta
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Sequence, cast
 from urllib import parse
 
 import urllib3
@@ -2475,10 +2475,16 @@ def _normalize_worker_count(workers: int) -> int:
 
 
 def _available_worker_count() -> int:
-    try:
-        return max(1, len(os.sched_getaffinity(0)))  # type: ignore[attr-defined]
-    except (AttributeError, OSError):
-        return max(1, os.cpu_count() or 1)
+    get_affinity = cast(
+        Callable[[int], set[int]] | None,
+        getattr(os, "sched_getaffinity", None),
+    )
+    if get_affinity is not None:
+        try:
+            return max(1, len(get_affinity(0)))
+        except OSError:
+            pass
+    return max(1, os.cpu_count() or 1)
 
 
 def _config_bool(config: dict[str, object], name: str) -> bool:
