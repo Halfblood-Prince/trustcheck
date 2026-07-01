@@ -1,9 +1,30 @@
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
+
+
+def _job_block(workflow: str, job_name: str) -> str:
+    marker = f"  {job_name}:\n"
+    start = workflow.index(marker)
+    tail_start = start + len(marker)
+    next_job = re.search(r"(?m)^  [A-Za-z0-9_-]+:\s*$", workflow[tail_start:])
+    if next_job is None:
+        return workflow[start:]
+    return workflow[start : tail_start + next_job.start()]
+
+
+def _inline_matrix_values(matrix: str, key: str) -> list[str]:
+    match = re.search(rf"^\s*{re.escape(key)}:\s*\[(?P<values>[^\]]+)\]", matrix, re.M)
+    if match is None:
+        raise AssertionError(f"Missing inline matrix key: {key}")
+    return [
+        value.strip().strip('"')
+        for value in match.group("values").split(",")
+    ]
 
 
 class CoverageBadgeWorkflowTests(unittest.TestCase):
@@ -64,6 +85,27 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertNotIn('python-version: ["3.10"', publish)
         self.assertIn("name: Test built sdist source tree", workflow)
         self.assertIn("python -m pytest -q tests/test_release_version.py", workflow)
+
+    def test_ci_and_release_matrix_cover_all_supported_pythons_on_all_oses(self) -> None:
+        expected_oses = ["ubuntu-latest", "macos-latest", "windows-latest"]
+        expected_pythons = ["3.11", "3.12", "3.13", "3.14"]
+
+        for workflow_name, job_name in (
+            ("ci.yml", "test-matrix"),
+            ("publish.yml", "matrix-build"),
+        ):
+            workflow = (ROOT / ".github" / "workflows" / workflow_name).read_text(
+                encoding="utf-8"
+            )
+            matrix = _job_block(workflow, job_name)
+
+            self.assertEqual(_inline_matrix_values(matrix, "os"), expected_oses)
+            self.assertEqual(
+                _inline_matrix_values(matrix, "python-version"),
+                expected_pythons,
+            )
+            self.assertNotIn("exclude:", matrix)
+            self.assertEqual(len(expected_oses) * len(expected_pythons), 12)
 
     def test_benchmark_workflow_presents_unsigned_results(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "benchmarks.yml").read_text(

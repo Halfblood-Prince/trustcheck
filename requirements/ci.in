@@ -18,9 +18,9 @@ build
 coverage
 cyclonedx-bom
 mkdocs-material
-# Keep mutation tooling compatible with the CI Python 3.11-3.13 jobs.
-mutmut>=3,<3.4
-libcst<1.8
+# Keep mutation tooling compatible with the CI Python 3.11-3.14 jobs.
+mutmut>=3.6,<4
+libcst>=1.8.6,<2
 mypy
 pip-audit
 # Keep psutil on a release published for Linux Python 3.13.
