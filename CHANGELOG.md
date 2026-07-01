@@ -13,7 +13,7 @@ The project follows Semantic Versioning for the supported public API described i
 - Added opt-in `--dynamic-analysis` execution in a disposable, no-network,
   non-root Docker sandbox with CPU, memory, process, and wall-clock limits.
 - Added a pinned GitHub Dependency Review pull-request gate for vulnerable
-  dependency and denied-license changes.
+  dependency.
 
 ### Changed
 
