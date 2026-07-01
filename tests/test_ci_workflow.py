@@ -203,6 +203,40 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("--hash=sha256:", ci_lock)
         self.assertIn("cyclonedx-bom==", ci_lock)
 
+    def test_built_distributions_are_smoke_tested_in_clean_venvs(self) -> None:
+        command = 'python scripts/smoke_test_distribution.py "dist/*.whl" "dist/*.tar.gz"'
+
+        for workflow_name, job_name in (
+            ("ci.yml", "test-matrix"),
+            ("ci.yml", "coverage"),
+            ("publish.yml", "matrix-build"),
+            ("publish.yml", "coverage-build"),
+        ):
+            workflow = (ROOT / ".github" / "workflows" / workflow_name).read_text(
+                encoding="utf-8"
+            )
+            job = _job_block(workflow, job_name)
+
+            with self.subTest(workflow=workflow_name, job=job_name):
+                self.assertIn("name: Smoke test built distributions in clean environments", job)
+                self.assertIn(command, job)
+                self.assertNotIn(
+                    "python -m pip install --force-reinstall --no-deps dist/*.whl",
+                    job,
+                )
+                self.assertNotIn(
+                    "python -m pip install --force-reinstall --no-deps dist/*.tar.gz",
+                    job,
+                )
+
+        script = (ROOT / "scripts" / "smoke_test_distribution.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"venv"', script)
+        self.assertIn("--require-hashes", script)
+        self.assertIn("requirements-vulnerable.txt", script)
+        self.assertIn('"pip", "check"', script)
+
     def test_release_generates_per_artifact_runtime_sboms(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
             encoding="utf-8"

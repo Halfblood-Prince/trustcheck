@@ -159,17 +159,8 @@ jobs:
           cd "$sdist_root"
           python -m pytest -q tests/test_release_version.py
 
-      - name: Smoke test built wheel
-        shell: bash
-        run: |
-          python -m pip install --force-reinstall --no-deps dist/*.whl
-          trustcheck --help
-
-      - name: Smoke test built sdist
-        shell: bash
-        run: |
-          python -m pip install --force-reinstall --no-deps dist/*.tar.gz
-          trustcheck --help
+      - name: Smoke test built distributions in clean environments
+        run: python scripts/smoke_test_distribution.py "dist/*.whl" "dist/*.tar.gz"
 
       - name: Verify archive build without Git metadata
         shell: bash
@@ -340,15 +331,8 @@ jobs:
       - name: Build package
         run: python -m build
 
-      - name: Smoke test built wheel
-        run: |
-          python -m pip install --force-reinstall --no-deps dist/*.whl
-          trustcheck --help
-
-      - name: Smoke test built sdist
-        run: |
-          python -m pip install --force-reinstall --no-deps dist/*.tar.gz
-          trustcheck --help
+      - name: Smoke test built distributions in clean environments
+        run: python scripts/smoke_test_distribution.py "dist/*.whl" "dist/*.tar.gz"
 
       - name: Verify archive build without Git metadata
         run: |

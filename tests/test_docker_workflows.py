@@ -39,11 +39,18 @@ class DockerWorkflowTests(unittest.TestCase):
         self.assertIn("SETUPTOOLS_SCM_PRETEND_VERSION=${TRUSTCHECK_VERSION}", dockerfile)
         self.assertIn("build-essential", dockerfile)
         self.assertIn("cargo", dockerfile)
-        self.assertIn("python -m pip wheel --wheel-dir /wheels .", dockerfile)
+        self.assertIn("COPY requirements/runtime.lock requirements/runtime.lock", dockerfile)
+        self.assertIn("--require-hashes", dockerfile)
+        self.assertIn("--requirement requirements/runtime.lock", dockerfile)
+        self.assertIn("--no-deps", dockerfile)
+        self.assertIn("--wheel-dir /wheels", dockerfile)
+        self.assertNotIn("python -m pip install --upgrade pip", dockerfile)
         self.assertIn(
-            "python -m pip install --no-index --find-links=/tmp/trustcheck trustcheck",
+            "python -m pip install",
             dockerfile,
         )
+        self.assertIn("--no-index", dockerfile)
+        self.assertIn("/tmp/trustcheck/*.whl", dockerfile)
         self.assertIn("python -m pip check", dockerfile)
         self.assertIn("USER trustcheck", dockerfile)
         self.assertIn('ENTRYPOINT ["trustcheck"]', dockerfile)

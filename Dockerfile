@@ -11,6 +11,7 @@ ENV PIP_NO_CACHE_DIR=1 \
 WORKDIR /src
 
 COPY pyproject.toml README.md LICENSE MANIFEST.in ./
+COPY requirements/runtime.lock requirements/runtime.lock
 COPY src/ src/
 
 RUN apt-get update \
@@ -22,8 +23,16 @@ RUN apt-get update \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python -m pip install --upgrade pip \
-    && python -m pip wheel --wheel-dir /wheels .
+RUN python -m pip wheel \
+        --disable-pip-version-check \
+        --require-hashes \
+        --wheel-dir /wheels \
+        --requirement requirements/runtime.lock \
+    && python -m pip wheel \
+        --disable-pip-version-check \
+        --no-deps \
+        --wheel-dir /wheels \
+        .
 
 FROM python:3.14-slim@sha256:b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a27986facfc3355c1 AS runtime
 
@@ -40,8 +49,10 @@ RUN adduser --disabled-password --gecos "" --home /home/trustcheck trustcheck
 
 COPY --from=build /wheels /tmp/trustcheck/
 
-RUN python -m pip install --upgrade pip \
-    && python -m pip install --no-index --find-links=/tmp/trustcheck trustcheck \
+RUN python -m pip install \
+        --disable-pip-version-check \
+        --no-index \
+        /tmp/trustcheck/*.whl \
     && python -m pip check \
     && rm -rf /tmp/trustcheck /root/.cache/pip
 
