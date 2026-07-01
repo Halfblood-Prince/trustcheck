@@ -21,6 +21,9 @@ mkdocs-material
 # Keep mutation tooling compatible with the CI Python 3.11-3.14 jobs.
 mutmut>=3.6,<4
 libcst>=1.8.6,<2
+# LibCST uses PyYAML-ft only on Python 3.13; include it explicitly so
+# hash-checked installs work on the 3.13 matrix jobs.
+pyyaml-ft>=8.0.0; python_version == "3.13"
 mypy
 pip-audit
 # Keep psutil on a release published for Linux Python 3.13.

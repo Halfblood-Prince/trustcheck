@@ -171,6 +171,7 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         fuzz_lock = (ROOT / "requirements" / "fuzz.lock").read_text(
             encoding="utf-8"
         )
+        ci_lock = (ROOT / "requirements" / "ci.lock").read_text(encoding="utf-8")
 
         self.assertIn("--requirement requirements/ci.lock", combined)
         self.assertIn("--requirement requirements/semgrep.lock", semgrep)
@@ -179,6 +180,7 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("--hash=sha256:", fuzz_lock)
         self.assertIn("semgrep==", semgrep_lock)
         self.assertIn("atheris==3.0.0", fuzz_lock)
+        self.assertIn('pyyaml-ft==8.0.0 ; python_version == "3.13"', ci_lock)
         self.assertNotIn("python -m pip install semgrep", combined)
         self.assertNotIn("python -m pip install . atheris==3.0.0", combined)
         self.assertNotIn("python -m pip install bandit", combined)
