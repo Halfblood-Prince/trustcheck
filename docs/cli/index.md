@@ -25,6 +25,13 @@ Installed environment scan:
 trustcheck environment --path .venv/lib/python3.12/site-packages
 ```
 
+Dependency update trust diff:
+
+```bash
+trustcheck diff requirements-old.lock requirements-new.lock
+trustcheck diff --base origin/main --head HEAD --github-pr
+```
+
 Show the installed package and report schema versions:
 
 ```bash
@@ -63,6 +70,11 @@ trustcheck --version
   publishers to belong to an approved organization; repeatable
 - `inspect -f <filename>`: inspect every package in a requirements, project TOML, or supported lockfile without vulnerability checks
 - `scan -f <filename>`: scan every package in a requirements, project TOML, or supported lockfile using the selected scan profile
+- `diff OLD_FILE NEW_FILE`: review only dependency graph entries whose
+  version, source, or index origin changed
+- `diff --base REF --head REF --github-pr`: discover changed dependency files
+  from Git refs, compare the base and head bytes, and optionally post Markdown
+  with `--comment`
 - `environment`: inspect exact distributions installed in the active
   interpreter, or in repeatable `--path` locations
 
@@ -377,6 +389,48 @@ trustcheck scan -f requirements.txt --format markdown \
 
 See [Industry output formats](../reference/industry-formats.md) for versioned
 standards, field mappings, and CI guidance.
+
+Create and enforce a trust manifest for a dependency file:
+
+```bash
+trustcheck manifest init -f requirements.lock \
+  --output trustcheck.manifest.json
+trustcheck manifest verify -f requirements.lock \
+  --manifest trustcheck.manifest.json
+trustcheck manifest update -f requirements.lock \
+  --manifest trustcheck.manifest.json
+```
+
+`manifest init` records the approved trust baseline for each resolved package.
+`manifest verify` rescans the dependency file with full trust evidence and
+returns exit code `4` when a package is missing from the manifest or regresses
+on repository, owner, Trusted Publisher identity, workflow, SLSA builder, build
+type, provenance coverage, attestation count, package index origin,
+dependency-confusion state, native binaries, dynamic execution, or
+malicious-package heuristic score. `manifest update` refreshes the baseline
+after review while preserving existing package exceptions. Use package-level
+exceptions with `code`, `owner`, `reason`, and `expires` fields to approve a
+temporary violation until an ISO date or datetime.
+
+Review a dependency update without rescanning the unchanged graph:
+
+```bash
+trustcheck diff requirements-old.lock requirements-new.lock
+trustcheck diff requirements-old.lock requirements-new.lock \
+  --manifest trustcheck.manifest.json \
+  --format markdown
+trustcheck diff --base origin/main --head HEAD --github-pr --comment
+```
+
+`diff` compares the old and new dependency graph, then collects full trust
+evidence only for changed packages. It reports new direct and transitive
+packages, new vulnerability or malicious-package signals, provenance loss,
+repository, maintainer, Trusted Publisher, SLSA, license, wheel/sdist, native
+binary, source-type, and package-index origin changes. When `--manifest` is
+provided, the same approved trust baseline is enforced against changed package
+versions. Output formats are `text`, `json`, `markdown`, and `sarif`.
+`--fail-on none|low|med|high` controls the CI exit threshold, and
+`--dependency-file PATH` restricts Git ref mode to one or more known files.
 
 Inspect artifact contents for a package:
 

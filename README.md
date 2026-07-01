@@ -55,6 +55,9 @@ For a selected package version, `trustcheck` can:
 - preserve and verify lockfile artifact hashes before trusting downloaded bytes
 - plan, dry-run, apply, or publish the smallest validated secure dependency
   upgrade set without silently widening declared constraints
+- review dependency update pull requests by comparing only changed lockfile
+  packages, trust metadata, artifacts, index origins, licenses, and manifest
+  expectations
 - batch OSV queries, bound concurrent target work, and store responses by
   verified SHA-256 content digest
 - consume offline advisory snapshots, resume interrupted scans, and load
@@ -150,6 +153,35 @@ deduplicates filenames, and merges failures across every changed dependency file
 For monorepos, `trustcheck-workspace . --format sarif` discovers supported files,
 aggregates repository-relative results, and accepts `--baseline` plus
 `--policy-overrides` for per-project policies.
+
+Use a trust manifest to approve the current dependency identities and block
+future trust regressions even when an upgrade is vulnerability-free:
+
+```bash
+trustcheck manifest init -f requirements.lock --output trustcheck.manifest.json
+trustcheck manifest verify -f requirements.lock --manifest trustcheck.manifest.json
+trustcheck manifest update -f requirements.lock --manifest trustcheck.manifest.json
+```
+
+The manifest records source repository and owner, verified Trusted Publisher
+identity and workflow, SLSA builder and build type, provenance and attestation
+coverage, package index origin, malicious-package score ceiling, native-binary
+allowance, dynamic-execution allowance, and expiring package exceptions.
+
+Review dependency update pull requests with a trust diff that inspects only
+packages whose resolved version or source changed:
+
+```bash
+trustcheck diff requirements-old.lock requirements-new.lock
+trustcheck diff --base origin/main --head HEAD --github-pr --format markdown
+trustcheck diff --base origin/main --head HEAD --github-pr --comment
+```
+
+The diff highlights new direct and transitive packages, vulnerability and
+malicious-package signals, provenance loss, repository or Trusted Publisher
+changes, wheel or sdist native-binary changes, license and private-index origin
+changes, and trust-manifest violations when `--manifest` is provided. Use
+`--format sarif` to upload findings to code scanning.
 
 ## TrustCheck Package Scanner
 

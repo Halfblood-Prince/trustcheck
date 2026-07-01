@@ -31,8 +31,10 @@ from .advisories import (
     OsvProvider,
     VulnerabilityIntelligenceClient,
 )
+from .cli_commands import diff as diff_command
 from .cli_commands import environment as environment_command
 from .cli_commands import inspect as inspect_command
+from .cli_commands import manifest as manifest_command
 from .cli_commands import scan as scan_command
 from .cli_commands.context import CommandContext
 from .cli_models import (
@@ -178,6 +180,7 @@ from .lockfiles import (
     load_lockfile,
     load_pip_tools_lock,
 )
+from .manifest import DEFAULT_MAX_MALICIOUS_SCORE, DEFAULT_TRUST_MANIFEST_PATH
 from .models import RemediationSummary, TrustReport
 from .plugins import PluginError, PluginManager, RepositoryClient
 from .policy import BUILTIN_POLICIES, PolicySettings, evaluate_policy
@@ -577,6 +580,145 @@ def build_parser() -> argparse.ArgumentParser:
     _add_index_arguments(scan_parser)
     _add_runtime_arguments(scan_parser, resumable=True)
 
+    diff_parser = subparsers.add_parser(
+        "diff",
+        help="Review trust changes between two dependency files or Git refs.",
+    )
+    diff_parser.add_argument(
+        "old_file",
+        nargs="?",
+        help="Baseline dependency file.",
+    )
+    diff_parser.add_argument(
+        "new_file",
+        nargs="?",
+        help="Updated dependency file.",
+    )
+    diff_parser.add_argument("--base", help="Base Git ref for PR diff mode.")
+    diff_parser.add_argument("--head", help="Head Git ref for PR diff mode.")
+    diff_parser.add_argument(
+        "--github-pr",
+        action="store_true",
+        help="Discover changed dependency files from --base/--head Git refs.",
+    )
+    diff_parser.add_argument(
+        "--comment",
+        action="store_true",
+        help="Post the Markdown trust diff to the current GitHub pull request with gh.",
+    )
+    diff_parser.add_argument(
+        "--dependency-file",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Restrict Git ref mode to this dependency file; repeatable.",
+    )
+    diff_parser.add_argument(
+        "--manifest",
+        help="Trust manifest to enforce against changed packages.",
+    )
+    diff_parser.add_argument(
+        "--format",
+        choices=("text", "json", "markdown", "sarif"),
+        default="text",
+        help="Output format.",
+    )
+    diff_parser.add_argument(
+        "--output-file",
+        help="Write the rendered diff to this file instead of standard output.",
+    )
+    diff_parser.add_argument(
+        "--fail-on",
+        choices=("none", "low", "med", "high"),
+        default="high",
+        help="Exit with policy failure when the diff reaches this severity.",
+    )
+    diff_parser.add_argument(
+        "--artifact-scope",
+        dest="diff_artifact_scope",
+        choices=("target", "sdist", "all"),
+        default="all",
+        help="Artifact scope used while collecting trust evidence for changed packages.",
+    )
+    diff_parser.add_argument("--timeout", type=float, help="Network timeout in seconds.")
+    diff_parser.add_argument(
+        "--retries",
+        type=int,
+        help="Maximum retry count for transient failures.",
+    )
+    diff_parser.add_argument(
+        "--backoff",
+        type=float,
+        help="Retry backoff factor in seconds.",
+    )
+    diff_parser.add_argument(
+        "--cache-dir",
+        help="Optional persistent cache directory for PyPI responses.",
+    )
+    diff_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use cached responses only and do not make network requests.",
+    )
+    diff_parser.add_argument(
+        "--config-file",
+        help="Path to a JSON, TOML, or pyproject.toml configuration file.",
+    )
+    diff_parser.add_argument(
+        "--with-osv",
+        action="store_true",
+        help="Query OSV for each changed package version.",
+    )
+    _add_advisory_arguments(diff_parser)
+    _add_dynamic_analysis_argument(diff_parser)
+    _add_file_resolution_arguments(diff_parser)
+    _add_target_environment_arguments(diff_parser)
+    _add_index_arguments(diff_parser)
+    _add_malicious_arguments(diff_parser)
+    _add_runtime_arguments(diff_parser)
+
+    manifest_parser = subparsers.add_parser(
+        "manifest",
+        help="Create and enforce a dependency trust manifest.",
+    )
+    manifest_subparsers = manifest_parser.add_subparsers(
+        dest="manifest_action",
+        required=True,
+    )
+
+    manifest_init_parser = manifest_subparsers.add_parser(
+        "init",
+        help="Create a trust manifest from the current dependency file.",
+    )
+    _add_manifest_common_arguments(manifest_init_parser)
+    manifest_init_parser.add_argument(
+        "--output",
+        default=DEFAULT_TRUST_MANIFEST_PATH,
+        help="Trust manifest path to write.",
+    )
+
+    manifest_verify_parser = manifest_subparsers.add_parser(
+        "verify",
+        help="Verify the current dependency file against a trust manifest.",
+    )
+    _add_manifest_common_arguments(manifest_verify_parser)
+    manifest_verify_parser.add_argument(
+        "--manifest",
+        default=DEFAULT_TRUST_MANIFEST_PATH,
+        help="Trust manifest path to read.",
+    )
+
+    manifest_update_parser = manifest_subparsers.add_parser(
+        "update",
+        help="Refresh a trust manifest after reviewing dependency trust changes.",
+    )
+    _add_manifest_common_arguments(manifest_update_parser)
+    manifest_update_parser.add_argument(
+        "--manifest",
+        default=DEFAULT_TRUST_MANIFEST_PATH,
+        help="Trust manifest path to update.",
+    )
+
     environment_parser = subparsers.add_parser(
         "environment",
         help="Inspect installed distributions in the active environment or site-packages paths.",
@@ -706,6 +848,78 @@ def build_parser() -> argparse.ArgumentParser:
     _add_dynamic_analysis_argument(environment_parser)
     _add_runtime_arguments(environment_parser, resumable=True)
     return parser
+
+
+def _add_manifest_common_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-f",
+        "--file",
+        dest="filename",
+        required=True,
+        help=(
+            "Dependency file to baseline or verify: requirements.txt, pyproject.toml, "
+            "pylock.toml, Pipfile.lock, uv.lock, poetry.lock, or pdm.lock."
+        ),
+    )
+    parser.add_argument(
+        "--config-file",
+        help="Path to a JSON, TOML, or pyproject.toml configuration file.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format for command status or verification results.",
+    )
+    parser.add_argument(
+        "--output-file",
+        help="Write command status or verification results to this path.",
+    )
+    parser.add_argument(
+        "--artifact-scope",
+        dest="manifest_artifact_scope",
+        choices=("target", "sdist", "all"),
+        default="all",
+        help=(
+            "Choose target-compatible install artifact, source distributions, "
+            "or every release artifact for manifest trust evidence."
+        ),
+    )
+    parser.add_argument(
+        "--max-malicious-score",
+        type=int,
+        default=DEFAULT_MAX_MALICIOUS_SCORE,
+        help=(
+            "Default maximum malicious-package heuristic score recorded for "
+            "new manifest entries."
+        ),
+    )
+    parser.add_argument("--timeout", type=float, help="Network timeout in seconds.")
+    parser.add_argument(
+        "--retries",
+        type=int,
+        help="Maximum retry count for transient failures.",
+    )
+    parser.add_argument(
+        "--backoff",
+        type=float,
+        help="Retry backoff factor in seconds.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        help="Optional persistent cache directory for PyPI responses.",
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use cached responses only and do not make network requests.",
+    )
+    _add_dynamic_analysis_argument(parser)
+    _add_file_resolution_arguments(parser)
+    _add_target_environment_arguments(parser)
+    _add_index_arguments(parser)
+    _add_malicious_arguments(parser)
+    _add_runtime_arguments(parser)
 
 
 def _add_target_environment_arguments(parser: argparse.ArgumentParser) -> None:
@@ -957,8 +1171,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         and not 1 <= args.max_workers <= 64
     ):
         parser.error("--workers must be -1 or between 1 and 64")
+    if args.command == "diff":
+        diff_command.validate_args(args, parser)
     if args.command == "scan":
         scan_command.validate_args(args, parser)
+    if args.command == "manifest":
+        manifest_command.validate_args(args, parser)
 
     try:
         plugin_manager = PluginManager.from_options(
@@ -984,6 +1202,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return inspect_command.run(args, context)
         if args.command == "scan":
             return scan_command.run(args, context)
+        if args.command == "diff":
+            return diff_command.run(args, context)
+        if args.command == "manifest":
+            return manifest_command.run(args, context)
         if args.command == "environment":
             return environment_command.run(args, context)
         parser.error("unknown command")

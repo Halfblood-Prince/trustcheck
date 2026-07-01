@@ -31,6 +31,66 @@ Stable releases publish an immutable action ref such as `v1.10.0` and update
 the compatible major ref `v1`. Use `@v1` for compatible updates or pin the full
 release tag when immutable workflow dependencies are required.
 
+## Trust manifest gate
+
+For dependency files with an approved baseline, run the CLI after checkout to
+block trust regressions across otherwise clean upgrades:
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: actions/setup-python@v6
+    with:
+      python-version: "3.12"
+  - run: python -m pip install trustcheck
+  - run: |
+      trustcheck manifest verify \
+        -f requirements.lock \
+        --manifest trustcheck.manifest.json
+```
+
+Create the baseline with `trustcheck manifest init`, review the JSON, commit it
+with the dependency file, and use `trustcheck manifest update` only after
+reviewing an intentional publisher, provenance, index, artifact, or heuristic
+change.
+
+## Pull request trust diff
+
+For dependency update pull requests, compare the base and head dependency files
+and review only packages whose resolved version, source, or index origin
+changed:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+
+steps:
+  - uses: actions/checkout@v7
+    with:
+      fetch-depth: 0
+  - uses: actions/setup-python@v6
+    with:
+      python-version: "3.12"
+  - run: python -m pip install trustcheck
+  - run: |
+      trustcheck diff \
+        --base origin/main \
+        --head HEAD \
+        --github-pr \
+        --manifest trustcheck.manifest.json \
+        --format markdown \
+        --comment
+```
+
+`trustcheck diff` collects full trust evidence only for changed direct and
+transitive packages. It flags newly introduced packages, vulnerability and
+malicious-package signals, provenance loss, repository or Trusted Publisher
+identity changes, wheel or sdist native binaries, license changes,
+private-index origin changes, and trust-manifest violations. Omit `--comment`
+and use `--format sarif --output-file trustcheck-diff.sarif` when the workflow
+uploads findings to GitHub code scanning instead of posting a PR comment.
+
 ## Supported targets
 
 The `target` input accepts:

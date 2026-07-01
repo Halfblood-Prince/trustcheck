@@ -12,6 +12,14 @@ The project follows Semantic Versioning for the supported public API described i
   aggregate and per-rule thresholds, and advanced the schema to `1.11.0`.
 - Added opt-in `--dynamic-analysis` execution in a disposable, no-network,
   non-root Docker sandbox with CPU, memory, process, and wall-clock limits.
+- Added `trustcheck manifest init|verify|update` for dependency trust
+  baselines that block repository, Trusted Publisher, SLSA, provenance,
+  index-origin, native-binary, dynamic-execution, and malicious-score
+  regressions.
+- Added `trustcheck diff` for lockfile and pull-request trust review across
+  changed direct and transitive packages, with text, JSON, Markdown, SARIF,
+  Git ref discovery, GitHub PR commenting, and optional trust-manifest
+  enforcement.
 - Added a pinned GitHub Dependency Review pull-request gate for vulnerable
   dependency.
 
