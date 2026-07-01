@@ -445,7 +445,8 @@ inspected package.
 For behavior evidence, `--dynamic-analysis` is available as an explicit opt-in.
 It executes downloaded artifacts in a disposable Docker container with no
 network, a non-root user, dropped capabilities, and strict CPU, memory, process,
-and wall-clock limits. It is never enabled by default.
+and wall-clock limits. The dynamic-analysis image is digest-pinned by default,
+and mutable image tags are rejected. It is never enabled by default.
 
 Name, index, ownership, repository, and release-cadence heuristics run during
 normal inspection. Add organization-specific reference names with repeatable

@@ -28,7 +28,8 @@ jobs:
 
       - name: Install Trustcheck
         run: |
-          python -m pip install .
+          python -m pip install --disable-pip-version-check --require-hashes --requirement requirements/ci.lock
+          python -m pip install --disable-pip-version-check --no-build-isolation --no-deps .
           python -m pip check
 
       - name: Generate equivalent vulnerable-fixture SARIF reports

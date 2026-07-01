@@ -52,7 +52,11 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("name: Verify published benchmark signature", workflow)
         self.assertIn("benchmarks/results/latest.json.sig", workflow)
         self.assertIn("benchmarks/results/benchmark-public-key.pem", workflow)
-        self.assertIn("python -m pip install -e . mypy ruff", workflow)
+        self.assertIn("--requirement requirements/ci.lock", workflow)
+        self.assertIn("--require-hashes", workflow)
+        self.assertIn("--no-build-isolation", workflow)
+        self.assertIn("--no-deps", workflow)
+        self.assertNotIn("python -m pip install -e . mypy ruff", workflow)
         self.assertNotIn('python-version: ["3.10"', workflow)
         publish = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
             encoding="utf-8"
@@ -107,9 +111,65 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         generator = workflow.index("python scripts/dependency_bounds.py")
         bootstrap = workflow.index('python -m pip install "packaging>=24,<27"')
         self.assertLess(bootstrap, generator)
-        self.assertGreaterEqual(workflow.count('-e ".[test]"'), 4)
+        self.assertEqual(workflow.count('-e ".[test]"'), 2)
         self.assertIn("--upgrade-strategy eager", workflow)
         self.assertGreaterEqual(workflow.count("python -m pip check"), 6)
+
+    def test_ci_tooling_installs_are_hash_checked(self) -> None:
+        workflow_dir = ROOT / ".github" / "workflows"
+        combined = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(workflow_dir.glob("*.yml"))
+        )
+        semgrep = (workflow_dir / "semgrep.yml").read_text(encoding="utf-8")
+        fuzz = (workflow_dir / "fuzz.yml").read_text(encoding="utf-8")
+        semgrep_lock = (ROOT / "requirements" / "semgrep.lock").read_text(
+            encoding="utf-8"
+        )
+        fuzz_lock = (ROOT / "requirements" / "fuzz.lock").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("--requirement requirements/ci.lock", combined)
+        self.assertIn("--requirement requirements/semgrep.lock", semgrep)
+        self.assertIn("--requirement requirements/fuzz.lock", fuzz)
+        self.assertIn("--hash=sha256:", semgrep_lock)
+        self.assertIn("--hash=sha256:", fuzz_lock)
+        self.assertIn("semgrep==", semgrep_lock)
+        self.assertIn("atheris==3.0.0", fuzz_lock)
+        self.assertNotIn("python -m pip install semgrep", combined)
+        self.assertNotIn("python -m pip install . atheris==3.0.0", combined)
+        self.assertNotIn("python -m pip install bandit", combined)
+        self.assertNotIn("python -m pip install mkdocs-material", combined)
+
+    def test_ci_generates_product_specific_sbom_from_runtime_lock(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        runtime_lock = (ROOT / "requirements" / "runtime.lock").read_text(
+            encoding="utf-8"
+        )
+        ci_lock = (ROOT / "requirements" / "ci.lock").read_text(encoding="utf-8")
+
+        self.assertIn("name: Generate SBOM preview", workflow)
+        self.assertIn("--requirement requirements/runtime.lock", workflow)
+        self.assertIn("sbom-dist/*.whl", workflow)
+        self.assertIn('cyclonedx-py environment "$sbom_env/bin/python"', workflow)
+        self.assertIn("--hash=sha256:", runtime_lock)
+        self.assertIn("--hash=sha256:", ci_lock)
+        self.assertIn("cyclonedx-bom==", ci_lock)
+
+    def test_release_generates_per_artifact_runtime_sboms(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("name: Generate release SBOMs", workflow)
+        self.assertIn("--requirement requirements/runtime.lock", workflow)
+        self.assertIn('--no-deps \\', workflow)
+        self.assertIn('"${artifact}.cdx.json"', workflow)
+        self.assertIn("dist/*.cdx.json", workflow)
+        self.assertNotIn("dist/trustcheck-sbom.json", workflow)
 
     def test_ci_gates_pull_requests_with_dependency_review(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(

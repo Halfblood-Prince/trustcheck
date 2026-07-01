@@ -68,6 +68,7 @@ from trustcheck.models import (
     CoverageSummary,
     DependencyInspection,
     DependencySummary,
+    DynamicAnalysisResult,
     FileProvenance,
     HeuristicFinding,
     MaliciousPackageAssessment,
@@ -1127,6 +1128,62 @@ class CliBehaviorTests(unittest.TestCase):
             ),
         )
 
+    def test_verbose_report_renders_dynamic_analysis(self) -> None:
+        report = make_report()
+        report.files[0].dynamic_analysis = DynamicAnalysisResult(
+            enabled=True,
+            executed=False,
+            image="registry.example/python@sha256:" + "a" * 64,
+            error="dynamic analysis image must be pinned by a full sha256 digest",
+        )
+
+        rendered = _render_text_report(report, verbose=True)
+
+        self.assertIn("dynamic analysis:", rendered)
+        self.assertIn("warning:", rendered)
+        self.assertIn("sandbox: docker image=registry.example/python@sha256:", rendered)
+        self.assertIn("network=none user=non-root", rendered)
+        self.assertIn("limits: cpu=1 CPU, 10 CPU seconds memory=512 MiB", rendered)
+        self.assertIn("result: executed=no exit_code=-", rendered)
+        self.assertIn("error: dynamic analysis image must be pinned", rendered)
+
+    def test_verbose_report_renders_native_binary_and_executed_dynamic_details(self) -> None:
+        report = make_report()
+        report.files[0].artifact = ArtifactInspection(
+            inspected=True,
+            kind="wheel",
+            native_binaries=[
+                NativeBinaryInspection(
+                    path="gridoptim/native.pyd",
+                    format="PE",
+                    architecture="x86_64",
+                    imports=["kernel32.dll", "ws2_32.dll"],
+                    signature_status="absent",
+                    entropy=7.25,
+                    embedded_payloads=["payload.zip"],
+                    parse_error="certificate table missing",
+                )
+            ],
+        )
+        report.files[0].dynamic_analysis = DynamicAnalysisResult(
+            enabled=True,
+            executed=True,
+            image=None,
+            exit_code=0,
+            error=None,
+        )
+
+        rendered = _render_text_report(report, verbose=True)
+
+        self.assertIn("native binary analysis:", rendered)
+        self.assertIn("gridoptim/native.pyd: format=PE", rendered)
+        self.assertIn("imports: kernel32.dll, ws2_32.dll", rendered)
+        self.assertIn("embedded payloads: payload.zip", rendered)
+        self.assertIn("parse note: certificate table missing", rendered)
+        self.assertIn("sandbox: docker image=- network=none user=non-root", rendered)
+        self.assertIn("result: executed=yes exit_code=0", rendered)
+        self.assertNotIn("      error:", rendered)
+
     def test_resolve_scan_target_version_variants(self) -> None:
         class FakeClient:
             def get_project(self, project: str) -> dict[str, object]:
@@ -2069,8 +2126,10 @@ class CliBehaviorTests(unittest.TestCase):
                 with_deps=True,
                 with_transitive_deps=True,
                 inspect_artifacts=True,
+                dynamic_analysis=True,
                 extra=["security"],
                 group=["test"],
+                scan_profile="full",
                 constraint=[str(constraint)],
                 strict=True,
                 policy="strict",
@@ -2091,14 +2150,29 @@ class CliBehaviorTests(unittest.TestCase):
                 abi=["cp312"],
                 offline=True,
                 advisory_snapshot=[str(snapshot)],
+                max_advisory_age=12,
+                advisory_snapshot_identity="https://github.com/org/repo/.github/workflows/snap.yml",
+                advisory_snapshot_issuer="https://token.actions.githubusercontent.com",
+                allow_unsigned_advisory_snapshot=True,
             )
 
             command = _post_fix_reproduction_command(source, args)
 
         self.assertEqual(command[:4], ("trustcheck", "scan", "-f", str(source)))
         self.assertIn("--with-osv", command)
+        self.assertIn("--full", command)
+        self.assertIn("--dynamic-analysis", command)
         self.assertIn("--fail-on-vulnerability", command)
         self.assertIn("--python-version", command)
+        self.assertIn("--max-advisory-age", command)
+        self.assertIn("--advisory-snapshot-identity", command)
+        self.assertIn("--advisory-snapshot-issuer", command)
+        self.assertIn("--allow-unsigned-advisory-snapshot", command)
+        standard_args = SimpleNamespace(scan_profile="standard")
+        self.assertIn(
+            "--standard",
+            _post_fix_reproduction_command(source, standard_args),
+        )
         for removed in (
             "--with-deps",
             "--with-transitive-deps",

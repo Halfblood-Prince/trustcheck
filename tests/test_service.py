@@ -8,9 +8,11 @@ from typing import Any, cast
 from unittest.mock import patch
 
 from packaging.requirements import Requirement
+from packaging.tags import Tag
 from test_artifacts import build_wheel
 
 from trustcheck.attestations import VerificationError
+from trustcheck.dynamic import DEFAULT_DYNAMIC_IMAGE
 from trustcheck.models import (
     DependencyInspection,
     DynamicAnalysisResult,
@@ -34,6 +36,9 @@ from trustcheck.resolver import (
 )
 from trustcheck.service import (
     DiagnosticsCollector,
+    _artifact_matches_release_file,
+    _artifact_preference,
+    _artifacts_in_scope,
     _build_dependency_summary,
     _build_publisher_trust_summary,
     _build_risk_flags,
@@ -43,6 +48,7 @@ from trustcheck.service import (
     _previous_release_version,
     _publisher_repository_url,
     _select_dependency_version,
+    _wheel_compatibility_rank,
     inspect_package,
 )
 
@@ -499,6 +505,109 @@ class ServiceBranchTests(unittest.TestCase):
         self.assertEqual(summary.highest_risk_projects, ["three", "two"])
         self.assertEqual(summary.verified_projects, ["one"])
 
+        empty = _build_dependency_summary(["declared"], [], requested=False)
+        self.assertFalse(empty.requested)
+        self.assertEqual(empty.total_declared, 1)
+        self.assertEqual(empty.highest_risk_recommendation, "metadata-only")
+        self.assertEqual(empty.highest_risk_projects, [])
+
+        custom = _build_dependency_summary(
+            [],
+            [
+                DependencyInspection(
+                    "plugin",
+                    "plugin",
+                    "1",
+                    1,
+                    recommendation="plugin-review",
+                ),
+                DependencyInspection(
+                    "plugin",
+                    "plugin",
+                    "1",
+                    1,
+                    recommendation="plugin-review",
+                ),
+                DependencyInspection(
+                    "blocked",
+                    "blocked",
+                    "1",
+                    2,
+                    recommendation="high-risk",
+                ),
+            ],
+            requested=True,
+        )
+        self.assertEqual(custom.total_inspected, 3)
+        self.assertEqual(custom.unique_dependencies, 2)
+        self.assertEqual(custom.highest_risk_recommendation, "high-risk")
+        self.assertEqual(custom.high_risk_projects, ["blocked"])
+
+    def test_artifact_scope_helpers_cover_selection_fallbacks(self) -> None:
+        wheel = (
+            {
+                "filename": "demo-1.0-py3-none-any.whl",
+                "packagetype": "bdist_wheel",
+            },
+            (ArtifactReference(filename="demo-1.0-py3-none-any.whl"),),
+        )
+        sdist = (
+            {"filename": "demo-1.0.tar.gz", "packagetype": "sdist"},
+            (ArtifactReference(filename="demo-1.0.tar.gz"),),
+        )
+        odd = (
+            {"filename": "demo.data", "packagetype": "bdist_dumb"},
+            (ArtifactReference(hashes=(("sha256", "abc"),)),),
+        )
+
+        self.assertEqual(
+            _artifacts_in_scope(
+                [sdist],
+                artifact_scope="sdist",
+                target_environment=None,
+            ),
+            [sdist],
+        )
+        self.assertEqual(
+            _artifacts_in_scope(
+                [sdist, odd],
+                artifact_scope="target",
+                target_environment=None,
+            ),
+            [sdist],
+        )
+        self.assertEqual(
+            _artifacts_in_scope(
+                [sdist, wheel],
+                artifact_scope="target",
+                target_environment=None,
+            ),
+            [wheel],
+        )
+        self.assertEqual(_artifact_preference(odd[0]), (False, 2, "demo.data"))
+        self.assertIsNone(
+            _wheel_compatibility_rank(
+                "not-a-valid-wheel.whl",
+                {Tag("py3", "none", "any"): 0},
+            )
+        )
+        self.assertTrue(
+            _artifact_matches_release_file(
+                ArtifactReference(hashes=(("sha256", "ABC"),)),
+                filename="different.whl",
+                url="https://files.example/different.whl",
+                release_hashes={"sha256": "abc"},
+            )
+        )
+        self.assertFalse(
+            _artifact_matches_release_file(
+                ArtifactReference(filename="locked.whl"),
+                filename="different.whl",
+                url="https://files.example/different.whl",
+                release_hashes={"sha256": "abc"},
+            )
+        )
+
     def test_invalid_dependency_requirement_is_reported(self) -> None:
         report = inspect_package(
             "gridoptim",
@@ -548,7 +657,7 @@ class ServiceBranchTests(unittest.TestCase):
         dynamic_result = DynamicAnalysisResult(
             enabled=True,
             executed=True,
-            image="python:3.12-slim",
+            image=DEFAULT_DYNAMIC_IMAGE,
             exit_code=0,
         )
         with patch("trustcheck.service.Provenance") as provenance_model, patch(
@@ -569,6 +678,74 @@ class ServiceBranchTests(unittest.TestCase):
         self.assertFalse(report.files[0].artifact.inspected)
         self.assertTrue(report.files[0].dynamic_analysis.executed)
         dynamic.assert_called_once()
+
+    def test_dynamic_analysis_failure_records_diagnostic(self) -> None:
+        dynamic_result = DynamicAnalysisResult(
+            enabled=True,
+            image=DEFAULT_DYNAMIC_IMAGE,
+            error="dynamic sandbox rejected the image",
+        )
+        with patch("trustcheck.service.Provenance") as provenance_model, patch(
+            "trustcheck.service.analyze_artifact_dynamic",
+            return_value=dynamic_result,
+        ):
+            provenance_model.model_validate.return_value = make_provenance(
+                attestations=[]
+            )
+            report = inspect_package(
+                "gridoptim",
+                client=cast(
+                    Any,
+                    FakeClient(
+                        download_map={
+                            "https://files.pythonhosted.org/packages/gridoptim.whl": b"wheel"
+                        }
+                    ),
+                ),
+                dynamic_analysis=True,
+            )
+
+        self.assertEqual(
+            report.files[0].dynamic_analysis.error,
+            "dynamic sandbox rejected the image",
+        )
+        self.assertEqual(
+            report.diagnostics.artifact_failures[0].stage,
+            "dynamic-analysis",
+        )
+        self.assertEqual(
+            report.diagnostics.artifact_failures[0].subcode,
+            "dynamic_analysis_failed",
+        )
+
+    def test_dynamic_analysis_reuses_artifact_download_failure(self) -> None:
+        class DownloadFailingClient(FakeClient):
+            def download_distribution(self, url: str) -> bytes:
+                raise PypiClientError(
+                    "download failed",
+                    code="upstream",
+                    subcode="download_error",
+                )
+
+        with patch("trustcheck.service.Provenance") as provenance_model, patch(
+            "trustcheck.service.analyze_artifact_dynamic"
+        ) as dynamic:
+            provenance_model.model_validate.return_value = make_provenance()
+            report = inspect_package(
+                "gridoptim",
+                client=cast(Any, DownloadFailingClient()),
+                inspect_artifacts=True,
+                dynamic_analysis=True,
+            )
+
+        dynamic.assert_not_called()
+        self.assertTrue(report.files[0].dynamic_analysis.enabled)
+        self.assertEqual(report.files[0].dynamic_analysis.image, DEFAULT_DYNAMIC_IMAGE)
+        self.assertEqual(report.files[0].dynamic_analysis.error, "download failed")
+        self.assertEqual(
+            [failure.stage for failure in report.diagnostics.artifact_failures],
+            ["artifact-download", "dynamic-analysis", "provenance-fetch"],
+        )
 
 
 class InspectPackageTests(unittest.TestCase):

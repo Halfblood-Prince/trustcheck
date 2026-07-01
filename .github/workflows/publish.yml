@@ -118,8 +118,8 @@ jobs:
 
       - name: Install tooling
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e . mypy ruff
+          python -m pip install --disable-pip-version-check --require-hashes --requirement requirements/ci.lock
+          python -m pip install --disable-pip-version-check --no-build-isolation --no-deps -e .
 
       - name: Run lint
         run: ruff check src tests scripts
@@ -156,8 +156,8 @@ jobs:
 
       - name: Install test tooling
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[test]" build pytest
+          python -m pip install --disable-pip-version-check --require-hashes --requirement requirements/ci.lock
+          python -m pip install --disable-pip-version-check --no-build-isolation --no-deps -e .
           python -m pip check
 
       - name: Run test suite
@@ -225,8 +225,8 @@ jobs:
 
       - name: Install coverage tooling
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[test]" build pytest pytest-cov coverage cyclonedx-bom
+          python -m pip install --disable-pip-version-check --require-hashes --requirement requirements/ci.lock
+          python -m pip install --disable-pip-version-check --no-build-isolation --no-deps -e .
           python -m pip check
 
       - name: Run tests with coverage
@@ -264,8 +264,23 @@ jobs:
             -cf - . | tar -xf - -C "$archive_root"
           python -m build --sdist --wheel --outdir "$archive_root/dist" "$archive_root"
 
-      - name: Generate SBOM
-        run: cyclonedx-py environment --output-file dist/trustcheck-sbom.json
+      - name: Generate release SBOMs
+        run: |
+          for artifact in dist/*.whl dist/*.tar.gz; do
+            sbom_env="$(mktemp -d)"
+            python -m venv "$sbom_env"
+            "$sbom_env/bin/python" -m pip install \
+              --disable-pip-version-check \
+              --require-hashes \
+              --requirement requirements/runtime.lock
+            "$sbom_env/bin/python" -m pip install \
+              --disable-pip-version-check \
+              --no-deps \
+              "$artifact"
+            "$sbom_env/bin/python" -m pip uninstall -y pip setuptools wheel || true
+            cyclonedx-py environment "$sbom_env/bin/python" --output-file "${artifact}.cdx.json"
+            rm -rf "$sbom_env"
+          done
 
       - name: Generate checksums
         run: sha256sum dist/* > dist/SHA256SUMS.txt
@@ -473,8 +488,8 @@ jobs:
 
       - name: Install PyInstaller tooling
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e . "Pillow>=11,<13" "pyinstaller>=6.20,<7"
+          python -m pip install --disable-pip-version-check --require-hashes --requirement requirements/ci.lock
+          python -m pip install --disable-pip-version-check --no-build-isolation --no-deps -e .
           python -m pip check
 
       - name: Build standalone Windows executable
@@ -948,7 +963,7 @@ jobs:
             Release artifacts:
             - `dist/*`
             - `dist/SHA256SUMS.txt`
-            - `dist/trustcheck-sbom.json`
+            - `dist/*.cdx.json`
             - standalone `trustcheck-*-windows-x86_64.exe` with checksum
             - unsigned `trustcheck-*-store.msix` for Microsoft Store submission
             - GHCR Docker images for `linux/amd64`, `linux/arm64`, and `linux/arm/v7`

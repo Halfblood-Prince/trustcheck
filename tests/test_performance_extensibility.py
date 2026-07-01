@@ -485,7 +485,12 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertIn("uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", workflow)
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn("--output benchmarks/results/latest.json", workflow)
-        self.assertIn("pip-audit==2.10.1", workflow)
+        self.assertIn("--requirement requirements/ci.lock", workflow)
+        self.assertIn("--require-hashes", workflow)
+        self.assertIn(
+            "pip-audit==2.10.1",
+            (root / "requirements" / "ci.lock").read_text(encoding="utf-8"),
+        )
         self.assertIn("--iterations 5", workflow)
         self.assertIn("--evidence-iterations 5", workflow)
         self.assertIn("retention-days: 90", workflow)

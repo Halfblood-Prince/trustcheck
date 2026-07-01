@@ -79,6 +79,7 @@ The dynamic runner installs the artifact into an isolated temporary virtual
 environment with `pip --no-deps --no-index --no-build-isolation`. This may
 execute untrusted build hooks, especially for source distributions. Treat the
 result as behavior evidence from a constrained sandbox, not as proof of safety.
+Its default Docker image is digest-pinned, and mutable image tags are rejected.
 
 ## Scoring
 

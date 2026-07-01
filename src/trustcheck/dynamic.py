@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess  # nosec B404
 import tempfile
@@ -8,7 +9,11 @@ from pathlib import Path
 
 from .models import DynamicAnalysisResult
 
-DEFAULT_DYNAMIC_IMAGE = "python:3.12-slim"
+DEFAULT_DYNAMIC_IMAGE = (
+    "python:3.12-slim@"
+    "sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf"
+)
+DIGEST_PINNED_IMAGE_PATTERN = re.compile(r"^\S+@sha256:[0-9a-fA-F]{64}$")
 MAX_DYNAMIC_SECONDS = 30.0
 MAX_DYNAMIC_CPU_SECONDS = 10
 MAX_DYNAMIC_MEMORY = "512m"
@@ -34,6 +39,11 @@ def analyze_artifact_dynamic(
         timeout_seconds=timeout,
         image=image,
     )
+    if DIGEST_PINNED_IMAGE_PATTERN.fullmatch(image) is None:
+        result.error = (
+            "dynamic analysis image must be pinned by a full sha256 digest"
+        )
+        return result
     if shutil.which("docker") is None:
         result.error = "dynamic analysis requires the Docker CLI to be available"
         return result

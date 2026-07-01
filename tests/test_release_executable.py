@@ -47,9 +47,14 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
             ROOT / ".github" / "workflows" / "publish.yml"
         ).read_text(encoding="utf-8")
         build = _job_block(workflow, "build-windows-executable")
+        ci_lock = (ROOT / "requirements" / "ci.lock").read_text(encoding="utf-8")
 
-        self.assertIn('"pyinstaller>=6.20,<7"', build)
-        self.assertIn('"Pillow>=11,<13"', build)
+        self.assertIn("--requirement requirements/ci.lock", build)
+        self.assertIn("--require-hashes", build)
+        self.assertIn("--no-build-isolation", build)
+        self.assertIn("--no-deps", build)
+        self.assertIn("pyinstaller==", ci_lock)
+        self.assertIn("pillow==", ci_lock.lower())
         self.assertIn("Authenticode sign and RFC 3161 timestamp executable", build)
         self.assertIn("WINDOWS_SIGNING_CERTIFICATE_BASE64", build)
         self.assertIn("/tr $timestampUrl", build)

@@ -250,9 +250,9 @@ resolution unless the configured index provides a target-compatible wheel.
 External keyring helpers are also unavailable in strict mode; use index URL
 credentials or an authenticated index endpoint.
 
-The container backend defaults to a digest-pinned `python:3.13-slim` image.
-Override it with `--sandbox-image IMAGE@sha256:DIGEST`; mutable tags are
-rejected.
+The container backend defaults to
+`python:3.13-slim@sha256:c33f0bc4364a6881bed1ec0cc2665e6c53c87a43e774aaeab88e6f17af105e4f`.
+Override it with `--sandbox-image IMAGE@sha256:DIGEST`; mutable tags are rejected.
 
 Scan dependencies declared in a TOML project file:
 
@@ -396,7 +396,9 @@ are applied to inspected dependency artifacts.
 `--dynamic-analysis` is the explicit exception: it executes the downloaded
 artifact inside a disposable Docker container using `--network none`, a
 non-root user, a read-only root filesystem, dropped capabilities, and bounded
-CPU, memory, process, and wall-clock limits. It is never enabled by default.
+CPU, memory, process, and wall-clock limits. It defaults to
+`python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf`
+and rejects mutable image tags. It is never enabled by default.
 
 Typosquatting, dependency-confusion, ownership, repository, and release-cadence
 heuristics run without `--inspect-artifacts`. Add local reference names with

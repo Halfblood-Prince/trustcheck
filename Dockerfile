@@ -1,8 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG PYTHON_VERSION=3.14
-
-FROM python:${PYTHON_VERSION}-slim AS build
+FROM python:3.14-slim@sha256:b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a27986facfc3355c1 AS build
 
 ARG TRUSTCHECK_VERSION=0.0.0+docker
 
@@ -27,7 +25,7 @@ RUN apt-get update \
 RUN python -m pip install --upgrade pip \
     && python -m pip wheel --wheel-dir /wheels .
 
-FROM python:${PYTHON_VERSION}-slim AS runtime
+FROM python:3.14-slim@sha256:b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a27986facfc3355c1 AS runtime
 
 LABEL org.opencontainers.image.title="Trustcheck" \
       org.opencontainers.image.description="Package trust and provenance verification for PyPI consumers." \

@@ -231,7 +231,7 @@ runs:
         python -m pip install \
           --disable-pip-version-check \
           --require-hashes \
-          --requirement "$GITHUB_ACTION_PATH/requirements-action.lock"
+          --requirement "$GITHUB_ACTION_PATH/requirements/action.lock"
         python -m pip install \
           --disable-pip-version-check \
           --no-build-isolation \

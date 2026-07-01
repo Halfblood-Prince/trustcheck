@@ -22,7 +22,19 @@ class DockerWorkflowTests(unittest.TestCase):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
 
-        self.assertIn("FROM python:${PYTHON_VERSION}-slim AS build", dockerfile)
+        self.assertIn(
+            "FROM python:3.14-slim@sha256:"
+            "b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a27986facfc3355c1 "
+            "AS build",
+            dockerfile,
+        )
+        self.assertIn(
+            "FROM python:3.14-slim@sha256:"
+            "b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a27986facfc3355c1 "
+            "AS runtime",
+            dockerfile,
+        )
+        self.assertNotIn("python:${PYTHON_VERSION}-slim", dockerfile)
         self.assertIn("ARG TRUSTCHECK_VERSION=0.0.0+docker", dockerfile)
         self.assertIn("SETUPTOOLS_SCM_PRETEND_VERSION=${TRUSTCHECK_VERSION}", dockerfile)
         self.assertIn("build-essential", dockerfile)

@@ -193,7 +193,7 @@ Private-index credentials can be supplied through URL user information,
 
 All external Actions used by Trustcheck's own workflows and composite Action
 are pinned to full commit SHAs. The composite Action installs runtime and
-build dependencies from `requirements-action.lock` with `--require-hashes`,
+build dependencies from `requirements/action.lock` with `--require-hashes`,
 then installs Trustcheck with dependency resolution and build isolation
 disabled.
 With multiple indexes, a normalized name found on more than one index fails

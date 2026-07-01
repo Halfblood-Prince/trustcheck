@@ -635,10 +635,10 @@ class GitHubActionTests(unittest.TestCase):
 
     def test_composite_action_uses_hash_locked_installation(self) -> None:
         action = Path("action.yml").read_text(encoding="utf-8")
-        lock = Path("requirements-action.lock").read_text(encoding="utf-8")
+        lock = Path("requirements/action.lock").read_text(encoding="utf-8")
 
         self.assertIn("--require-hashes", action)
-        self.assertIn('requirements-action.lock"', action)
+        self.assertIn('requirements/action.lock"', action)
         self.assertIn("--no-build-isolation", action)
         self.assertIn("--no-deps", action)
         for dependency in (
