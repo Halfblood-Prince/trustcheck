@@ -18,10 +18,15 @@ build
 coverage
 cyclonedx-bom
 mkdocs-material
-mutmut>=3,<4
+# Keep mutation tooling compatible with the CI Python 3.11-3.13 jobs.
+mutmut>=3,<3.4
+libcst<1.8
 mypy
 pip-audit
-psutil
+# Keep psutil on a release published for Linux Python 3.13.
+psutil<=7.1.1
 pyinstaller>=6.20,<7
+# PyInstaller requires macholib on macOS; pin it explicitly for hashed CI installs.
+macholib>=1.8,<2
 pytest-cov
 ruff

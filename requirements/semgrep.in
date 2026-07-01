@@ -1,1 +1,3 @@
-semgrep
+# This lock is installed on Linux CI; do not keep Windows-only transitive pins.
+# Keep Semgrep compatible with the Python 3.12 runner used by the workflow.
+semgrep<1.158
