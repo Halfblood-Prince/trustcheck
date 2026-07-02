@@ -42,6 +42,14 @@ from trustcheck.models import (
 from trustcheck.pypi import PypiClientError
 
 
+def command_startswith(command: list[str], executable: str, *arguments: str) -> bool:
+    executable_names = {executable, f"{executable}.exe"}
+    return (
+        Path(command[0]).name.lower() in executable_names
+        and command[1 : 1 + len(arguments)] == list(arguments)
+    )
+
+
 def make_target(
     project: str,
     version: str,
@@ -650,16 +658,16 @@ class DiffCliTests(unittest.TestCase):
 
         def fake_run(command, **kwargs):
             subprocess_calls.append(command)
-            if command[:3] == ["git", "diff", "--name-only"]:
+            if command_startswith(command, "git", "diff", "--name-only"):
                 return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout="requirements.lock\nREADME.md\n",
                     stderr="",
                 )
-            if command[:2] == ["git", "show"]:
+            if command_startswith(command, "git", "show"):
                 return subprocess.CompletedProcess(command, 0, stdout=b"requests==2\n", stderr=b"")
-            if command[:3] == ["gh", "pr", "comment"]:
+            if command_startswith(command, "gh", "pr", "comment"):
                 return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
             raise AssertionError(command)
 
@@ -692,7 +700,9 @@ class DiffCliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertIn("trustcheck dependency trust diff", stdout.getvalue())
-        self.assertTrue(any(call[:3] == ["gh", "pr", "comment"] for call in subprocess_calls))
+        self.assertTrue(
+            any(command_startswith(call, "gh", "pr", "comment") for call in subprocess_calls)
+        )
 
     def test_diff_cli_reports_manifest_exception_added_in_pr_mode(self) -> None:
         old_targets = [make_target("requests", "2.32.3")]
@@ -717,14 +727,14 @@ class DiffCliTests(unittest.TestCase):
         }
 
         def fake_run(command, **kwargs):
-            if command[:3] == ["git", "diff", "--name-only"]:
+            if command_startswith(command, "git", "diff", "--name-only"):
                 return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout="requirements.lock\ntrustcheck.manifest.json\n",
                     stderr="",
                 )
-            if command[:2] == ["git", "show"]:
+            if command_startswith(command, "git", "show"):
                 return subprocess.CompletedProcess(
                     command,
                     0,

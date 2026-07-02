@@ -697,12 +697,12 @@ def _observed_repositories(report: TrustReport) -> set[str]:
         if not file.verified:
             continue
         for identity in file.publisher_identities:
-            normalized = normalize_publisher_repository(
+            publisher_repository = normalize_publisher_repository(
                 identity.kind,
                 identity.repository,
             )
-            if normalized is not None:
-                repositories.add(normalized)
+            if publisher_repository is not None:
+                repositories.add(publisher_repository)
         for provenance in file.slsa_provenance:
             normalized = _normalize_repository(provenance.source_repository)
             if normalized:

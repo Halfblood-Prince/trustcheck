@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess  # nosec B404
 import tempfile
 from collections.abc import Sequence
@@ -29,6 +30,9 @@ from ..manifest import load_manifest
 from ..models import TrustReport
 from ..pypi import PypiClient, PypiClientError
 from .context import CommandContext
+
+GIT_EXECUTABLE = shutil.which("git") or "git"
+GH_EXECUTABLE = shutil.which("gh") or "gh"
 
 
 def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -207,7 +211,7 @@ def _changed_dependency_paths(
     if restricted_paths:
         return list(dict.fromkeys(restricted_paths))
     completed = subprocess.run(  # nosec B603
-        ["git", "diff", "--name-only", "--diff-filter=ACMR", base, head],
+        [GIT_EXECUTABLE, "diff", "--name-only", "--diff-filter=ACMR", base, head],
         capture_output=True,
         check=False,
         text=True,
@@ -226,7 +230,7 @@ def _changed_dependency_paths(
 
 def _git_show(ref: str, path: str) -> bytes:
     completed = subprocess.run(  # nosec B603
-        ["git", "show", f"{ref}:{path}"],
+        [GIT_EXECUTABLE, "show", f"{ref}:{path}"],
         capture_output=True,
         check=False,
         shell=False,
@@ -387,7 +391,7 @@ def _post_github_comment(markdown: str) -> None:
         body_path = body_file.name
     try:
         completed = subprocess.run(  # nosec B603
-            ["gh", "pr", "comment", "--body-file", body_path],
+            [GH_EXECUTABLE, "pr", "comment", "--body-file", body_path],
             capture_output=True,
             check=False,
             text=True,

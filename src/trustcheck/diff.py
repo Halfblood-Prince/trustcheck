@@ -353,7 +353,7 @@ def render_trust_diff_sarif(report: TrustDiffReport) -> str:
                     results,
                     key=lambda item: (
                         str(item["ruleId"]),
-                        str(item["partialFingerprints"]["trustcheck/v1"]),
+                        _sarif_fingerprint(item),
                     ),
                 ),
                 "properties": {
@@ -367,6 +367,13 @@ def render_trust_diff_sarif(report: TrustDiffReport) -> str:
         ],
     }
     return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _sarif_fingerprint(result: Mapping[str, object]) -> str:
+    fingerprints = result.get("partialFingerprints")
+    if not isinstance(fingerprints, Mapping):
+        return ""
+    return str(fingerprints.get("trustcheck/v1", ""))
 
 
 def merge_manifest_exception_changes(
