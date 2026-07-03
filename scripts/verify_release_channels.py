@@ -6,7 +6,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal
-from urllib import request
+from urllib.parse import urlsplit
+
+import urllib3
 
 CHANNELS = ("pypi", "github", "snap", "docker", "homebrew", "winget")
 Status = Literal["pass", "fail"]
@@ -72,9 +74,8 @@ def render_text(result: ReleaseParityResult) -> str:
 
 
 def load_observations(path_or_url: str) -> dict[str, object]:
-    if path_or_url.startswith(("https://", "http://")):
-        with request.urlopen(path_or_url, timeout=30) as response:  # nosec B310
-            payload = response.read()
+    if _looks_like_url(path_or_url):
+        payload = _read_https_url(path_or_url)
     else:
         payload = Path(path_or_url).read_bytes()
     decoded = json.loads(payload)
@@ -86,6 +87,41 @@ def load_observations(path_or_url: str) -> dict[str, object]:
             raise ValueError("observed channel metadata field 'channels' must be an object")
         return dict(channels)
     return decoded
+
+
+def _looks_like_url(value: str) -> bool:
+    return "://" in value
+
+
+def _read_https_url(url: str) -> bytes:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https":
+        raise ValueError("observed channel metadata URL must use https")
+    if not parsed.hostname:
+        raise ValueError("observed channel metadata URL must include a host")
+    if parsed.username or parsed.password:
+        raise ValueError("observed channel metadata URL must not include credentials")
+    if parsed.fragment:
+        raise ValueError("observed channel metadata URL must not include a fragment")
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    pool = urllib3.PoolManager()
+    response = pool.request(
+        "GET",
+        f"https://{parsed.netloc}{path}",
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "trustcheck-release-channel-verifier",
+        },
+        timeout=urllib3.Timeout(total=30),
+    )
+    if response.status >= 400:
+        raise ValueError(
+            "observed channel metadata URL returned "
+            f"HTTP {response.status} {response.reason}"
+        )
+    return bytes(response.data)
 
 
 def load_checksums(path: str | None) -> dict[str, str]:
@@ -297,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--observed-json",
         required=True,
-        help="Path or URL containing normalized release channel observations.",
+        help="Local path or HTTPS URL containing normalized release channel observations.",
     )
     parser.add_argument("--format", choices=("text", "json"), default="text")
     args = parser.parse_args(argv)
