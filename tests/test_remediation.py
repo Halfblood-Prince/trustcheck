@@ -1047,9 +1047,14 @@ class RemediationWriterTests(unittest.TestCase):
             requested.write_text("human notes\n", encoding="utf-8")
             second = write_remediation_patch(plan, requested)
 
-            self.assertEqual(first, requested)
-            self.assertEqual(second, root / "trustcheck-fix-1.patch")
+            self.assertEqual(first, requested.resolve())
+            self.assertEqual(second, (root / "trustcheck-fix-1.patch").resolve())
             self.assertEqual(plan.patch_path, str(second))
+            self.assertEqual(requested.read_text(encoding="utf-8"), "human notes\n")
+            self.assertEqual(
+                second.read_text(encoding="utf-8"),
+                "--- a/requirements.txt\n+++ b/requirements.txt\n",
+            )
 
     def test_application_refuses_stale_source_and_restores_original(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
