@@ -487,7 +487,7 @@ resolved versions, index origins, artifact candidates, and hashes are retained
 in machine-readable output.
 
 Package releases and the machine-readable report schema are versioned
-independently. Deep provenance analysis and malicious-package calibration are
+independently. Deep provenance analysis and malicious-package rule metadata are
 represented in report schema `1.11.0`.
 
 For top-level package analysis, a complete absence of published provenance is typically surfaced as `review-required`. Stronger negative evidence such as failed verification, inconsistent provenance, or known vulnerabilities still drives `high-risk` outcomes.

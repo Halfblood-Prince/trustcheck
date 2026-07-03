@@ -9,7 +9,9 @@ from .models import (
     ProvenanceIssue,
     ProvenanceMaterial,
     PublisherIdentity,
+    RiskFlag,
     SlsaProvenance,
+    TrustReport,
 )
 
 SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1"
@@ -304,6 +306,147 @@ def publisher_matches_organization_allowlist(
     return False
 
 
+def evaluate_source_release_provenance(
+    report: TrustReport,
+    *,
+    expected_tag: str | None = None,
+) -> list[RiskFlag]:
+    """Attach risk flags for source, release tag, artifact, and attestation parity."""
+    existing = [
+        flag
+        for flag in report.risk_flags
+        if not flag.code.startswith("source_release_")
+    ]
+    flags: list[RiskFlag] = []
+    declared_repositories = {
+        normalized
+        for url in (*report.declared_repository_urls, *report.repository_urls)
+        if (normalized := normalize_repository_uri(url)) is not None
+    }
+    slsa = [
+        provenance
+        for file in report.files
+        for provenance in file.slsa_provenance
+        if provenance.valid
+    ]
+    source_repositories = {
+        provenance.source_repository
+        for provenance in slsa
+        if provenance.source_repository
+    }
+    source_commits = {
+        provenance.source_commit
+        for provenance in slsa
+        if provenance.source_commit
+    }
+    release_refs = [
+        provenance.workflow_ref
+        for provenance in slsa
+        if provenance.workflow_ref
+    ]
+    expected_ref = expected_tag or f"v{report.version}"
+
+    if not declared_repositories:
+        flags.append(
+            _source_release_flag(
+                "source_release_declared_repository_missing",
+                "No declared source repository was available for provenance parity.",
+                why=[
+                    "Project metadata did not expose a supported GitHub or GitLab repository URL.",
+                ],
+            )
+        )
+    if not slsa:
+        flags.append(
+            _source_release_flag(
+                "source_release_attestation_missing",
+                "No valid SLSA provenance was available for source/release parity.",
+                why=[
+                    "PyPI artifact attestations did not contain a validated source material.",
+                ],
+            )
+        )
+    if declared_repositories and source_repositories:
+        unexpected = sorted(source_repositories.difference(declared_repositories))
+        if unexpected:
+            flags.append(
+                _source_release_flag(
+                    "source_release_repository_mismatch",
+                    "Attested source repositories do not match declared repository metadata.",
+                    why=[
+                        "declared=" + ", ".join(sorted(declared_repositories)),
+                        "attested=" + ", ".join(sorted(source_repositories)),
+                    ],
+                )
+            )
+    if len(source_commits) > 1:
+        flags.append(
+            _source_release_flag(
+                "source_release_commit_mismatch",
+                "Attestations point to more than one source commit.",
+                why=sorted(source_commits),
+            )
+        )
+    elif not source_commits and slsa:
+        flags.append(
+            _source_release_flag(
+                "source_release_commit_missing",
+                "Attestations did not identify a source commit.",
+            )
+        )
+    mismatched_refs = [
+        ref
+        for ref in release_refs
+        if not _source_release_tag_matches(ref, expected_ref)
+    ]
+    if mismatched_refs:
+        flags.append(
+            _source_release_flag(
+                "source_release_tag_mismatch",
+                "Attested workflow refs do not match the intended release tag.",
+                why=[
+                    f"expected={expected_ref}",
+                    "observed=" + ", ".join(sorted(set(mismatched_refs))),
+                ],
+            )
+        )
+    if report.files and not all(file.verified for file in report.files):
+        flags.append(
+            _source_release_flag(
+                "source_release_artifact_unverified",
+                "One or more PyPI artifacts lack verified provenance.",
+                why=[
+                    (
+                        f"verified={report.coverage.verified_files}/"
+                        f"{report.coverage.total_files}"
+                    )
+                ],
+            )
+        )
+    github_asset_refs = [
+        file.url
+        for file in report.files
+        if urlparse(file.url).hostname == "github.com"
+        and "/releases/download/" in urlparse(file.url).path
+    ]
+    mismatched_assets = [
+        url
+        for url in github_asset_refs
+        if not _github_release_asset_tag_matches(url, expected_ref)
+    ]
+    if mismatched_assets:
+        flags.append(
+            _source_release_flag(
+                "source_release_github_asset_mismatch",
+                "GitHub release asset URLs do not match the intended release tag.",
+                why=mismatched_assets,
+            )
+        )
+
+    report.risk_flags = [*existing, *flags]
+    return flags
+
+
 def _parse_materials(value: object) -> list[ProvenanceMaterial]:
     if not isinstance(value, list) or not value:
         raise SlsaValidationError(
@@ -435,6 +578,45 @@ def _publisher_repository_path(identity: PublisherIdentity) -> str | None:
         return None
     parsed = urlparse(normalized)
     return parsed.path.strip("/").lower()
+
+
+def _source_release_flag(
+    code: str,
+    message: str,
+    *,
+    why: list[str] | None = None,
+) -> RiskFlag:
+    return RiskFlag(
+        code=code,
+        severity="high",
+        message=message,
+        why=why or [],
+        remediation=[
+            "Confirm the release tag, source repository, uploaded artifacts, and "
+            "attestation subject through the publisher's trusted release channel.",
+            "Regenerate and republish artifacts from the intended immutable commit "
+            "when the evidence cannot be reconciled.",
+        ],
+    )
+
+
+def _source_release_tag_matches(observed: str, expected: str) -> bool:
+    observed_tag = observed.strip().removeprefix("refs/tags/")
+    expected_tag = expected.strip().removeprefix("refs/tags/")
+    bare_expected = expected_tag.removeprefix("v")
+    return observed_tag in {expected_tag, bare_expected, f"v{bare_expected}"}
+
+
+def _github_release_asset_tag_matches(url: str, expected: str) -> bool:
+    parsed = urlparse(url)
+    parts = [part for part in parsed.path.split("/") if part]
+    try:
+        marker = parts.index("download")
+    except ValueError:
+        return True
+    if marker + 1 >= len(parts):
+        return False
+    return _source_release_tag_matches(parts[marker + 1], expected)
 
 
 def _workflow_matches(expected: str, observed: str) -> bool:

@@ -3,11 +3,18 @@ from __future__ import annotations
 import copy
 import unittest
 
-from trustcheck.models import PublisherIdentity
+from trustcheck.models import (
+    CoverageSummary,
+    FileProvenance,
+    PublisherIdentity,
+    SlsaProvenance,
+    TrustReport,
+)
 from trustcheck.provenance import (
     GITHUB_WORKFLOW_BUILD_TYPE_V1,
     SlsaValidationError,
     analyze_slsa_provenance,
+    evaluate_source_release_provenance,
     is_immutable_reference,
     normalize_publisher_repository,
     normalize_repository_uri,
@@ -405,4 +412,91 @@ class PublisherOrganizationAllowlistTests(unittest.TestCase):
                 unsupported,
                 ["example"],
             )
+        )
+
+
+class SourceReleaseProvenanceTests(unittest.TestCase):
+    def test_accepts_matching_declared_repository_tag_and_commit(self) -> None:
+        report = TrustReport(
+            project="demo",
+            version="1.2.3",
+            summary=None,
+            package_url="https://pypi.org/project/demo/1.2.3/",
+            declared_repository_urls=["https://github.com/example/demo"],
+            repository_urls=["https://github.com/example/demo"],
+            files=[
+                FileProvenance(
+                    filename="demo-1.2.3.tar.gz",
+                    url="https://files.pythonhosted.org/packages/demo.tar.gz",
+                    sha256="a" * 64,
+                    has_provenance=True,
+                    verified=True,
+                    slsa_provenance=[
+                        SlsaProvenance(
+                            valid=True,
+                            source_repository="https://github.com/example/demo",
+                            source_commit=COMMIT,
+                            workflow_ref="refs/tags/v1.2.3",
+                        )
+                    ],
+                )
+            ],
+            coverage=CoverageSummary(
+                total_files=1,
+                files_with_provenance=1,
+                verified_files=1,
+                status="all-verified",
+            ),
+        )
+
+        self.assertEqual(evaluate_source_release_provenance(report), [])
+        self.assertEqual(report.risk_flags, [])
+
+    def test_flags_repository_commit_tag_and_artifact_mismatch(self) -> None:
+        report = TrustReport(
+            project="demo",
+            version="1.2.3",
+            summary=None,
+            package_url="https://pypi.org/project/demo/1.2.3/",
+            declared_repository_urls=["https://github.com/example/demo"],
+            files=[
+                FileProvenance(
+                    filename="demo-1.2.3.tar.gz",
+                    url=(
+                        "https://github.com/example/demo/releases/download/"
+                        "v1.2.2/demo-1.2.3.tar.gz"
+                    ),
+                    sha256="a" * 64,
+                    has_provenance=True,
+                    verified=False,
+                    slsa_provenance=[
+                        SlsaProvenance(
+                            valid=True,
+                            source_repository="https://github.com/other/demo",
+                            source_commit=COMMIT,
+                            workflow_ref="refs/tags/v1.2.2",
+                        ),
+                        SlsaProvenance(
+                            valid=True,
+                            source_repository="https://github.com/other/demo",
+                            source_commit="b" * 40,
+                            workflow_ref="refs/tags/v1.2.2",
+                        ),
+                    ],
+                )
+            ],
+            coverage=CoverageSummary(total_files=1),
+        )
+
+        flags = evaluate_source_release_provenance(report)
+
+        self.assertEqual(
+            {flag.code for flag in flags},
+            {
+                "source_release_repository_mismatch",
+                "source_release_commit_mismatch",
+                "source_release_tag_mismatch",
+                "source_release_artifact_unverified",
+                "source_release_github_asset_mismatch",
+            },
         )

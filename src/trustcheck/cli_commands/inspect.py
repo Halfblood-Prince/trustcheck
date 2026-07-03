@@ -45,7 +45,10 @@ def run(args: argparse.Namespace, context: CommandContext) -> int:
             "allowed_publisher_organizations": (
                 args.trusted_publisher_organization or None
             ),
-            "fail_on_severity": args.fail_on_risk_severity,
+            "fail_on_severity": (
+                args.fail_on_risk_severity
+                or ("high" if args.source_release_provenance else None)
+            ),
         },
     )
     if args.filename:
@@ -147,11 +150,13 @@ def run(args: argparse.Namespace, context: CommandContext) -> int:
         max_workers=args.max_workers,
     )
     evaluation = cli.evaluate_policy(
-        report,
+        cli._apply_source_release_provenance(report, args),
         policy,
         plugin_manager=plugin_manager,
     )
-    if args.format == "json":
+    if args.decision:
+        rendered = cli._render_decision_report(report)
+    elif args.format == "json":
         rendered = json.dumps(
             report.to_dict(),
             indent=2,

@@ -4,7 +4,7 @@ import struct
 import unittest
 
 from trustcheck.malicious import (
-    RULE_CALIBRATIONS,
+    RULE_METADATA,
     _cstring,
     _damerau_levenshtein,
     _deduplicate_findings,
@@ -273,7 +273,7 @@ helper()
         self.assertEqual([finding.code for finding in findings], ["ast_network_call"])
         self.assertLess(heuristic_score(findings), 25)
 
-    def test_rule_calibration_is_attached_to_findings(self) -> None:
+    def test_rule_metadata_is_attached_to_findings(self) -> None:
         findings, error = analyze_python_source(
             "demo/client.py",
             b"import subprocess\nsubprocess.run(['python', '-V'])\n",
@@ -286,7 +286,7 @@ helper()
         self.assertEqual(finding.score_threshold, 1)
         self.assertEqual(
             finding.confidence,
-            RULE_CALIBRATIONS["ast_subprocess_call"].confidence,
+            RULE_METADATA["ast_subprocess_call"].confidence,
         )
 
 

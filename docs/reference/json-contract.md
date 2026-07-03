@@ -18,7 +18,7 @@ interface for a single PyPI package.
 - `JSON_SCHEMA_ID = "urn:trustcheck:report:1.11.0"`
 
 Package versions and report schema versions are independent. Schema `1.11.0`
-adds malicious-package calibration metadata, policy threshold evidence, and
+adds malicious-package rule metadata, policy threshold evidence, and
 opt-in dynamic-analysis results.
 
 ## Top-level shape
@@ -269,8 +269,8 @@ With `--inspect-artifacts` or `inspect_artifacts=True`, the block includes:
 - metadata mismatches between PyPI, wheel, and sdist evidence
 - `source_files_analyzed` and bounded AST parse errors
 - `heuristic_findings` with category, severity, confidence, score, evidence,
-  source location, artifact name, rule version, false-positive rate, and score
-  threshold
+  source location, artifact name, rule version, estimated false-positive rate,
+  and score threshold
 - `native_binaries` with PE, ELF, or Mach-O format, architecture, imports,
   embedded signature presence, entropy, embedded payloads, and parse notes
 

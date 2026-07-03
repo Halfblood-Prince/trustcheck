@@ -1,11 +1,12 @@
 # Benchmarks
 
-Trustcheck publishes a reproducible performance and correctness comparison of
-`trustcheck scan` against the workflow-pinned `pip-audit 2.10.1`. The benchmark uses
-a versioned corpus manifest and the OSV advisory service for both tools. Only
-those two command paths contribute timing or correctness samples.
-The Trustcheck command explicitly uses `--fast`, limiting it to dependency
-resolution and advisory lookup for an apples-to-apples comparison.
+Trustcheck publishes a reproducible fixed-input performance and correctness
+comparison of `trustcheck scan` against the workflow-pinned `pip-audit 2.10.1`.
+The benchmark uses a versioned corpus manifest and the OSV advisory service for
+both tools. Only those two command paths contribute timing or correctness
+samples. The Trustcheck command explicitly uses `--fast`, limiting it to
+advisory lookup and lockfile/requirements parsing for an apples-to-apples
+comparison.
 
 The corpus is `benchmarks/corpus/corpus.json`. Version `2026.06` contains 133
 package entries: 100 mixed clean and historically vulnerable PyPI pins, marker
@@ -17,7 +18,8 @@ marked `compare_with_pip_audit`.
 Comparable requirements cases audit their declared pins directly. Trustcheck
 and pip-audit both use `--no-deps`, and pip-audit also uses `--disable-pip`, so
 historical releases do not execute build backends or need to resolve into one
-compatible environment.
+compatible environment. The README table is therefore a fixed-input `--no-deps`
+comparison, not a full dependency-resolution benchmark.
 
 Correctness is alias-aware: advisories match when any normalized `CVE`, `GHSA`,
 `PYSEC`, or provider ID overlaps. The raw unmatched records remain in the JSON
@@ -39,11 +41,12 @@ verification, static inspection, native analysis, and heuristic findings.
 Trustcheck request counts come from report diagnostics; `pip-audit` request
 counts are `null` because the tool does not expose that measurement.
 
-The scheduled benchmark workflow publishes the raw JSON as a retained workflow
-artifact and proposes the generated README evidence table through a pull request.
-Publication requires at least five warm samples per tool, a complete signed
-truth case for every comparable package entry, no incomplete advisory sets,
-and a minimum recall gate of `1.0`.
+The benchmark workflow runs manually, after the release workflow completes, and
+on a weekly schedule. It publishes the raw JSON as a retained workflow artifact
+and prints the generated README evidence table into the workflow summary for
+maintainer review. Publication requires at least five warm samples per tool, a
+complete signed truth case for every comparable package entry, no incomplete
+advisory sets, and a minimum recall gate of `1.0`.
 Local runs default to `benchmarks/results/latest.json`; commit or publish that
 file only when it was regenerated from the current corpus and environment.
 `pip-audit` exits `1` when it finds vulnerabilities; `trustcheck scan` exits

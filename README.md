@@ -29,6 +29,17 @@ It combines PyPI metadata, vulnerability records, provenance availability, crypt
 
 Packages that publish no provenance are treated as needing review rather than as automatic high-risk findings, while invalid provenance, partial coverage, repository mismatches, and known vulnerabilities remain stronger negative signals.
 
+## Choose your workflow
+
+| Command | Use it to |
+| --- | --- |
+| `scan` | audit a project |
+| `inspect` | assess one package release |
+| `install` | verify before installing |
+| `diff` | review a dependency PR |
+| `manifest` | lock approved trust evidence |
+| `impact` | prioritize by observed usage |
+
 ## What it checks
 
 For a selected package version, `trustcheck` can:
@@ -42,6 +53,8 @@ For a selected package version, `trustcheck` can:
 - surface Trusted Publisher repository and workflow identity hints
 - compare signer, repository, workflow, builder, build type, and source commit
   evidence across release history
+- verify source/release parity so declared repositories, release tags,
+  artifacts, and attestations agree on one source commit
 - compare expected repository input against declared and attested signals
 - flag publisher drift, missing verification, and known vulnerabilities
 - scan requirements files, project TOML, `pylock.toml`, `Pipfile.lock`,
@@ -72,6 +85,14 @@ For a selected package version, `trustcheck` can:
   native-binary heuristic indicators without claiming a malware verdict
 - emit text, JSON, SARIF 2.1.0, CycloneDX 1.6 JSON/XML, SPDX 2.3 JSON,
   OpenVEX 0.2.0, or Markdown
+- emit a concise decision report for release gates and pull request checks
+
+Check local prerequisites before relying on resolver isolation, private indexes,
+or provenance verification:
+
+```bash
+trustcheck doctor
+```
 
 Every push also builds standalone Windows and Linux executables. The Windows
 artifact is scanned with Microsoft Defender's `MpCmdRun.exe`; the Linux
@@ -79,10 +100,10 @@ artifact is scanned with ClamAV. Clean binaries, checksums, and scanner reports
 are retained as workflow artifacts by
 [Binary Security](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/binary-security.yml).
 
-
+<!-- trustcheck-benchmark:start -->
 ## Latest benchmark
 
-Generated `2026-06-21T08:43:40.047949+00:00` on Python `3.14.6` with `pip-audit 2.10.0`. Corpus `2026.06` covered 112 comparable package entries.
+Last committed fixed-input `--no-deps` comparison: generated `2026-06-21T08:43:40.047949+00:00` on Python `3.14.6` with `pip-audit 2.10.0`. Corpus `2026.06` contains 133 entries; this table covers 112 comparable package entries.
 
 | Tool | Cold p50 | Warm p50 | Warm p95 | Peak RSS | Requests p50 | Recall |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -91,6 +112,7 @@ Generated `2026-06-21T08:43:40.047949+00:00` on Python `3.14.6` with `pip-audit 
 
 Alias-aware agreement: `0.759197` across `109` compared packages and `227` matched advisories.
 Resolver exact match: `True` (trustcheck `22`, pip-audit `22`).
+<!-- trustcheck-benchmark:end -->
 
 ## Installation
 
@@ -148,7 +170,7 @@ Trustcheck publishes a first-party hook for changed dependency files:
 ```yaml
 repos:
   - repo: https://github.com/Halfblood-Prince/trustcheck
-    rev: v1
+    rev: v2
     hooks:
       - id: trustcheck
 ```
@@ -197,6 +219,18 @@ before merge:
 steps:
   - uses: actions/checkout@v7
   - uses: Halfblood-Prince/trustcheck@v2
+    with:
+      target: requirements.txt
+      policy: strict
+```
+
+For a protected release gate, pin both actions to commit SHAs. GitHub treats a
+full commit SHA as the only immutable Action reference:
+
+```yaml
+steps:
+  - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+  - uses: Halfblood-Prince/trustcheck@<full-release-commit-sha>
     with:
       target: requirements.txt
       policy: strict
@@ -260,7 +294,13 @@ trustcheck scan sampleproject --full --artifact-scope all --strict
 ```
 
 Use `--artifact-scope sdist` for source review or `--artifact-scope all` for a
-strict whole-release review.
+strict whole-release review. Release and promotion policies should scan every
+published artifact, including wheels for other operating systems and
+architectures:
+
+```bash
+trustcheck scan -f requirements.lock --full --artifact-scope all --strict
+```
 
 Verify and install the exact resolved dependency graph in one workflow:
 
@@ -548,10 +588,25 @@ trustcheck inspect sampleproject \
   --expected-repo https://github.com/pypa/sampleproject
 ```
 
+Require source/release provenance parity for a package release:
+
+```bash
+trustcheck inspect sampleproject \
+  --version 4.0.0 \
+  --source-release-provenance \
+  --release-tag v4.0.0
+```
+
 Emit JSON for another tool:
 
 ```bash
 trustcheck inspect sampleproject --version 4.0.0 --format json
+```
+
+Emit only the gate decision fields:
+
+```bash
+trustcheck scan -f requirements.txt --summary
 ```
 
 Emit combined JSON for a requirements-style, TOML, or lockfile scan:
@@ -587,6 +642,13 @@ Fail CI when full verification is missing:
 
 ```bash
 trustcheck inspect sampleproject --version 4.0.0 --strict
+```
+
+Starter policy bundles include `startup`, `regulated`,
+`enterprise-private-index`, `release-gate`, and `open-source-maintainer`:
+
+```bash
+trustcheck scan -f requirements.txt --policy release-gate
 ```
 
 Use it from Python:

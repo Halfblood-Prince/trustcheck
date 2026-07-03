@@ -67,6 +67,40 @@ BUILTIN_POLICIES: dict[str, PolicySettings] = {
         vulnerability_mode="ignore",
         fail_on_severity="none",
     ),
+    "startup": PolicySettings(
+        profile="startup",
+        allow_metadata_only=True,
+        vulnerability_mode="fixable",
+        fail_on_severity="high",
+    ),
+    "regulated": PolicySettings(
+        profile="regulated",
+        require_verified_provenance="all",
+        allow_metadata_only=False,
+        vulnerability_mode="any",
+        fail_on_severity="medium",
+    ),
+    "enterprise-private-index": PolicySettings(
+        profile="enterprise-private-index",
+        allow_metadata_only=True,
+        require_expected_repository_match=True,
+        vulnerability_mode="kev",
+        fail_on_severity="high",
+    ),
+    "release-gate": PolicySettings(
+        profile="release-gate",
+        require_verified_provenance="all",
+        allow_metadata_only=False,
+        require_expected_repository_match=True,
+        vulnerability_mode="fixable",
+        fail_on_severity="medium",
+    ),
+    "open-source-maintainer": PolicySettings(
+        profile="open-source-maintainer",
+        allow_metadata_only=True,
+        vulnerability_mode="critical",
+        fail_on_severity="high",
+    ),
 }
 
 

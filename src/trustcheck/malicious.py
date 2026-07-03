@@ -209,39 +209,39 @@ DEFAULT_SCORE_THRESHOLDS = {
 
 
 @dataclass(frozen=True, slots=True)
-class HeuristicRuleCalibration:
+class HeuristicRuleMetadata:
     false_positive_rate: float
     confidence: str
     rule_version: str
     score_threshold: int = 1
 
 
-RULE_CALIBRATIONS: dict[str, HeuristicRuleCalibration] = {
-    "ast_credential_environment": HeuristicRuleCalibration(0.18, "high", "2026.06"),
-    "ast_credential_file_access": HeuristicRuleCalibration(0.12, "medium", "2026.06"),
-    "ast_credential_network_chain": HeuristicRuleCalibration(0.04, "medium", "2026.06"),
-    "ast_custom_install_hook": HeuristicRuleCalibration(0.09, "high", "2026.06"),
-    "ast_dynamic_execution": HeuristicRuleCalibration(0.16, "high", "2026.06"),
-    "ast_install_time_execution_chain": HeuristicRuleCalibration(0.03, "high", "2026.06"),
-    "ast_keyring_access": HeuristicRuleCalibration(0.06, "high", "2026.06"),
-    "ast_network_call": HeuristicRuleCalibration(0.28, "high", "2026.06"),
-    "ast_obfuscated_process_chain": HeuristicRuleCalibration(0.05, "medium", "2026.06"),
-    "ast_payload_decode": HeuristicRuleCalibration(0.22, "high", "2026.06"),
-    "ast_persistence": HeuristicRuleCalibration(0.08, "medium", "2026.06"),
-    "ast_subprocess_call": HeuristicRuleCalibration(0.20, "high", "2026.06"),
-    "declared_repository_change": HeuristicRuleCalibration(0.07, "high", "2026.06"),
-    "dependency_confusion_index_collision": HeuristicRuleCalibration(0.03, "high", "2026.06"),
-    "maintainer_identity_change": HeuristicRuleCalibration(0.25, "medium", "2026.06"),
-    "native_embedded_payload": HeuristicRuleCalibration(0.10, "medium", "2026.06"),
-    "native_high_entropy": HeuristicRuleCalibration(0.35, "low", "2026.06"),
-    "native_payload_network_chain": HeuristicRuleCalibration(0.05, "medium", "2026.06"),
-    "native_sensitive_import": HeuristicRuleCalibration(0.18, "medium", "2026.06"),
-    "native_signature_absent": HeuristicRuleCalibration(0.42, "low", "2026.06"),
-    "project_ownership_change": HeuristicRuleCalibration(0.10, "medium", "2026.06"),
-    "release_after_dormancy": HeuristicRuleCalibration(0.20, "high", "2026.06"),
-    "release_burst": HeuristicRuleCalibration(0.18, "high", "2026.06"),
-    "release_cadence_acceleration": HeuristicRuleCalibration(0.23, "medium", "2026.06"),
-    "typosquatting_name_similarity": HeuristicRuleCalibration(0.08, "medium", "2026.06"),
+RULE_METADATA: dict[str, HeuristicRuleMetadata] = {
+    "ast_credential_environment": HeuristicRuleMetadata(0.18, "high", "2026.06"),
+    "ast_credential_file_access": HeuristicRuleMetadata(0.12, "medium", "2026.06"),
+    "ast_credential_network_chain": HeuristicRuleMetadata(0.04, "medium", "2026.06"),
+    "ast_custom_install_hook": HeuristicRuleMetadata(0.09, "high", "2026.06"),
+    "ast_dynamic_execution": HeuristicRuleMetadata(0.16, "high", "2026.06"),
+    "ast_install_time_execution_chain": HeuristicRuleMetadata(0.03, "high", "2026.06"),
+    "ast_keyring_access": HeuristicRuleMetadata(0.06, "high", "2026.06"),
+    "ast_network_call": HeuristicRuleMetadata(0.28, "high", "2026.06"),
+    "ast_obfuscated_process_chain": HeuristicRuleMetadata(0.05, "medium", "2026.06"),
+    "ast_payload_decode": HeuristicRuleMetadata(0.22, "high", "2026.06"),
+    "ast_persistence": HeuristicRuleMetadata(0.08, "medium", "2026.06"),
+    "ast_subprocess_call": HeuristicRuleMetadata(0.20, "high", "2026.06"),
+    "declared_repository_change": HeuristicRuleMetadata(0.07, "high", "2026.06"),
+    "dependency_confusion_index_collision": HeuristicRuleMetadata(0.03, "high", "2026.06"),
+    "maintainer_identity_change": HeuristicRuleMetadata(0.25, "medium", "2026.06"),
+    "native_embedded_payload": HeuristicRuleMetadata(0.10, "medium", "2026.06"),
+    "native_high_entropy": HeuristicRuleMetadata(0.35, "low", "2026.06"),
+    "native_payload_network_chain": HeuristicRuleMetadata(0.05, "medium", "2026.06"),
+    "native_sensitive_import": HeuristicRuleMetadata(0.18, "medium", "2026.06"),
+    "native_signature_absent": HeuristicRuleMetadata(0.42, "low", "2026.06"),
+    "project_ownership_change": HeuristicRuleMetadata(0.10, "medium", "2026.06"),
+    "release_after_dormancy": HeuristicRuleMetadata(0.20, "high", "2026.06"),
+    "release_burst": HeuristicRuleMetadata(0.18, "high", "2026.06"),
+    "release_cadence_acceleration": HeuristicRuleMetadata(0.23, "medium", "2026.06"),
+    "typosquatting_name_similarity": HeuristicRuleMetadata(0.08, "medium", "2026.06"),
 }
 
 
@@ -1268,9 +1268,9 @@ def _finding(
     location: str | None = None,
     artifact: str | None = None,
 ) -> HeuristicFinding:
-    calibration = RULE_CALIBRATIONS.get(
+    metadata = RULE_METADATA.get(
         code,
-        HeuristicRuleCalibration(
+        HeuristicRuleMetadata(
             false_positive_rate=0.25,
             confidence=confidence,
             rule_version="1.0",
@@ -1280,15 +1280,15 @@ def _finding(
         code=code,
         category=category,
         severity=severity,
-        confidence=calibration.confidence,
+        confidence=metadata.confidence,
         score=score,
         message=message,
         evidence=list(evidence),
         location=location,
         artifact=artifact,
-        rule_version=calibration.rule_version,
-        false_positive_rate=calibration.false_positive_rate,
-        score_threshold=calibration.score_threshold,
+        rule_version=metadata.rule_version,
+        false_positive_rate=metadata.false_positive_rate,
+        score_threshold=metadata.score_threshold,
     )
 
 

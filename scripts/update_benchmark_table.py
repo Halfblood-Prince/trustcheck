@@ -119,6 +119,7 @@ def _render_table(payload: dict[str, Any]) -> str:
     matched = correctness.get("matched_advisories")
     packages = correctness.get("packages_compared")
     corpus_version = corpus.get("version") or "unknown"
+    corpus_total = corpus.get("package_count") or "unknown"
     corpus_packages = corpus.get("benchmark_package_count") or corpus.get("package_count")
 
     return "\n".join(
@@ -130,8 +131,14 @@ def _render_table(payload: dict[str, Any]) -> str:
                 f"Generated `{generated_at}` on Python "
                 f"`{environment.get('python', 'unknown')}` with "
                 f"`{environment.get('pip_audit', 'pip-audit unknown')}`. "
-                f"Corpus `{corpus_version}` covered {corpus_packages} comparable "
-                "package entries."
+                f"Corpus `{corpus_version}` contains {corpus_total} entries; "
+                "this fixed-input `--no-deps` comparison covers "
+                f"{corpus_packages} comparable package entries."
+            ),
+            "",
+            (
+                "This is useful for vulnerability-feed parity and timing on declared "
+                "pins, but it is not a full dependency-resolution benchmark."
             ),
             "",
             "| Tool | Cold p50 | Warm p50 | Warm p95 | Peak RSS | Requests p50 | Recall |",

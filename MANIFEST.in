@@ -1,1 +1,2 @@
 include scripts/verify_release_version.py
+include scripts/verify_release_channels.py

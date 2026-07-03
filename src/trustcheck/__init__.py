@@ -9,6 +9,13 @@ from .advisories import (
 )
 from .cache import CacheIntegrityError, ContentAddressedCache
 from .contract import JSON_SCHEMA_ID, JSON_SCHEMA_VERSION, get_json_schema
+from .doctor import (
+    DoctorCheck,
+    DoctorReport,
+    collect_doctor_report,
+    render_doctor_json,
+    render_doctor_text,
+)
 from .exports import (
     INDUSTRY_OUTPUT_FORMATS,
     OUTPUT_FORMATS,
@@ -27,8 +34,8 @@ from .indexes import (
 from .lockfiles import LockedPackage, LockfileResolution, load_lockfile
 from .malicious import (
     DEFAULT_TRUSTED_PROJECTS,
-    RULE_CALIBRATIONS,
-    HeuristicRuleCalibration,
+    RULE_METADATA,
+    HeuristicRuleMetadata,
     analyze_python_source,
     heuristic_score,
     inspect_native_binary,
@@ -74,6 +81,7 @@ from .provenance import (
     SLSA_PROVENANCE_V1,
     SlsaValidationError,
     analyze_slsa_provenance,
+    evaluate_source_release_provenance,
     publisher_matches_organization_allowlist,
     validate_publisher_organization_allowlist,
 )
@@ -140,6 +148,8 @@ __all__ = [
     "DEFAULT_TRUSTED_PROJECTS",
     "DEFAULT_TRUST_MANIFEST_PATH",
     "DependencyConfusionFinding",
+    "DoctorCheck",
+    "DoctorReport",
     "DynamicAnalysisResult",
     "EpssClient",
     "ExportPackage",
@@ -149,7 +159,7 @@ __all__ = [
     "IndexFile",
     "IndexProject",
     "HeuristicFinding",
-    "HeuristicRuleCalibration",
+    "HeuristicRuleMetadata",
     "LockfileResolution",
     "MaliciousPackageAssessment",
     "ManifestIssue",
@@ -171,7 +181,7 @@ __all__ = [
     "RemediationSummary",
     "RemediationUpgrade",
     "RemediationValidation",
-    "RULE_CALIBRATIONS",
+    "RULE_METADATA",
     "Resolution",
     "ResolutionError",
     "RendererPlugin",
@@ -191,8 +201,10 @@ __all__ = [
     "analyze_slsa_provenance",
     "apply_prepared_remediation",
     "build_manifest",
+    "collect_doctor_report",
     "create_pull_request",
     "discover_installed_distributions",
+    "evaluate_source_release_provenance",
     "get_json_schema",
     "heuristic_score",
     "inspect_package",
@@ -206,6 +218,8 @@ __all__ = [
     "prepare_remediation",
     "publisher_matches_organization_allowlist",
     "render_export",
+    "render_doctor_json",
+    "render_doctor_text",
     "render_manifest_verification_text",
     "validate_publisher_organization_allowlist",
     "verify_manifest",

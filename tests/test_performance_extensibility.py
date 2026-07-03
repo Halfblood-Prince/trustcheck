@@ -393,6 +393,7 @@ class BenchmarkPublicationTests(unittest.TestCase):
             },
             "corpus": {
                 "version": "2026.06",
+                "package_count": 133,
                 "benchmark_package_count": 123,
             },
             "truth_corpus": {
@@ -452,6 +453,12 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertLess(updated.index("## Latest benchmark"), updated.index("## Installation"))
         self.assertIn(
+            "Corpus `2026.06` contains 133 entries; this fixed-input `--no-deps` "
+            "comparison covers 123 comparable package entries.",
+            updated,
+        )
+        self.assertIn("not a full dependency-resolution benchmark", updated)
+        self.assertIn(
             "| trustcheck scan --fast | 2.00 s | 1.23 s | 2.35 s | "
             "100.0 MiB | 12 | 1 |",
             updated,
@@ -468,17 +475,21 @@ class BenchmarkPublicationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "five warm trustcheck samples"):
             namespace["_validate_publishable"](weak)
 
-    def test_benchmark_workflow_is_manual_and_presents_results(self) -> None:
+    def test_benchmark_workflow_runs_on_demand_weekly_and_after_release(self) -> None:
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github" / "workflows" / "benchmarks.yml").read_text(
             encoding="utf-8"
         )
 
         self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("schedule:", workflow)
+        self.assertIn('cron: "23 4 * * 1"', workflow)
+        self.assertIn("workflow_run:", workflow)
+        self.assertIn('workflows: ["Release"]', workflow)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
         self.assertIn("contents: read", workflow)
         self.assertNotIn("push:", workflow)
         self.assertNotIn("pull_request:", workflow)
-        self.assertNotIn("schedule:", workflow)
         self.assertNotIn("contents: write", workflow)
         self.assertNotIn("pull-requests: write", workflow)
         self.assertIn("group: benchmark-results-${{ github.ref }}", workflow)

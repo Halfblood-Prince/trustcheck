@@ -83,8 +83,9 @@ Its default Docker image is digest-pinned, and mutable image tags are rejected.
 
 ## Scoring
 
-Findings have their own severity, calibrated confidence, rule version,
-estimated false-positive rate, and score. Confidence-weighted scores are
+Findings have their own severity, estimated confidence, rule version, estimated
+false-positive rate, and score. These values are rule metadata and estimates,
+not statistically validated measurements. Confidence-weighted scores are
 combined with diminishing weight and capped at 100:
 
 | Score | Level |
@@ -105,6 +106,15 @@ Custom policy files can tune `malicious_package_thresholds` for aggregate
 example, setting `"malicious_rule_thresholds": {"native_signature_absent": 100}`
 keeps unsigned native binaries in the report while preventing that weak signal
 from contributing to the aggregate score.
+
+## Evaluation status
+
+Trustcheck does not yet publish the evaluation corpus needed to call these
+rates measured. The next benchmark milestone is a versioned malicious-package
+evaluation corpus containing known malicious PyPI releases, representative
+benign packages including packages with native code, per-rule precision, recall,
+false-positive rate, and confidence intervals, plus a published benchmark
+workflow that regenerates those metrics.
 
 ## Interpretation
 

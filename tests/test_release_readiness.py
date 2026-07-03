@@ -106,6 +106,9 @@ class ReleaseReadinessTests(unittest.TestCase):
             f"Use `@{current_major}` for compatible updates",
             documentation,
         )
+        self.assertIn(f"rev: {current_major}", documentation)
+        self.assertIn("@<full-release-commit-sha>", documentation)
+        self.assertIn("full commit SHA as the only immutable Action reference", documentation)
         if current_major != "v1":
             self.assertNotIn("Halfblood-Prince/trustcheck@v1", documentation)
 
@@ -156,3 +159,15 @@ class ReleaseReadinessTests(unittest.TestCase):
             "pdm.lock",
         ):
             self.assertIn(filename, documentation)
+
+    def test_post_release_channel_parity_workflow_is_configured(self) -> None:
+        workflow = (
+            ROOT / ".github" / "workflows" / "post-release-parity.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("workflow_run:", workflow)
+        self.assertIn('workflows: ["Release"]', workflow)
+        self.assertIn("scripts/verify_release_channels.py", workflow)
+        self.assertIn("SHA256SUMS.txt", workflow)
+        for channel in ("pypi", "github", "snap", "docker", "homebrew", "winget"):
+            self.assertIn(f"--required-channel {channel}", workflow)

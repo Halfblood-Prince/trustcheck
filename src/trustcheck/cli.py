@@ -35,6 +35,7 @@ from .advisories import (
     VulnerabilityIntelligenceClient,
 )
 from .cli_commands import diff as diff_command
+from .cli_commands import doctor as doctor_command
 from .cli_commands import environment as environment_command
 from .cli_commands import impact as impact_command
 from .cli_commands import inspect as inspect_command
@@ -71,6 +72,12 @@ from .cli_render import (
 )
 from .cli_render import (
     _render_cve_report as _render_cve_report,
+)
+from .cli_render import (
+    _render_decision_report as _render_decision_report,
+)
+from .cli_render import (
+    _render_decision_scan as _render_decision_scan,
 )
 from .cli_render import (
     _render_scan_json as _render_scan_json,
@@ -190,6 +197,7 @@ from .models import RemediationSummary, TrustReport
 from .plugins import PluginError, PluginManager, RepositoryClient
 from .policy import BUILTIN_POLICIES, PolicySettings, evaluate_policy
 from .policy import resolve_policy as resolve_policy
+from .provenance import evaluate_source_release_provenance
 from .pypi import IndexBackedPackageClient, PypiClient, PypiClientError
 from .remediation import (
     CommandValidationResult,
@@ -282,9 +290,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Repository URL you expect the package to come from.",
     )
     inspect_parser.add_argument(
+        "--source-release-provenance",
+        action="store_true",
+        help=(
+            "Require declared repository, release tag, PyPI artifact provenance, "
+            "and attestations to agree on one source commit."
+        ),
+    )
+    inspect_parser.add_argument(
+        "--release-tag",
+        help="Expected source release tag for --source-release-provenance.",
+    )
+    inspect_parser.add_argument(
         "--format",
         default="text",
         help="Output format.",
+    )
+    inspect_parser.add_argument(
+        "--summary",
+        "--decision",
+        dest="decision",
+        action="store_true",
+        help=(
+            "Print only pass/fail, blocking reason, affected package, "
+            "recommended action, and evidence links."
+        ),
     )
     inspect_parser.add_argument(
         "--output-file",
@@ -461,6 +491,18 @@ def build_parser() -> argparse.ArgumentParser:
             "distributions, or every release artifact."
         ),
     )
+    scan_parser.add_argument(
+        "--source-release-provenance",
+        action="store_true",
+        help=(
+            "Require declared repository, release tag, PyPI artifact provenance, "
+            "and attestations to agree on one source commit."
+        ),
+    )
+    scan_parser.add_argument(
+        "--release-tag",
+        help="Expected source release tag for --source-release-provenance.",
+    )
     _add_dynamic_analysis_argument(scan_parser)
     remediation_mode = scan_parser.add_mutually_exclusive_group()
     remediation_mode.add_argument(
@@ -527,6 +569,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--format",
         default="text",
         help="Output format.",
+    )
+    scan_parser.add_argument(
+        "--summary",
+        "--decision",
+        dest="decision",
+        action="store_true",
+        help=(
+            "Print only pass/fail, blocking reason, affected package, "
+            "recommended action, and evidence links."
+        ),
     )
     scan_parser.add_argument(
         "--output-file",
@@ -939,6 +991,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output format.",
     )
     environment_parser.add_argument(
+        "--summary",
+        "--decision",
+        dest="decision",
+        action="store_true",
+        help=(
+            "Print only pass/fail, blocking reason, affected package, "
+            "recommended action, and evidence links."
+        ),
+    )
+    environment_parser.add_argument(
         "--output-file",
         help="Write the rendered report to this file instead of standard output.",
     )
@@ -1046,6 +1108,47 @@ def build_parser() -> argparse.ArgumentParser:
     _add_malicious_arguments(environment_parser)
     _add_dynamic_analysis_argument(environment_parser)
     _add_runtime_arguments(environment_parser, resumable=True)
+
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Check local trustcheck prerequisites and configuration.",
+    )
+    doctor_parser.add_argument(
+        "--config-file",
+        help="Path to a JSON, TOML, or pyproject.toml configuration file.",
+    )
+    doctor_parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format.",
+    )
+    doctor_parser.add_argument(
+        "--output-file",
+        help="Write the doctor report to this file instead of standard output.",
+    )
+    doctor_parser.add_argument(
+        "--cache-dir",
+        help="Persistent trustcheck cache directory to test for write access.",
+    )
+    doctor_parser.add_argument(
+        "--sandbox",
+        choices=SANDBOX_MODES,
+        default="auto",
+        help="Resolver isolation mode to validate.",
+    )
+    doctor_parser.add_argument(
+        "--sandbox-image",
+        default=None,
+        help="Digest-pinned OCI image used by the container resolver sandbox.",
+    )
+    doctor_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit with a policy failure when any required check fails.",
+    )
+    _add_index_arguments(doctor_parser)
+    _add_runtime_arguments(doctor_parser)
     return parser
 
 
@@ -1415,6 +1518,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return manifest_command.run(args, context)
         if args.command == "environment":
             return environment_command.run(args, context)
+        if args.command == "doctor":
+            return doctor_command.run(args, context)
         parser.error("unknown command")
         return EXIT_USAGE
     except PypiClientError as exc:
@@ -1445,6 +1550,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             EXIT_DATA_ERROR,
             debug=args.debug,
         )
+
+
+def _apply_source_release_provenance(
+    report: TrustReport,
+    args: argparse.Namespace,
+) -> TrustReport:
+    if getattr(args, "source_release_provenance", False):
+        evaluate_source_release_provenance(
+            report,
+            expected_tag=getattr(args, "release_tag", None),
+        )
+    return report
 
 
 def _run_scan_targets(
@@ -1514,6 +1631,7 @@ def _run_scan_targets(
             continue
         resumed = state.report(keys[index]) if state is not None else None
         if resumed is not None:
+            _apply_source_release_provenance(resumed, args)
             reports_by_index[index] = resumed
             evaluation = evaluate_policy(
                 resumed,
@@ -1568,6 +1686,7 @@ def _run_scan_targets(
                 artifact_executor=artifact_executor,
                 target_environment=_target_environment_from_args(args),
             )
+            _apply_source_release_provenance(report, args)
             evaluation = evaluate_policy(
                 report,
                 policy,
@@ -1691,7 +1810,13 @@ def _run_scan_targets(
                 overall_exit_code,
                 EXIT_POLICY_FAILURE,
             )
-    if args.format == "json":
+    if getattr(args, "decision", False):
+        rendered = _render_decision_scan(
+            source_label,
+            reports,
+            failures=failures,
+        )
+    elif args.format == "json":
         payload = _render_scan_json(
             source_label,
             reports,
@@ -1817,6 +1942,7 @@ def _scan_project_vulnerabilities(
         artifact_scope=args.artifact_scope,
         max_workers=args.max_workers,
     )
+    _apply_source_release_provenance(report, args)
     evaluate_policy(report, policy, plugin_manager=plugin_manager)
     return report
 

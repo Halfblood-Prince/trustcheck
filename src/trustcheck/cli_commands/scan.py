@@ -36,6 +36,8 @@ def run(args: argparse.Namespace, context: CommandContext) -> int:
         parser.error("scan requires PROJECT or -f/--file")
     if not args.filename and (args.plan_fixes or args.fix):
         parser.error("remediation requires -f/--file")
+    if args.source_release_provenance and args.scan_profile == "fast":
+        args.scan_profile = "standard"
     args.max_workers = cli._resolve_max_workers(args, config_payload)
     progress_callback = None
     dependency_progress_callback = None
@@ -62,7 +64,9 @@ def run(args: argparse.Namespace, context: CommandContext) -> int:
             "allow_metadata_only": True,
             "allowed_publisher_organizations": [],
             "vulnerability_mode": args.fail_on_vulnerability,
-            "fail_on_severity": "none",
+            "fail_on_severity": (
+                "high" if args.source_release_provenance else "none"
+            ),
         },
     )
     resolver = cli._resolver_from_args(args, plugin_manager=plugin_manager)
@@ -78,12 +82,14 @@ def run(args: argparse.Namespace, context: CommandContext) -> int:
             plugin_manager=plugin_manager,
         )
         evaluation = cli.evaluate_policy(
-            report,
+            cli._apply_source_release_provenance(report, args),
             policy,
             plugin_manager=plugin_manager,
         )
         vulnerability_only = args.scan_profile == "fast" and not args.dynamic_analysis
-        if args.format == "json" and vulnerability_only:
+        if args.decision:
+            rendered = cli._render_decision_report(report)
+        elif args.format == "json" and vulnerability_only:
             rendered = json.dumps(
                 cli._render_cve_json(report),
                 indent=2,

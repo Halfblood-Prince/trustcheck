@@ -34,8 +34,8 @@ SARIF includes results for:
 - artifact verification diagnostics
 - artifacts without fully verified provenance
 - package scan failures
-- malicious-package heuristic findings with confidence, score, evidence, and
-  artifact-internal source locations
+- malicious-package heuristic findings with estimated confidence, score,
+  evidence, rule metadata, and artifact-internal source locations
 
 Every result has a SHA-256 `trustcheck/v1` partial fingerprint derived from
 the finding category, package purl, stable finding identity, manifest name,

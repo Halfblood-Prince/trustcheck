@@ -42,6 +42,7 @@ from trustcheck.cli import (
     _read_requirements_file,
     _render_cve_json,
     _render_cve_report,
+    _render_decision_report,
     _render_scan_json,
     _render_scan_text,
     _render_text_report,
@@ -88,7 +89,7 @@ from trustcheck.models import (
     VulnerabilitySuppression,
 )
 from trustcheck.plugins import PluginManager
-from trustcheck.policy import PolicySettings
+from trustcheck.policy import BUILTIN_POLICIES, PolicySettings
 from trustcheck.pypi import IndexBackedPackageClient, PypiClient, PypiClientError
 from trustcheck.resolver import (
     ArtifactReference,
@@ -290,6 +291,20 @@ class CliBehaviorTests(unittest.TestCase):
             ["environment", "--path", "one", "--path", "two"]
         )
         self.assertEqual(environment_args.path, ["one", "two"])
+        doctor_args = parser.parse_args(
+            [
+                "doctor",
+                "--format",
+                "json",
+                "--cache-dir",
+                ".cache/trustcheck",
+                "--sandbox",
+                "strict",
+            ]
+        )
+        self.assertEqual(doctor_args.command, "doctor")
+        self.assertEqual(doctor_args.format, "json")
+        self.assertEqual(doctor_args.sandbox, "strict")
         export_args = parser.parse_args(
             [
                 "inspect",
@@ -302,6 +317,20 @@ class CliBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(export_args.format, "sarif")
         self.assertEqual(export_args.output_file, "report.sarif")
+
+        decision_args = parser.parse_args(
+            [
+                "inspect",
+                "demo",
+                "--summary",
+                "--source-release-provenance",
+                "--release-tag",
+                "v1.0.0",
+            ]
+        )
+        self.assertTrue(decision_args.decision)
+        self.assertTrue(decision_args.source_release_provenance)
+        self.assertEqual(decision_args.release_tag, "v1.0.0")
 
     def test_index_and_target_helpers_cover_private_source_variants(self) -> None:
         parser = build_parser()
@@ -2772,6 +2801,26 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertNotIn("files:", stdout.getvalue())
         self.assertNotIn("sha256:", stdout.getvalue())
 
+    def test_decision_report_prints_only_operator_fields(self) -> None:
+        report = make_report()
+        report.policy.passed = False
+        report.policy.violations = [
+            PolicyViolation(
+                code="verified_provenance_required",
+                severity="high",
+                message="Policy requires verified provenance.",
+            )
+        ]
+
+        rendered = _render_decision_report(report)
+
+        self.assertIn("decision: fail", rendered)
+        self.assertIn("affected package: gridoptim 2.2.0", rendered)
+        self.assertIn("blocking reason: verified_provenance_required", rendered)
+        self.assertIn("recommended action:", rendered)
+        self.assertIn("evidence links:", rendered)
+        self.assertNotIn("diagnostics:", rendered)
+
     def test_cli_strict_mode_fails_on_missing_verification(self) -> None:
         report = make_report()
         report.files[0].verified = False
@@ -2835,6 +2884,28 @@ class CliBehaviorTests(unittest.TestCase):
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertIn("policy: strict (pass)", stdout.getvalue())
+
+    def test_builtin_policy_bundles_are_available_from_cli(self) -> None:
+        parser = build_parser()
+        for name in (
+            "startup",
+            "regulated",
+            "enterprise-private-index",
+            "release-gate",
+            "open-source-maintainer",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, BUILTIN_POLICIES)
+                args = parser.parse_args(["inspect", "gridoptim", "--policy", name])
+                self.assertEqual(args.policy, name)
+
+        self.assertEqual(
+            BUILTIN_POLICIES["release-gate"].require_verified_provenance,
+            "all",
+        )
+        self.assertTrue(
+            BUILTIN_POLICIES["enterprise-private-index"].require_expected_repository_match
+        )
 
     def test_cli_enforces_trusted_publisher_organization(self) -> None:
         stdout = io.StringIO()

@@ -622,6 +622,64 @@ def _render_scan_text(
     return "\n\n".join(section for section in sections if section != "")
 
 
+def _render_decision_report(report: TrustReport) -> str:
+    lines = [
+        f"decision: {'pass' if report.policy.passed else 'fail'}",
+        f"affected package: {report.project} {report.version}",
+        f"blocking reason: {_blocking_reason(report)}",
+        f"recommended action: {_recommended_action(report)}",
+        "evidence links:",
+    ]
+    links = _evidence_links(report)
+    lines.extend(f"  - {link}" for link in links)
+    if not links:
+        lines.append("  - none")
+    return "\n".join(lines)
+
+
+def _render_decision_scan(
+    filename: str,
+    reports: list[TrustReport],
+    *,
+    failures: list[dict[str, str]],
+) -> str:
+    failing_reports = [report for report in reports if not report.policy.passed]
+    selected_reports = failing_reports or reports[:1]
+    decision = "fail" if failures or failing_reports else "pass"
+    sections = [f"decision: {decision}"]
+    if failures:
+        for failure in failures:
+            sections.append(
+                "\n".join(
+                    [
+                        f"affected package: {failure['requirement']}",
+                        f"blocking reason: {failure['message']}",
+                        (
+                            "recommended action: Fix the target or rerun after "
+                            "the upstream/index error is resolved."
+                        ),
+                        "evidence links:",
+                        f"  - {filename}",
+                    ]
+                )
+            )
+    for report in selected_reports:
+        sections.append(_render_decision_report(report))
+    if not failures and not selected_reports:
+        sections.append(
+            "\n".join(
+                [
+                    "affected package: none",
+                    "blocking reason: no packages were inspected",
+                    "recommended action: Provide a package or dependency file target.",
+                    "evidence links:",
+                    f"  - {filename}",
+                ]
+            )
+        )
+    return "\n\n".join(sections)
+
+
 def _render_scan_json(
     filename: str,
     reports: list[TrustReport],
@@ -697,4 +755,53 @@ def _recommendation_reasons(report: TrustReport) -> list[str]:
     ):
         reasons.append("The expected repository matched available package and publisher evidence.")
     return reasons[:4]
+
+
+def _blocking_reason(report: TrustReport) -> str:
+    if report.policy.violations:
+        violation = report.policy.violations[0]
+        return f"{violation.code}: {violation.message}"
+    high_flags = [flag for flag in report.risk_flags if flag.severity == "high"]
+    if high_flags:
+        flag = high_flags[0]
+        return f"{flag.code}: {flag.message}"
+    if report.vulnerabilities:
+        vulnerability = report.vulnerabilities[0]
+        return f"{vulnerability.id}: {vulnerability.summary}"
+    if report.recommendation in {"high-risk", "review-required", "metadata-only"}:
+        return f"recommendation={report.recommendation}: {_evidence_summary(report)}"
+    return "none"
+
+
+def _recommended_action(report: TrustReport) -> str:
+    reason = _blocking_reason(report)
+    if reason == "none":
+        return "Proceed with the selected package version."
+    if "vulnerab" in reason or report.vulnerabilities:
+        return "Upgrade to a fixed version or apply a reviewed expiring suppression."
+    if "source_release_" in reason or "expected_repository" in reason:
+        return "Verify the publisher source and rebuild from the intended immutable commit."
+    if "provenance" in reason or "attestation" in reason:
+        return "Require verified provenance or approve a documented release exception."
+    return "Block promotion until the cited evidence is reviewed."
+
+
+def _evidence_links(report: TrustReport) -> list[str]:
+    links: list[str] = []
+    for candidate in (
+        report.package_url,
+        report.expected_repository,
+        *report.declared_repository_urls,
+        *report.repository_urls,
+        *(vulnerability.link for vulnerability in report.vulnerabilities),
+        *(file.url for file in report.files),
+        *(
+            provenance.invocation_id
+            for file in report.files
+            for provenance in file.slsa_provenance
+        ),
+    ):
+        if candidate and candidate not in links:
+            links.append(candidate)
+    return links[:8]
 

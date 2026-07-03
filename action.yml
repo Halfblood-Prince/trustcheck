@@ -11,7 +11,7 @@ inputs:
     description: Package name or path to requirements.txt, pyproject.toml, pylock.toml, Pipfile.lock, uv.lock, poetry.lock, or pdm.lock.
     required: true
   policy:
-    description: Built-in policy (default or strict) or path to a custom JSON policy file.
+    description: Built-in policy bundle or path to a custom JSON policy file.
     required: false
     default: default
   expected-repo:

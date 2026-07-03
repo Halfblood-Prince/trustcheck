@@ -27,9 +27,21 @@ The action always asks the CLI for JSON, writes the result to
 with the original CLI exit code. A policy failure therefore still uploads its
 report before failing the job.
 
-Stable releases publish an immutable action ref such as `v2.1.1` and update
-the compatible major ref `v2`. Use `@v2` for compatible updates or pin the full
-release tag when immutable workflow dependencies are required.
+Stable releases publish a full version tag such as `v2.1.1` and update the
+compatible major ref `v2`. Use `@v2` for compatible updates. For immutable
+release gates, pin `Halfblood-Prince/trustcheck` and supporting actions to full
+commit SHAs; GitHub treats a full commit SHA as the only immutable Action
+reference.
+
+```yaml
+steps:
+  - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+  - uses: Halfblood-Prince/trustcheck@<full-release-commit-sha>
+    with:
+      target: requirements.txt
+      policy: strict
+      sandbox: auto
+```
 
 ## Trust manifest gate
 

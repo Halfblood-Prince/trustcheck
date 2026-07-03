@@ -8,7 +8,7 @@ The project follows Semantic Versioning for the supported public API described i
 
 ### Added
 
-- Added calibrated malicious-package heuristic metadata, policy-configurable
+- Added malicious-package heuristic rule metadata, policy-configurable
   aggregate and per-rule thresholds, and advanced the schema to `1.11.0`.
 - Added opt-in `--dynamic-analysis` execution in a disposable, no-network,
   non-root Docker sandbox with CPU, memory, process, and wall-clock limits.
@@ -20,6 +20,9 @@ The project follows Semantic Versioning for the supported public API described i
   changed direct and transitive packages, with text, JSON, Markdown, SARIF,
   Git ref discovery, GitHub PR commenting, and optional trust-manifest
   enforcement.
+- Added `trustcheck doctor`, concise `--summary`/`--decision` report output,
+  source/release provenance parity checks, starter policy bundles, and a
+  post-release channel parity verifier workflow.
 - Added a pinned GitHub Dependency Review pull-request gate for vulnerable
   dependency.
 - Strengthened `scan --fix` to target policy-failing packages, validate the
