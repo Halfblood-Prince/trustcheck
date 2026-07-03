@@ -33,13 +33,13 @@ jobs:
 
       - name: Search public GitHub code
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.TRUSTCHECK_GITHUB_SEARCH_TOKEN || github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           python scripts/github_plagiarism_scan.py \
             --source src/trustcheck \
             --output reports/github-code-copy-findings.md \
-            --max-fingerprints 40 \
+            --max-fingerprints 20 \
             --per-page 10
 
       - name: Open or update findings pull request or issue

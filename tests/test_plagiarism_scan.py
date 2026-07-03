@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from urllib import error
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "github_plagiarism_scan.py"
@@ -126,6 +128,49 @@ class GithubPlagiarismScanTests(unittest.TestCase):
         self.assertIn("GITHUB_TOKEN was not set", warnings[0])
         self.assertIn("Warnings: 1", report)
         self.assertIn("No external matches were found.", report)
+
+    def test_forbidden_search_stops_after_one_actionable_warning(self) -> None:
+        fingerprints = [
+            github_plagiarism_scan.CodeFingerprint(
+                path=f"src/trustcheck/demo_{index}.py",
+                line=index,
+                query=f"rendered = json.dumps(payload_{index}, sort_keys=True)",
+                context=f"rendered = json.dumps(payload_{index}, sort_keys=True)",
+                sha256=str(index) * 64,
+            )
+            for index in (1, 2)
+        ]
+        calls = 0
+
+        def opener(github_request):
+            nonlocal calls
+            calls += 1
+            raise error.HTTPError(
+                github_request.full_url,
+                403,
+                "Forbidden",
+                {"retry-after": "60"},
+                io.BytesIO(
+                    json.dumps(
+                        {"message": "Resource not accessible by integration"}
+                    ).encode("utf-8")
+                ),
+            )
+
+        matches, warnings = github_plagiarism_scan.search_github_code(
+            fingerprints,
+            token="token",
+            repository="owner/repo",
+            opener=opener,
+        )
+
+        self.assertEqual(matches, [])
+        self.assertEqual(calls, 1)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("HTTP 403", warnings[0])
+        self.assertIn("Resource not accessible by integration", warnings[0])
+        self.assertIn("Retry after 60 seconds", warnings[0])
+        self.assertIn("TRUSTCHECK_GITHUB_SEARCH_TOKEN", warnings[0])
 
 
 if __name__ == "__main__":

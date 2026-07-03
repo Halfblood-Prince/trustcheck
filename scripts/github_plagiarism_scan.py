@@ -119,10 +119,9 @@ def search_github_code(
             with opener(github_request) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
-            warnings.append(
-                f"GitHub search failed for {fingerprint.path}:{fingerprint.line} "
-                f"with HTTP {exc.code}."
-            )
+            warnings.append(_http_error_warning(exc, fingerprint))
+            if exc.code in {403, 429}:
+                break
             continue
         except (OSError, json.JSONDecodeError) as exc:
             warnings.append(
@@ -261,6 +260,44 @@ def _query_fragment(line: str, *, max_chars: int = 120) -> str:
         return fragment
     trimmed = fragment[:max_chars].rsplit(" ", 1)[0]
     return trimmed or fragment[:max_chars]
+
+
+def _http_error_warning(exc: error.HTTPError, fingerprint: CodeFingerprint) -> str:
+    message = (
+        f"GitHub search failed for {fingerprint.path}:{fingerprint.line} "
+        f"with HTTP {exc.code}"
+    )
+    detail = _github_error_detail(exc)
+    if detail:
+        message += f": {detail}"
+    retry_after = exc.headers.get("retry-after") if exc.headers is not None else None
+    if retry_after:
+        message += f" Retry after {retry_after} seconds."
+    if exc.code == 403:
+        message += (
+            " Public code search may require a personal access token; set "
+            "TRUSTCHECK_GITHUB_SEARCH_TOKEN for this workflow if the default "
+            "GITHUB_TOKEN is not allowed to search public code."
+        )
+    if exc.code == 429:
+        message += " GitHub rate limited the search; the scan stopped early."
+    return message + "."
+
+
+def _github_error_detail(exc: error.HTTPError) -> str:
+    try:
+        body = exc.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return body.strip()
+    if isinstance(payload, dict):
+        detail = payload.get("message")
+        if isinstance(detail, str):
+            return detail
+    return ""
 
 
 if __name__ == "__main__":

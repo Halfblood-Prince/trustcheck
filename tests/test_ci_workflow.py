@@ -339,8 +339,10 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
             "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
             workflow,
         )
+        self.assertIn("secrets.TRUSTCHECK_GITHUB_SEARCH_TOKEN || github.token", workflow)
         self.assertIn("python scripts/github_plagiarism_scan.py", workflow)
         self.assertIn("--output reports/github-code-copy-findings.md", workflow)
+        self.assertIn("--max-fingerprints 20", workflow)
         self.assertIn("automation/github-code-copy-findings", workflow)
         self.assertIn("secrets.TRUSTCHECK_PR_TOKEN || github.token", workflow)
         self.assertIn("git push --force-with-lease origin \"$BRANCH\"", workflow)
