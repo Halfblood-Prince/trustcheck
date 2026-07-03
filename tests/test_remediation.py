@@ -32,6 +32,7 @@ from trustcheck.remediation import (
     BlockedFix,
     CommandValidationResult,
     FilePatch,
+    PostFixResult,
     PreparedRemediation,
     PullRequestResult,
     RemediationError,
@@ -727,7 +728,34 @@ class RemediationModelTests(unittest.TestCase):
             blocked=[blocked],
             planned_edits=[edit],
             patches=[patch_item],
+            post_fix_result=PostFixResult(
+                command=("trustcheck", "scan", "-f", "requirements.txt"),
+                reproduced_resolution=True,
+                dependency_graph_sha256="a" * 64,
+                reports_sha256="b" * 64,
+                validation=RemediationValidation(policy_passed=True),
+                clean_install=CommandValidationResult(
+                    command="python -m pip install -r requirements.txt",
+                    argv=("python", "-m", "pip", "install", "-r", "requirements.txt"),
+                    returncode=0,
+                ),
+                pip_check=CommandValidationResult(
+                    command="python -m pip check",
+                    argv=("python", "-m", "pip", "check"),
+                    returncode=1,
+                    stderr="broken dependency",
+                ),
+                test_commands=(
+                    CommandValidationResult(
+                        command="pytest -q",
+                        argv=("pytest", "-q"),
+                        returncode=0,
+                    ),
+                ),
+            ),
+            validation=RemediationValidation(policy_passed=True),
             pull_request=pull_request,
+            patch_path="trustcheck-fix.patch",
             message="done",
             minimal_secure_upgrade_proof={"proven": True},
         )
@@ -759,6 +787,209 @@ class RemediationModelTests(unittest.TestCase):
         self.assertIn("warning: review the major upgrade", rendered)
         self.assertIn("cause: required by parent==1", rendered)
         self.assertIn("changelog: https://example.test/changelog", rendered)
+        self.assertIn("validation:", rendered)
+        self.assertIn("dependency resolution: passed", rendered)
+        self.assertIn("clean install: passed", rendered)
+        self.assertIn("pip check: failed", rendered)
+        self.assertIn("pytest -q: passed", rendered)
+        self.assertIn("policy checks: passed", rendered)
+        self.assertIn("patch written to: trustcheck-fix.patch", rendered)
+
+    def test_cli_validation_helpers_cover_failure_edges(self) -> None:
+        with patch(
+            "trustcheck.cli.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(
+                cmd=["python"],
+                timeout=0.01,
+                output=b"partial stdout",
+                stderr=None,
+            ),
+        ):
+            timed_out = cli_module._run_validation_subprocess(
+                "python slow.py",
+                ["python", "slow.py"],
+                cwd=Path.cwd(),
+                timeout=0.01,
+            )
+
+        self.assertEqual(timed_out.returncode, 124)
+        self.assertIn("timed out after", timed_out.stderr)
+        self.assertEqual(timed_out.stdout, "partial stdout")
+
+        with patch(
+            "trustcheck.cli.subprocess.run",
+            side_effect=OSError("missing executable"),
+        ):
+            failed_start = cli_module._run_validation_subprocess(
+                "missing",
+                ["missing"],
+                cwd=Path.cwd(),
+            )
+        self.assertEqual(failed_start.returncode, 127)
+        self.assertIn("missing executable", failed_start.stderr)
+        self.assertEqual(cli_module._captured_output(None), "")
+        self.assertEqual(cli_module._captured_output("x" * 5005, limit=8), "xxxxxxxx")
+
+        with self.assertRaisesRegex(RemediationError, "empty dependency graph"):
+            cli_module._clean_install_requirements(Resolution(distributions=[]))
+        with self.assertRaisesRegex(RemediationError, "editable dependency"):
+            cli_module._clean_install_requirement(
+                ResolvedDistribution(name="demo", version="1", editable=True)
+            )
+        with self.assertRaisesRegex(RemediationError, "without a source URL"):
+            cli_module._clean_install_requirement(
+                ResolvedDistribution(name="demo", version="1", vcs="git")
+            )
+        self.assertEqual(
+            cli_module._clean_install_requirement(
+                ResolvedDistribution(
+                    name="demo",
+                    version="1",
+                    source_url="https://example.test/demo.whl",
+                    is_direct=True,
+                )
+            ),
+            "demo @ https://example.test/demo.whl",
+        )
+
+        python = Path("venv/bin/python")
+        self.assertEqual(
+            cli_module._validation_command_argv("python -m pytest", python=python),
+            [str(python), "-m", "pytest"],
+        )
+        self.assertEqual(
+            cli_module._validation_command_argv("pip check", python=python),
+            [str(python), "-m", "pip", "check"],
+        )
+        with self.assertRaisesRegex(RemediationError, "cannot be empty"):
+            cli_module._validation_command_argv("", python=python)
+        with self.assertRaisesRegex(RemediationError, "invalid .* test command"):
+            cli_module._validation_command_argv('"unterminated', python=python)
+
+        failed = CommandValidationResult(
+            command="pytest -q",
+            argv=("pytest", "-q"),
+            returncode=2,
+            stderr="failed tests",
+        )
+        plan = RemediationPlan(
+            source="requirements.txt",
+            post_fix_result=PostFixResult(
+                command=("trustcheck", "scan"),
+                reproduced_resolution=True,
+                dependency_graph_sha256="a" * 64,
+                reports_sha256="b" * 64,
+                validation=RemediationValidation(),
+                clean_install=failed,
+            ),
+        )
+        self.assertIn(
+            "failed tests",
+            cli_module._fix_validation_failure_detail(plan),
+        )
+        plan.post_fix_result = None
+        plan.validation = RemediationValidation(errors=("policy failed",))
+        self.assertEqual(
+            cli_module._fix_validation_failure_detail(plan),
+            "policy failed",
+        )
+        plan.validation = RemediationValidation()
+        self.assertIn(
+            "post-fix validation",
+            cli_module._fix_validation_failure_detail(plan),
+        )
+        self.assertEqual(
+            cli_module._command_failure_message(
+                "validation command",
+                CommandValidationResult(
+                    command="pytest -q",
+                    argv=("pytest", "-q"),
+                    returncode=2,
+                ),
+            ),
+            "validation command failed: pytest -q exited with status 2",
+        )
+
+    def test_cli_worker_config_edges(self) -> None:
+        with self.assertRaisesRegex(ValueError, "performance"):
+            cli_module._resolve_max_workers(
+                SimpleNamespace(max_workers=None),
+                {"performance": "fast"},
+            )
+        with self.assertRaisesRegex(ValueError, "unknown performance"):
+            cli_module._resolve_max_workers(
+                SimpleNamespace(max_workers=None),
+                {"performance": {"threads": 2}},
+            )
+        with self.assertRaisesRegex(ValueError, "between 1 and 64"):
+            cli_module._normalize_worker_count(0)
+        with (
+            patch("trustcheck.cli.os.sched_getaffinity", side_effect=OSError, create=True),
+            patch("trustcheck.cli.os.cpu_count", return_value=None),
+        ):
+            self.assertEqual(cli_module._available_worker_count(), 1)
+
+    def test_remediation_patch_and_hash_validation_edges(self) -> None:
+        report = TrustReport(
+            project="demo",
+            version="1",
+            summary=None,
+            package_url="https://pypi.org/project/demo/1/",
+            policy=PolicyEvaluation(
+                passed=False,
+                violations=[
+                    PolicyViolation(code="", severity="high", message="blocked")
+                ],
+            ),
+        )
+        self.assertEqual(
+            remediation_module._remediation_target_reasons(
+                [],
+                policy_failed=True,
+                report=report,
+            ),
+            ("passes selected policy checks",),
+        )
+        with self.assertRaisesRegex(RemediationError, "no remediation patch"):
+            write_remediation_patch(RemediationPlan(source="requirements.txt"), "fix.patch")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            requested = root / "trustcheck-fix.patch"
+            requested.write_bytes(b"\xff")
+            requested.with_name("trustcheck-fix-1.patch").write_bytes(b"\xff")
+            selected = remediation_module._available_patch_path(requested, "diff\n")
+            self.assertEqual(selected.name, "trustcheck-fix-2.patch")
+
+            pylock = root / "pylock.toml"
+            pylock.write_text("bad", encoding="utf-8")
+            with patch(
+                "trustcheck.remediation.load_lockfile",
+                side_effect=ValueError("bad lock"),
+            ):
+                validation = remediation_module._validate_lockfile_hashes(
+                    pylock,
+                    display_path="pylock.toml",
+                    source_root=root,
+                )
+            self.assertFalse(validation.valid)
+            self.assertEqual(validation.errors, ("bad lock",))
+
+        lock_validation = remediation_module._lockfile_hash_validation_from_artifacts(
+            "pylock.toml",
+            "pylock.toml",
+            [
+                ArtifactReference(filename="missing.whl", hashes=()),
+                ArtifactReference(
+                    filename="bad.whl",
+                    hashes=(("", "not-a-digest"),),
+                ),
+            ],
+            package_count=2,
+        )
+        self.assertFalse(lock_validation.valid)
+        self.assertIn("empty hash algorithm", lock_validation.errors[1])
+        self.assertIn("invalid hash digest", lock_validation.errors[2])
 
 
 class RemediationWriterTests(unittest.TestCase):

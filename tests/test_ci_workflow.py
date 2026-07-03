@@ -315,6 +315,34 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("actions/workflows/fuzz.yml/badge.svg?branch=main", readme)
         self.assertEqual(readme.count("actions/workflows/fuzz.yml"), 2)
 
+    def test_daily_github_code_copy_scan_opens_findings_pull_request(self) -> None:
+        workflow = (ROOT / ".github/workflows/plagiarism-scan.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("name: GitHub Code Copy Scan", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("schedule:", workflow)
+        self.assertIn('cron: "37 3 * * *"', workflow)
+        self.assertIn("contents: write", workflow)
+        self.assertIn("pull-requests: write", workflow)
+        self.assertIn("group: github-code-copy-scan", workflow)
+        self.assertIn(
+            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+            workflow,
+        )
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn(
+            "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+            workflow,
+        )
+        self.assertIn("python scripts/github_plagiarism_scan.py", workflow)
+        self.assertIn("--output reports/github-code-copy-findings.md", workflow)
+        self.assertIn("automation/github-code-copy-findings", workflow)
+        self.assertIn("git push --force-with-lease origin \"$BRANCH\"", workflow)
+        self.assertIn("gh pr create", workflow)
+        self.assertIn("gh pr edit", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

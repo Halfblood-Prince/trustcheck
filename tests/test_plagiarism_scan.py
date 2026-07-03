@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).parents[1]
+SCRIPT = ROOT / "scripts" / "github_plagiarism_scan.py"
+SPEC = importlib.util.spec_from_file_location("github_plagiarism_scan", SCRIPT)
+assert SPEC is not None
+github_plagiarism_scan = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+sys.modules[SPEC.name] = github_plagiarism_scan
+SPEC.loader.exec_module(github_plagiarism_scan)
+
+
+class FakeResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        del exc_type, exc, traceback
+
+    def read(self) -> bytes:
+        return json.dumps(self.payload).encode("utf-8")
+
+
+class GithubPlagiarismScanTests(unittest.TestCase):
+    def test_collect_fingerprints_prefers_distinctive_source_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            package = root / "src" / "trustcheck"
+            package.mkdir(parents=True)
+            (package / "demo.py").write_text(
+                "from __future__ import annotations\n"
+                "# comments are not useful fingerprints\n"
+                "def helper():\n"
+                "    return 'short'\n"
+                "    rendered = json.dumps(payload, indent=2, sort_keys=True)\n"
+                "    stable = rendered.replace('secret-token', '<redacted>')\n",
+                encoding="utf-8",
+            )
+
+            fingerprints = github_plagiarism_scan.collect_fingerprints(
+                root,
+                source="src/trustcheck",
+                max_fingerprints=2,
+            )
+
+        self.assertEqual(len(fingerprints), 2)
+        self.assertTrue(all(item.path == "src/trustcheck/demo.py" for item in fingerprints))
+        self.assertTrue(all(item.sha256 for item in fingerprints))
+        self.assertFalse(any(item.query.startswith("from ") for item in fingerprints))
+
+    def test_search_filters_own_repository_and_report_is_stable(self) -> None:
+        fingerprint = github_plagiarism_scan.CodeFingerprint(
+            path="src/trustcheck/demo.py",
+            line=5,
+            query="rendered = json.dumps(payload, indent=2, sort_keys=True)",
+            context="rendered = json.dumps(payload, indent=2, sort_keys=True)",
+            sha256="a" * 64,
+        )
+        requested_urls: list[str] = []
+
+        def opener(github_request):
+            requested_urls.append(github_request.full_url)
+            return FakeResponse(
+                {
+                    "items": [
+                        {
+                            "path": "src/trustcheck/demo.py",
+                            "html_url": "https://github.com/example/trustcheck/blob/main/src/trustcheck/demo.py",
+                            "repository": {"full_name": "owner/repo"},
+                        },
+                        {
+                            "path": "copied/demo.py",
+                            "html_url": "https://github.com/other/copy/blob/main/copied/demo.py",
+                            "repository": {"full_name": "other/copy"},
+                        },
+                    ]
+                }
+            )
+
+        matches, warnings = github_plagiarism_scan.search_github_code(
+            [fingerprint],
+            token="token",
+            repository="owner/repo",
+            opener=opener,
+        )
+        report = github_plagiarism_scan.render_report(
+            repository="owner/repo",
+            fingerprints=[fingerprint],
+            matches=matches,
+            warnings=warnings,
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].repository, "other/copy")
+        self.assertIn("-repo%3Aowner%2Frepo", requested_urls[0])
+        self.assertIn("External matches: 1", report)
+        self.assertIn("other/copy", report)
+        self.assertIn("fingerprint `aaaaaaaaaaaa`", report)
+        self.assertNotIn("Generated", report)
+
+    def test_missing_token_writes_warning_report(self) -> None:
+        matches, warnings = github_plagiarism_scan.search_github_code(
+            [],
+            token=None,
+            repository="owner/repo",
+        )
+        report = github_plagiarism_scan.render_report(
+            repository="owner/repo",
+            fingerprints=[],
+            matches=matches,
+            warnings=warnings,
+        )
+
+        self.assertEqual(matches, [])
+        self.assertIn("GITHUB_TOKEN was not set", warnings[0])
+        self.assertIn("Warnings: 1", report)
+        self.assertIn("No external matches were found.", report)
+
+
+if __name__ == "__main__":
+    unittest.main()

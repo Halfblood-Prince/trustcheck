@@ -1,0 +1,74 @@
+name: GitHub Code Copy Scan
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 3 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: github-code-copy-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    name: Search GitHub for copied code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Search public GitHub code
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/github_plagiarism_scan.py \
+            --source src/trustcheck \
+            --output reports/github-code-copy-findings.md \
+            --max-fingerprints 40 \
+            --per-page 10
+
+      - name: Open or update findings pull request
+        env:
+          BRANCH: automation/github-code-copy-findings
+          GH_TOKEN: ${{ github.token }}
+          REPORT_PATH: reports/github-code-copy-findings.md
+        run: |
+          if [ -z "$(git status --porcelain -- "$REPORT_PATH")" ]; then
+            echo "No code-copy finding changes to publish."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add "$REPORT_PATH"
+          git commit -m "Update GitHub code copy scan findings"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force-with-lease origin "$BRANCH"
+
+          existing_pr="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing_pr" ]; then
+            gh pr edit "$existing_pr" \
+              --title "Update GitHub code copy scan findings" \
+              --body-file "$REPORT_PATH"
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "Update GitHub code copy scan findings" \
+              --body-file "$REPORT_PATH"
+          fi
