@@ -339,9 +339,14 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("python scripts/github_plagiarism_scan.py", workflow)
         self.assertIn("--output reports/github-code-copy-findings.md", workflow)
         self.assertIn("automation/github-code-copy-findings", workflow)
+        self.assertIn("secrets.TRUSTCHECK_PR_TOKEN || github.token", workflow)
         self.assertIn("git push --force-with-lease origin \"$BRANCH\"", workflow)
         self.assertIn("gh pr create", workflow)
         self.assertIn("gh pr edit", workflow)
+        self.assertIn("not permitted to create", workflow)
+        self.assertIn("pull/new/${BRANCH}", workflow)
+        self.assertIn("GITHUB_STEP_SUMMARY", workflow)
+        self.assertIn("TRUSTCHECK_PR_TOKEN secret", workflow)
 
 
 if __name__ == "__main__":

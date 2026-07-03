@@ -44,7 +44,7 @@ jobs:
       - name: Open or update findings pull request
         env:
           BRANCH: automation/github-code-copy-findings
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.TRUSTCHECK_PR_TOKEN || github.token }}
           REPORT_PATH: reports/github-code-copy-findings.md
         run: |
           if [ -z "$(git status --porcelain -- "$REPORT_PATH")" ]; then
@@ -66,9 +66,29 @@ jobs:
               --title "Update GitHub code copy scan findings" \
               --body-file "$REPORT_PATH"
           else
-            gh pr create \
+            pr_url="https://github.com/${GITHUB_REPOSITORY}/pull/new/${BRANCH}"
+            create_error="$(mktemp)"
+            if gh pr create \
               --base main \
               --head "$BRANCH" \
               --title "Update GitHub code copy scan findings" \
-              --body-file "$REPORT_PATH"
+              --body-file "$REPORT_PATH" \
+              2>"$create_error"; then
+              exit 0
+            fi
+
+            cat "$create_error"
+            if grep -q "not permitted to create" "$create_error"; then
+              {
+                echo "### GitHub code copy scan findings"
+                echo
+                echo "The findings branch was pushed, but GitHub Actions is not permitted to create pull requests in this repository."
+                echo
+                echo "Open the pull request manually: ${pr_url}"
+                echo
+                echo "To create this PR automatically, enable GitHub Actions pull request creation for the repository or set a TRUSTCHECK_PR_TOKEN secret with pull-request permissions."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            exit 1
           fi
