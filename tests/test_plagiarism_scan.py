@@ -59,6 +59,8 @@ class GithubPlagiarismScanTests(unittest.TestCase):
         self.assertTrue(all(item.path == "src/trustcheck/demo.py" for item in fingerprints))
         self.assertTrue(all(item.sha256 for item in fingerprints))
         self.assertFalse(any(item.query.startswith("from ") for item in fingerprints))
+        self.assertTrue(all('"' not in item.query for item in fingerprints))
+        self.assertTrue(all(":" not in item.query for item in fingerprints))
 
     def test_search_filters_own_repository_and_report_is_stable(self) -> None:
         fingerprint = github_plagiarism_scan.CodeFingerprint(
@@ -171,6 +173,84 @@ class GithubPlagiarismScanTests(unittest.TestCase):
         self.assertIn("Resource not accessible by integration", warnings[0])
         self.assertIn("Retry after 60 seconds", warnings[0])
         self.assertIn("TRUSTCHECK_GITHUB_SEARCH_TOKEN", warnings[0])
+
+    def test_query_fragments_are_github_search_syntax_safe(self) -> None:
+        fragment = github_plagiarism_scan._query_fragment(
+            'nested = urlparse(url[len("git+"):])'
+        )
+
+        self.assertEqual(fragment, "nested urlparse url len git")
+        self.assertNotIn(":", fragment)
+        self.assertNotIn('"', fragment)
+        self.assertNotIn("[", fragment)
+
+    def test_parse_error_is_skipped_before_rate_limit_stops_scan(self) -> None:
+        fingerprints = [
+            github_plagiarism_scan.CodeFingerprint(
+                path="src/trustcheck/service_urls.py",
+                line=66,
+                query="nested urlparse url len git",
+                context="nested = urlparse(url[len('git+'):])",
+                sha256="a" * 64,
+            ),
+            github_plagiarism_scan.CodeFingerprint(
+                path="src/trustcheck/impact.py",
+                line=491,
+                query="return first value isinstance first value str",
+                context="return first.value if isinstance(first.value, str) else None",
+                sha256="b" * 64,
+            ),
+            github_plagiarism_scan.CodeFingerprint(
+                path="src/trustcheck/other.py",
+                line=1,
+                query="should not be searched after rate limit",
+                context="should not be searched after rate limit",
+                sha256="c" * 64,
+            ),
+        ]
+        calls = 0
+
+        def opener(github_request):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise error.HTTPError(
+                    github_request.full_url,
+                    422,
+                    "Unprocessable Entity",
+                    {},
+                    io.BytesIO(
+                        json.dumps(
+                            {"message": "ERROR_TYPE_QUERY_PARSING_FATAL"}
+                        ).encode("utf-8")
+                    ),
+                )
+            raise error.HTTPError(
+                github_request.full_url,
+                403,
+                "Forbidden",
+                {},
+                io.BytesIO(
+                    json.dumps(
+                        {"message": "API rate limit exceeded for installation"}
+                    ).encode("utf-8")
+                ),
+            )
+
+        matches, warnings = github_plagiarism_scan.search_github_code(
+            fingerprints,
+            token="token",
+            repository="owner/repo",
+            opener=opener,
+        )
+
+        self.assertEqual(matches, [])
+        self.assertEqual(calls, 2)
+        self.assertEqual(len(warnings), 2)
+        self.assertIn("HTTP 422", warnings[0])
+        self.assertIn("ERROR_TYPE_QUERY_PARSING_FATAL", warnings[0])
+        self.assertIn("HTTP 403", warnings[1])
+        self.assertIn("API rate limit exceeded", warnings[1])
 
 
 if __name__ == "__main__":
