@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib import parse
 
 from packaging.utils import canonicalize_name
@@ -32,6 +32,10 @@ from .context import CommandContext
 INSTALL_LOCK_SCHEMA = "urn:trustcheck:install-lock:1.0.0"
 INSTALL_REPORT_SCHEMA = "urn:trustcheck:install-report:1.0.0"
 INSTALL_ATTESTATION_SCHEMA = "urn:trustcheck:install-attestation:1.0.0"
+
+
+class _CliRuntime(Protocol):
+    def _merge_exit_codes(self, first: int, second: int) -> int: ...
 
 
 @dataclass(slots=True)
@@ -838,7 +842,7 @@ def _blocker_payloads(plans: list[InstallPlanItem]) -> list[dict[str, str]]:
     return blocked
 
 
-def _merge_plan_exit_code(cli: Any, first: int, second: int) -> int:
+def _merge_plan_exit_code(cli: _CliRuntime, first: int, second: int) -> int:
     if first == EXIT_OK:
         return second
     if second == EXIT_OK:
