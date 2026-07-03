@@ -315,7 +315,9 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("actions/workflows/fuzz.yml/badge.svg?branch=main", readme)
         self.assertEqual(readme.count("actions/workflows/fuzz.yml"), 2)
 
-    def test_daily_github_code_copy_scan_opens_findings_pull_request(self) -> None:
+    def test_daily_github_code_copy_scan_opens_findings_pull_request_or_issue(
+        self,
+    ) -> None:
         workflow = (ROOT / ".github/workflows/plagiarism-scan.yml").read_text(
             encoding="utf-8"
         )
@@ -325,6 +327,7 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("schedule:", workflow)
         self.assertIn('cron: "37 3 * * *"', workflow)
         self.assertIn("contents: write", workflow)
+        self.assertIn("issues: write", workflow)
         self.assertIn("pull-requests: write", workflow)
         self.assertIn("group: github-code-copy-scan", workflow)
         self.assertIn(
@@ -345,8 +348,11 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("gh pr edit", workflow)
         self.assertIn("not permitted to create", workflow)
         self.assertIn("pull/new/${BRANCH}", workflow)
+        self.assertIn("gh issue list", workflow)
+        self.assertIn("gh issue create", workflow)
+        self.assertIn("gh issue edit", workflow)
+        self.assertIn("Manual pull request URL: ${pr_url}", workflow)
         self.assertIn("GITHUB_STEP_SUMMARY", workflow)
-        self.assertIn("TRUSTCHECK_PR_TOKEN secret", workflow)
 
 
 if __name__ == "__main__":

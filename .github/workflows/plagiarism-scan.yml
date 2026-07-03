@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
   pull-requests: write
 
 concurrency:
@@ -41,10 +42,11 @@ jobs:
             --max-fingerprints 40 \
             --per-page 10
 
-      - name: Open or update findings pull request
+      - name: Open or update findings pull request or issue
         env:
           BRANCH: automation/github-code-copy-findings
           GH_TOKEN: ${{ secrets.TRUSTCHECK_PR_TOKEN || github.token }}
+          ISSUE_TITLE: GitHub code copy scan findings
           REPORT_PATH: reports/github-code-copy-findings.md
         run: |
           if [ -z "$(git status --porcelain -- "$REPORT_PATH")" ]; then
@@ -79,14 +81,46 @@ jobs:
 
             cat "$create_error"
             if grep -q "not permitted to create" "$create_error"; then
+              issue_body="$(mktemp)"
+              {
+                echo "GitHub Actions pushed the code-copy findings branch, but this repository does not permit Actions to create pull requests."
+                echo
+                echo "Findings branch: https://github.com/${GITHUB_REPOSITORY}/tree/${BRANCH}"
+                echo
+                echo "Manual pull request URL: ${pr_url}"
+                echo
+                cat "$REPORT_PATH"
+              } > "$issue_body"
+
+              existing_issue="$(
+                gh issue list \
+                  --state open \
+                  --search "${ISSUE_TITLE} in:title" \
+                  --json number,title \
+                  --jq ".[] | select(.title == \"${ISSUE_TITLE}\") | .number" \
+                | head -n 1
+              )"
+              if [ -n "$existing_issue" ]; then
+                gh issue edit "$existing_issue" \
+                  --title "$ISSUE_TITLE" \
+                  --body-file "$issue_body"
+                issue_url="https://github.com/${GITHUB_REPOSITORY}/issues/${existing_issue}"
+              else
+                issue_url="$(
+                  gh issue create \
+                    --title "$ISSUE_TITLE" \
+                    --body-file "$issue_body"
+                )"
+              fi
+
               {
                 echo "### GitHub code copy scan findings"
                 echo
                 echo "The findings branch was pushed, but GitHub Actions is not permitted to create pull requests in this repository."
                 echo
-                echo "Open the pull request manually: ${pr_url}"
+                echo "Issue: ${issue_url}"
                 echo
-                echo "To create this PR automatically, enable GitHub Actions pull request creation for the repository or set a TRUSTCHECK_PR_TOKEN secret with pull-request permissions."
+                echo "Manual pull request URL: ${pr_url}"
               } >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
