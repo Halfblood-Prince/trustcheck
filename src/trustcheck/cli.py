@@ -2233,7 +2233,8 @@ def _run_validation_subprocess(
     timeout: float = 600.0,
 ) -> CommandValidationResult:
     try:
-        completed = subprocess.run(
+        # User-configured argv is executed directly without a shell.
+        completed = subprocess.run(  # nosec B603
             list(argv),
             cwd=str(cwd),
             env=dict(env) if env is not None else None,

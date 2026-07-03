@@ -331,7 +331,8 @@ def build_impact_report(
 def render_impact_text(report: ImpactReport) -> str:
     data = report.to_dict()
     summary = data["summary"]
-    assert isinstance(summary, dict)
+    if not isinstance(summary, dict):
+        raise TypeError("Impact report summary must be a mapping.")
     lines = [
         f"trustcheck impact results for {Path(report.dependency_file).name}",
         f"source: {', '.join(report.source_roots)}",
