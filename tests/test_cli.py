@@ -3045,6 +3045,24 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(cli_args.artifact_scope, "target")
         self.assertTrue(cli_args.dynamic_analysis)
 
+    def test_project_config_accepts_fix_test_commands(self) -> None:
+        args = build_parser().parse_args(["scan", "-f", "requirements.txt"])
+        args._explicit_config_fields = set()
+
+        _apply_project_config(
+            args,
+            {"fix": {"test_commands": ["pytest -q", "python -m compileall src"]}},
+        )
+
+        self.assertEqual(
+            args.fix_test_commands,
+            ["pytest -q", "python -m compileall src"],
+        )
+        with self.assertRaisesRegex(ValueError, "fix.test_commands"):
+            _apply_project_config(args, {"fix": {"test_commands": [""]}})
+        with self.assertRaisesRegex(ValueError, "unknown fix"):
+            _apply_project_config(args, {"fix": {"commands": []}})
+
     def test_workers_minus_one_uses_all_available_cores(self) -> None:
         args = SimpleNamespace(max_workers=-1)
 

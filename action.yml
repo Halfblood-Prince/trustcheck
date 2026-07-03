@@ -227,7 +227,15 @@ runs:
 
     - name: Install trustcheck
       shell: bash
+      env:
+        TRUSTCHECK_ACTION_REF: ${{ github.action_ref }}
       run: |
+        action_ref="${TRUSTCHECK_ACTION_REF:-}"
+        if [[ "$action_ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          release_version="${action_ref#v}"
+          export SETUPTOOLS_SCM_PRETEND_VERSION="$release_version"
+          export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK="$release_version"
+        fi
         python -m pip install \
           --disable-pip-version-check \
           --require-hashes \

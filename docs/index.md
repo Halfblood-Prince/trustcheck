@@ -33,6 +33,11 @@ For a selected package version, `trustcheck` can:
   plus PE, ELF, and Mach-O binaries for suspicious capabilities
 - calculate, validate, dry-run, and transactionally apply minimal secure
   dependency upgrades
+- verify and install dependencies in one gate with a temporary local wheelhouse
+  and reproducible lock, report, and attestation evidence
+- prioritize vulnerable packages by observed first-party imports, dependency
+  reachability, test-only usage, development-only usage, and unresolved dynamic
+  imports
 - batch advisory queries, bound concurrent scans, checkpoint interrupted work,
   and use SHA-256 content-addressed offline caches
 - extend advisory, index, artifact, policy, and rendering behavior through
@@ -56,7 +61,7 @@ Or add the reusable TrustCheck Package Scanner action:
 ```yaml
 steps:
   - uses: actions/checkout@v7
-  - uses: Halfblood-Prince/trustcheck@v1
+  - uses: Halfblood-Prince/trustcheck@v2
     with:
       target: requirements.txt
       policy: strict
@@ -103,6 +108,29 @@ Scan every package listed in a requirements-style file for vulnerabilities:
 ```bash
 trustcheck scan -f requirements.txt
 ```
+
+Verify and install only the already-checked artifacts:
+
+```bash
+trustcheck install -r requirements.txt --policy strict
+trustcheck install requests==2.32.5 --require-provenance
+```
+
+The install command resolves the full graph, verifies hashes, provenance,
+advisories, artifact policy, and index origin, writes a lock/report/attestation
+bundle, then invokes pip with `--no-index --find-links` against the temporary
+verified wheelhouse. No package is installed if verification fails.
+
+Prioritize vulnerability alerts by observed source usage:
+
+```bash
+trustcheck impact -f requirements.lock --source .
+```
+
+Impact triage combines vulnerable package reports with static first-party
+imports and resolved dependency edges. It distinguishes directly used,
+transitively reachable, test-only, development-only, not observed, and unknown
+dynamic-loading cases, without claiming that an unobserved package is safe.
 
 Scan dependencies declared in a TOML project file for vulnerabilities:
 

@@ -12,14 +12,16 @@ trustcheck scan -f requirements.txt --with-osv --fix
 ```
 
 `--plan-fixes` resolves and rescans candidates but does not invoke lockfile
-writers. `--fix --dry-run` runs writers in an isolated project copy and emits
-the exact validated patch. `--fix` checks the original SHA-256 digests again,
-uses same-directory staged files and atomic replacement, and rolls back a
-partial write.
+writers. `--fix --dry-run` runs writers, installs the result in a clean virtual
+environment, runs configured validation commands, and emits the exact validated
+patch without modifying dependency files. `--fix` performs the same validation,
+checks the original SHA-256 digests again, uses same-directory staged files and
+atomic replacement, and rolls back a partial write.
 
-All active, non-withdrawn, non-suppressed advisories with known fixes are
-targeted. Editable, local, direct-archive, and VCS dependencies are immutable
-because selecting a source revision requires human review.
+All active, non-withdrawn, non-suppressed advisories with known fixes and all
+packages failing the selected Trustcheck policy are targeted. Editable, local,
+direct-archive, and VCS dependencies are immutable because selecting a source
+revision requires human review.
 
 ## Minimality and acceptance
 
@@ -36,16 +38,32 @@ Every generated result must:
 - preserve package index origins
 - preserve and verify artifact hashes
 - pass a second exact-version Trustcheck scan
+- install the exact resolved graph in a clean virtual environment
+- pass `pip check`
+- pass every configured `[tool.trustcheck.fix]` command
 
 Declared ranges are never widened silently. Exact pins can be upgraded;
 otherwise an excluded secure release requires
 `--allow-constraint-changes`.
 
+Validation commands are optional and run from the staged project copy with the
+clean virtual environment first on `PATH`. Commands are parsed without a shell;
+`python` and `pip` are redirected to the clean environment.
+
+```toml
+[tool.trustcheck.fix]
+test_commands = [
+  "pytest -q",
+  "python -m compileall src",
+  "python -m mypy src",
+]
+```
+
 ## Writers
 
-Requirements, nested includes, constraints, PEP 621, Poetry, PDM, and PEP 751
-files use syntax-aware edits. TOML comments, ordering, and unknown tool tables
-are retained.
+Requirements, `requirements.lock`, nested includes, constraints, PEP 621,
+Poetry, PDM, and PEP 751 files use syntax-aware edits. TOML comments,
+ordering, and unknown tool tables are retained.
 
 Hash-pinned pip-tools output requires `pip-compile`. `uv.lock`,
 `poetry.lock`, and `pdm.lock` require their respective installed commands.
@@ -64,11 +82,16 @@ trustcheck scan -f pylock.toml \
   --remediation-output reports/remediation.json
 ```
 
-Patch bundles use schema `urn:trustcheck:remediation:1.2.0`. They contain
+Patch bundles use schema `urn:trustcheck:remediation:1.3.0`. They contain
 before/after dependency graphs, file digests, unified diffs, structured edits,
 advisory IDs removed, lockfile hash validation, reproduction commands,
-post-fix graph and report digests, minimality evidence, validation results, and
-PR metadata.
+post-fix graph and report digests, clean-install and command results,
+minimality evidence, validation results, and PR metadata.
+
+Successful `--fix` and `--fix --dry-run` runs also write a review patch to
+`trustcheck-fix.patch` beside the remediation source. If that path already
+contains unrelated content, Trustcheck writes the next numbered patch path
+instead and records it as `patch_path`.
 
 Each upgrade includes compatibility confidence, a likely-breaking-change
 warning for major upgrades, an available changelog or release link, and its

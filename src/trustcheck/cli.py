@@ -5,15 +5,18 @@ import hashlib
 import json
 import os
 import re
+import shlex
+import subprocess  # nosec B404
 import sys
+import tempfile
 import threading
 import tomllib
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Callable, Sequence, cast
+from typing import Callable, Mapping, Sequence, cast
 from urllib import parse
 
 import urllib3
@@ -33,7 +36,9 @@ from .advisories import (
 )
 from .cli_commands import diff as diff_command
 from .cli_commands import environment as environment_command
+from .cli_commands import impact as impact_command
 from .cli_commands import inspect as inspect_command
+from .cli_commands import install as install_command
 from .cli_commands import manifest as manifest_command
 from .cli_commands import scan as scan_command
 from .cli_commands.context import CommandContext
@@ -187,6 +192,7 @@ from .policy import BUILTIN_POLICIES, PolicySettings, evaluate_policy
 from .policy import resolve_policy as resolve_policy
 from .pypi import IndexBackedPackageClient, PypiClient, PypiClientError
 from .remediation import (
+    CommandValidationResult,
     PreparedRemediation,
     RemediationError,
     RemediationPlan,
@@ -198,6 +204,7 @@ from .remediation import (
     prepare_remediation,
     render_remediation_text,
     validate_candidate,
+    write_remediation_patch,
 )
 from .resolver import (
     SANDBOX_MODES,
@@ -579,6 +586,198 @@ def build_parser() -> argparse.ArgumentParser:
     _add_target_environment_arguments(scan_parser)
     _add_index_arguments(scan_parser)
     _add_runtime_arguments(scan_parser, resumable=True)
+
+    install_parser = subparsers.add_parser(
+        "install",
+        help="Verify dependencies and install only the verified local artifacts.",
+    )
+    install_parser.add_argument(
+        "requirements",
+        nargs="*",
+        metavar="PACKAGE",
+        help="Requirement specifier to resolve and install, such as requests==2.32.5.",
+    )
+    install_parser.add_argument(
+        "-r",
+        "--requirement",
+        dest="requirement_file",
+        help=(
+            "Resolve and install dependencies from requirements.txt, "
+            "pyproject.toml, pylock.toml, Pipfile.lock, uv.lock, poetry.lock, "
+            "or pdm.lock."
+        ),
+    )
+    install_parser.add_argument(
+        "--lock",
+        default="trustcheck.lock",
+        help="Write the verified install lock evidence to this path.",
+    )
+    install_parser.add_argument(
+        "--report",
+        default="trustcheck-install-report.json",
+        help="Write the machine-readable install report to this path.",
+    )
+    install_parser.add_argument(
+        "--attestation",
+        default="trustcheck-install-attestation.json",
+        help="Write the install attestation to this path.",
+    )
+    install_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Verify, download, and write evidence without invoking pip install.",
+    )
+    install_parser.add_argument(
+        "--allow-sdist",
+        action="store_true",
+        help="Permit installing a source distribution when no compatible wheel is selected.",
+    )
+    install_parser.add_argument(
+        "--require-provenance",
+        action="store_true",
+        help="Require verified provenance for every selected install artifact.",
+    )
+    install_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Apply the built-in strict policy.",
+    )
+    install_parser.add_argument(
+        "--policy",
+        choices=tuple(BUILTIN_POLICIES),
+        default="default",
+        help="Built-in policy profile to enforce before installation.",
+    )
+    install_parser.add_argument(
+        "--policy-file",
+        help="Path to a JSON file containing policy settings.",
+    )
+    install_parser.add_argument(
+        "--fail-on-vulnerability",
+        choices=("ignore", "any", "critical", "kev", "fixable"),
+        help="Override vulnerability handling for policy evaluation.",
+    )
+    install_parser.add_argument(
+        "--config-file",
+        help="Path to a JSON, TOML, or pyproject.toml configuration file.",
+    )
+    install_parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format.",
+    )
+    install_parser.add_argument(
+        "--output-file",
+        help="Write the rendered install result to this file instead of standard output.",
+    )
+    install_parser.add_argument(
+        "--with-osv",
+        action="store_true",
+        help="Query OSV for each resolved package version.",
+    )
+    _add_advisory_arguments(install_parser)
+    install_parser.add_argument(
+        "--timeout",
+        type=float,
+        help="Network timeout in seconds.",
+    )
+    install_parser.add_argument(
+        "--retries",
+        type=int,
+        help="Maximum retry count for transient failures.",
+    )
+    install_parser.add_argument(
+        "--backoff",
+        type=float,
+        help="Retry backoff factor in seconds.",
+    )
+    install_parser.add_argument(
+        "--cache-dir",
+        help="Optional persistent cache directory for PyPI responses.",
+    )
+    install_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use cached responses only and do not make network requests.",
+    )
+    _add_file_resolution_arguments(install_parser)
+    _add_target_environment_arguments(install_parser)
+    _add_index_arguments(install_parser)
+    _add_malicious_arguments(install_parser)
+    _add_dynamic_analysis_argument(install_parser)
+    _add_runtime_arguments(install_parser)
+
+    impact_parser = subparsers.add_parser(
+        "impact",
+        help="Prioritize vulnerable dependencies by observed source usage.",
+    )
+    impact_parser.add_argument(
+        "-f",
+        "--file",
+        dest="filename",
+        required=True,
+        help=(
+            "Dependency file to resolve and triage, such as requirements.txt, "
+            "pylock.toml, Pipfile.lock, uv.lock, poetry.lock, or pdm.lock."
+        ),
+    )
+    impact_parser.add_argument(
+        "--source",
+        action="append",
+        required=True,
+        metavar="PATH",
+        help="First-party source root to analyze; repeat for multiple roots.",
+    )
+    impact_parser.add_argument(
+        "--config-file",
+        help="Path to a JSON, TOML, or pyproject.toml configuration file.",
+    )
+    impact_parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format.",
+    )
+    impact_parser.add_argument(
+        "--output-file",
+        help="Write the rendered impact report to this file instead of standard output.",
+    )
+    impact_parser.add_argument(
+        "--with-osv",
+        action="store_true",
+        help="Query OSV for each resolved package version.",
+    )
+    _add_advisory_arguments(impact_parser)
+    impact_parser.add_argument(
+        "--timeout",
+        type=float,
+        help="Network timeout in seconds.",
+    )
+    impact_parser.add_argument(
+        "--retries",
+        type=int,
+        help="Maximum retry count for transient failures.",
+    )
+    impact_parser.add_argument(
+        "--backoff",
+        type=float,
+        help="Retry backoff factor in seconds.",
+    )
+    impact_parser.add_argument(
+        "--cache-dir",
+        help="Optional persistent cache directory for PyPI responses.",
+    )
+    impact_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use cached responses only and do not make network requests.",
+    )
+    _add_file_resolution_arguments(impact_parser)
+    _add_target_environment_arguments(impact_parser)
+    _add_index_arguments(impact_parser)
+    _add_malicious_arguments(impact_parser)
+    _add_runtime_arguments(impact_parser)
 
     diff_parser = subparsers.add_parser(
         "diff",
@@ -1175,6 +1374,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         diff_command.validate_args(args, parser)
     if args.command == "scan":
         scan_command.validate_args(args, parser)
+    if args.command == "install":
+        install_command.validate_args(args, parser)
+    if args.command == "impact":
+        impact_command.validate_args(args, parser)
     if args.command == "manifest":
         manifest_command.validate_args(args, parser)
 
@@ -1202,6 +1405,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return inspect_command.run(args, context)
         if args.command == "scan":
             return scan_command.run(args, context)
+        if args.command == "install":
+            return install_command.run(args, context)
+        if args.command == "impact":
+            return impact_command.run(args, context)
         if args.command == "diff":
             return diff_command.run(args, context)
         if args.command == "manifest":
@@ -1730,21 +1937,47 @@ def _run_remediation(
             targeted=targeted,
         )
         plan.after_graph = dependency_graph_from_resolution(generated)
+        if not plan.validation.accepted:
+            raise RemediationError(
+                "the generated patch failed post-write resolution or security "
+                "validation: "
+                + _fix_validation_failure_detail(plan)
+            )
+        clean_install, pip_check, command_results = _validate_fix_runtime(
+            prepared,
+            generated,
+            args=args,
+            offline=client.offline,
+        )
+        plan.validation = replace(
+            plan.validation,
+            clean_install_passed=clean_install.passed and pip_check.passed,
+            configured_commands_passed=all(
+                result.passed for result in command_results
+            ),
+        )
         plan.post_fix_result = post_fix_result(
             command=_post_fix_reproduction_command(source_path, args),
             resolution=generated,
             reports=generated_reports,
             validation=plan.validation,
             expected_versions=expected_versions,
+            clean_install=clean_install,
+            pip_check=pip_check,
+            test_commands=command_results,
         )
         if not plan.validation.accepted:
             raise RemediationError(
-                "the generated patch failed post-write resolution or security validation"
+                "the generated patch failed post-write resolution or security "
+                "validation: "
+                + _fix_validation_failure_detail(plan)
             )
         if args.dry_run:
+            patch_path = _write_default_fix_patch(prepared)
             plan.message = (
                 "the exact patch was regenerated and validated in an isolated "
                 "workspace; no project files were modified"
+                f"; patch written to {patch_path}"
             )
             return plan
         if args.create_pr:
@@ -1759,6 +1992,12 @@ def _run_remediation(
                 plan.status = "failed"
             return plan
         apply_prepared_remediation(prepared)
+        patch_path = _write_default_fix_patch(prepared)
+        plan.message = (
+            f"{plan.message}; patch written to {patch_path}"
+            if plan.message
+            else f"validated remediation was applied; patch written to {patch_path}"
+        )
         return plan
     finally:
         prepared.close()
@@ -1835,6 +2074,242 @@ def _post_fix_reproduction_command(
     return tuple(command)
 
 
+def _validate_fix_runtime(
+    prepared: PreparedRemediation,
+    resolution: Resolution,
+    *,
+    args: argparse.Namespace,
+    offline: bool,
+) -> tuple[
+    CommandValidationResult,
+    CommandValidationResult,
+    tuple[CommandValidationResult, ...],
+]:
+    with tempfile.TemporaryDirectory(prefix="trustcheck-fix-venv-") as temporary:
+        workspace = Path(temporary)
+        venv_path = workspace / "venv"
+        create = _run_validation_subprocess(
+            "python -m venv <clean environment>",
+            [sys.executable, "-m", "venv", str(venv_path)],
+            cwd=prepared.root,
+        )
+        if not create.passed:
+            raise RemediationError(_command_failure_message("clean venv", create))
+
+        python = _venv_python(venv_path)
+        requirements_file = workspace / "resolved-graph.txt"
+        requirements_file.write_text(
+            "\n".join(_clean_install_requirements(resolution)) + "\n",
+            encoding="utf-8",
+        )
+        environment = _venv_environment(venv_path)
+        install_argv = [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-input",
+        ]
+        if offline:
+            install_argv.append("--no-index")
+        else:
+            install_argv.extend(_index_configuration_from_args(args).pip_arguments())
+        install_argv.extend(["-r", str(requirements_file)])
+        install = _run_validation_subprocess(
+            "python -m pip install -r <resolved graph>",
+            install_argv,
+            cwd=prepared.root,
+            env=environment,
+        )
+        if not install.passed:
+            return (
+                install,
+                CommandValidationResult(
+                    command="python -m pip check",
+                    argv=(),
+                    returncode=1,
+                    stderr="skipped because clean dependency installation failed",
+                ),
+                (),
+            )
+
+        pip_check = _run_validation_subprocess(
+            "python -m pip check",
+            [str(python), "-m", "pip", "check"],
+            cwd=prepared.root,
+            env=environment,
+        )
+        if not pip_check.passed:
+            return install, pip_check, ()
+
+        command_results: list[CommandValidationResult] = []
+        for command in getattr(args, "fix_test_commands", ()) or ():
+            argv = _validation_command_argv(command, python=python)
+            result = _run_validation_subprocess(
+                command,
+                argv,
+                cwd=prepared.root,
+                env=environment,
+            )
+            command_results.append(result)
+            if not result.passed:
+                break
+        return install, pip_check, tuple(command_results)
+
+
+def _clean_install_requirements(resolution: Resolution) -> list[str]:
+    if not resolution.distributions:
+        raise RemediationError("cannot validate an empty dependency graph")
+    return [
+        _clean_install_requirement(distribution)
+        for distribution in sorted(
+            resolution.distributions,
+            key=lambda item: str(canonicalize_name(item.name)),
+        )
+    ]
+
+
+def _clean_install_requirement(distribution: ResolvedDistribution) -> str:
+    if distribution.editable:
+        raise RemediationError(
+            f"clean install validation cannot install editable dependency "
+            f"{distribution.name}=={distribution.version}"
+        )
+    if distribution.vcs is not None and distribution.source_url is None:
+        raise RemediationError(
+            f"clean install validation cannot reproduce VCS dependency "
+            f"{distribution.name} without a source URL"
+        )
+    if distribution.source_url and (distribution.is_direct or distribution.vcs):
+        return f"{distribution.name} @ {distribution.source_url}"
+    return f"{distribution.name}=={distribution.version}"
+
+
+def _validation_command_argv(command: str, *, python: Path) -> list[str]:
+    try:
+        argv = shlex.split(command, posix=os.name != "nt")
+    except ValueError as exc:
+        raise RemediationError(
+            f"invalid [tool.trustcheck.fix] test command {command!r}: {exc}"
+        ) from exc
+    if not argv:
+        raise RemediationError("[tool.trustcheck.fix] test commands cannot be empty")
+    executable = argv[0].lower()
+    if executable in {"python", "python3"}:
+        return [str(python), *argv[1:]]
+    if executable in {"pip", "pip3"}:
+        return [str(python), "-m", "pip", *argv[1:]]
+    return argv
+
+
+def _venv_python(venv_path: Path) -> Path:
+    name = "python.exe" if os.name == "nt" else "python"
+    return _venv_bin_dir(venv_path) / name
+
+
+def _venv_bin_dir(venv_path: Path) -> Path:
+    return venv_path / ("Scripts" if os.name == "nt" else "bin")
+
+
+def _venv_environment(venv_path: Path) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["VIRTUAL_ENV"] = str(venv_path)
+    environment["PATH"] = (
+        str(_venv_bin_dir(venv_path))
+        + os.pathsep
+        + environment.get("PATH", "")
+    )
+    environment.pop("PYTHONHOME", None)
+    return environment
+
+
+def _run_validation_subprocess(
+    command: str,
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str] | None = None,
+    timeout: float = 600.0,
+) -> CommandValidationResult:
+    try:
+        completed = subprocess.run(
+            list(argv),
+            cwd=str(cwd),
+            env=dict(env) if env is not None else None,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            shell=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return CommandValidationResult(
+            command=command,
+            argv=tuple(argv),
+            returncode=124,
+            stdout=_captured_output(exc.stdout),
+            stderr=_captured_output(exc.stderr or f"timed out after {timeout:g}s"),
+        )
+    except OSError as exc:
+        return CommandValidationResult(
+            command=command,
+            argv=tuple(argv),
+            returncode=127,
+            stderr=str(exc),
+        )
+    return CommandValidationResult(
+        command=command,
+        argv=tuple(argv),
+        returncode=completed.returncode,
+        stdout=_captured_output(completed.stdout),
+        stderr=_captured_output(completed.stderr),
+    )
+
+
+def _captured_output(value: object, *, limit: int = 4000) -> str:
+    if value is None:
+        return ""
+    text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[-limit:].lstrip()
+
+
+def _write_default_fix_patch(prepared: PreparedRemediation) -> Path:
+    return write_remediation_patch(
+        prepared.plan,
+        prepared.source_root / "trustcheck-fix.patch",
+    )
+
+
+def _fix_validation_failure_detail(plan: RemediationPlan) -> str:
+    if plan.post_fix_result is not None:
+        results = [
+            plan.post_fix_result.clean_install,
+            plan.post_fix_result.pip_check,
+            *plan.post_fix_result.test_commands,
+        ]
+        for result in results:
+            if result is not None and not result.passed:
+                return _command_failure_message("validation command", result)
+    if plan.validation.errors:
+        return "; ".join(plan.validation.errors)
+    return "post-fix validation did not accept the generated result"
+
+
+def _command_failure_message(label: str, result: CommandValidationResult) -> str:
+    detail = result.stderr or result.stdout
+    message = (
+        f"{label} failed: {result.command} exited with status "
+        f"{result.returncode}"
+    )
+    return f"{message}: {detail}" if detail else message
+
+
 def _remediation_available_versions(
     targets: Sequence[ScanTarget],
     reports: Sequence[TrustReport],
@@ -1850,7 +2325,9 @@ def _remediation_available_versions(
     for target in targets:
         name = str(canonicalize_name(target.project))
         report = reports_by_name.get(name)
-        if report is None or not any(
+        if report is None:
+            continue
+        has_fixable_vulnerability = any(
             vulnerability.fixed_in
             and not vulnerability.withdrawn
             and not (
@@ -1858,7 +2335,8 @@ def _remediation_available_versions(
                 and vulnerability.suppression.status == "active"
             )
             for vulnerability in report.vulnerabilities
-        ):
+        )
+        if not has_fixable_vulnerability and report.policy.passed:
             continue
         target_client = _client_for_target(
             client,
@@ -1994,7 +2472,7 @@ def _discover_remediation_manifest(source_path: Path) -> Path | None:
     pyproject = source_path.parent / "pyproject.toml"
     if pyproject.is_file():
         return pyproject
-    if source_path.name.lower() == "requirements.txt":
+    if _is_remediation_requirements_file(source_path):
         requirements_in = source_path.with_suffix(".in")
         if requirements_in.is_file():
             return requirements_in
@@ -2002,6 +2480,15 @@ def _discover_remediation_manifest(source_path: Path) -> Path | None:
     if source_path.suffix.lower() in {".txt", ".in"}:
         return source_path
     return None
+
+
+def _is_remediation_requirements_file(path: Path) -> bool:
+    name = path.name.lower()
+    return (
+        name == "requirements.txt"
+        or name == "requirements.lock"
+        or (name.startswith("requirements") and path.suffix.lower() in {".txt", ".lock"})
+    )
 
 
 def _scan_resolution_for_remediation(
@@ -2797,6 +3284,7 @@ def _apply_project_config(
         "network",
         "advisories",
         "performance",
+        "fix",
     }
     unknown = sorted(set(config) - allowed)
     if unknown:
@@ -2846,6 +3334,28 @@ def _apply_project_config(
             config_value=config.get("dynamic_analysis"),
             default=False,
         )
+    if hasattr(args, "fix"):
+        args.fix_test_commands = _fix_test_commands_from_config(config)
+
+
+def _fix_test_commands_from_config(config: dict[str, object]) -> list[str]:
+    raw_config = config.get("fix")
+    if raw_config is None:
+        return []
+    if not isinstance(raw_config, dict):
+        raise ValueError("fix config must be an object")
+    unknown = sorted(set(raw_config) - {"test_commands"})
+    if unknown:
+        raise ValueError(
+            "unknown fix config setting(s): " + ", ".join(unknown)
+        )
+    commands = raw_config.get("test_commands", [])
+    if not isinstance(commands, list) or any(
+        not isinstance(item, str) or not item.strip()
+        for item in commands
+    ):
+        raise ValueError("fix.test_commands must be a list of commands")
+    return [item.strip() for item in commands]
 
 
 def _explicit_config_fields(argv: Sequence[str]) -> set[str]:

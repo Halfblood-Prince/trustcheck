@@ -30,6 +30,7 @@ from trustcheck.models import (
 )
 from trustcheck.remediation import (
     BlockedFix,
+    CommandValidationResult,
     FilePatch,
     PreparedRemediation,
     PullRequestResult,
@@ -42,6 +43,7 @@ from trustcheck.remediation import (
     create_pull_request,
     plan_remediation,
     prepare_remediation,
+    write_remediation_patch,
 )
 from trustcheck.resolver import (
     ArtifactReference,
@@ -275,6 +277,61 @@ class RemediationPlannerTests(unittest.TestCase):
             },
         )
         self.assertIn("stable-dep==4.0", seen[0])
+        self.assertTrue(plan.validation.accepted)
+
+    def test_planner_remediates_policy_failing_package(self) -> None:
+        def resolve(requirements):
+            selected = next(
+                item.split("==", 1)[1]
+                for item in requirements
+                if item.startswith("demo==")
+            )
+            return Resolution(
+                distributions=[
+                    ResolvedDistribution(
+                        name="demo",
+                        version=selected,
+                        requested=True,
+                        index_url="https://pypi.org/simple",
+                    )
+                ]
+            )
+
+        baseline_report = make_report(
+            "1.0",
+            violations=[
+                PolicyViolation(
+                    code="publisher_policy",
+                    severity="high",
+                    message="publisher is not trusted",
+                )
+            ],
+        )
+        plan = plan_remediation(
+            source="requirements.txt",
+            baseline=Resolution(
+                distributions=[
+                    ResolvedDistribution(
+                        name="demo",
+                        version="1.0",
+                        requested=True,
+                        index_url="https://pypi.org/simple",
+                    )
+                ]
+            ),
+            reports={"demo": baseline_report},
+            root_requirements=["demo>=1,<2"],
+            resolve=resolve,
+            scan=lambda resolution: {
+                "demo": make_report(resolution.versions["demo"])
+            },
+            available_versions={"demo": ["1.0", "1.5", "2.0"]},
+        )
+
+        self.assertEqual(plan.status, "validated")
+        self.assertEqual(plan.upgrades[0].to_version, "1.5")
+        self.assertEqual(plan.upgrades[0].advisory_ids, ())
+        self.assertIn("passes selected policy", plan.upgrades[0].reason)
         self.assertTrue(plan.validation.accepted)
 
     def test_planner_enumerates_registry_releases_above_fix_threshold(self) -> None:
@@ -684,6 +741,14 @@ class RemediationModelTests(unittest.TestCase):
 
         self.assertEqual(payload, persisted)
         self.assertEqual(blocked.to_dict()["reason"], "immutable")
+        command = CommandValidationResult(
+            command="pytest -q",
+            argv=("pytest", "-q"),
+            returncode=0,
+            stdout="1 passed",
+        )
+        self.assertTrue(command.passed)
+        self.assertEqual(command.to_dict()["command"], "pytest -q")
         self.assertEqual(patch_item.to_dict()["edits"][0]["kind"], "pin")
         self.assertEqual(pull_request.to_dict()["created"], True)
         self.assertIn("upgrades:", rendered)
@@ -720,6 +785,40 @@ class RemediationWriterTests(unittest.TestCase):
                 "demo==2.0  # keep this comment\n",
             )
             self.assertEqual(plan.status, "applied")
+
+    def test_requirements_lock_uses_requirements_writer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "requirements.lock"
+            target.write_text("demo==1.0\n", encoding="utf-8")
+            plan = validated_plan(target)
+
+            with prepare_remediation(target, plan) as prepared:
+                patch = prepared.plan.patches[0]
+
+            self.assertEqual(patch.path, "requirements.lock")
+            self.assertIn("demo==2.0", patch.diff)
+
+    def test_writes_review_patch_without_clobbering_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            plan = validated_plan(root / "requirements.txt")
+            plan.patches = [
+                FilePatch(
+                    path="requirements.txt",
+                    before_sha256="before",
+                    after_sha256="after",
+                    diff="--- a/requirements.txt\n+++ b/requirements.txt\n",
+                )
+            ]
+            requested = root / "trustcheck-fix.patch"
+
+            first = write_remediation_patch(plan, requested)
+            requested.write_text("human notes\n", encoding="utf-8")
+            second = write_remediation_patch(plan, requested)
+
+            self.assertEqual(first, requested)
+            self.assertEqual(second, root / "trustcheck-fix-1.patch")
+            self.assertEqual(plan.patch_path, str(second))
 
     def test_application_refuses_stale_source_and_restores_original(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1957,6 +2056,7 @@ class RemediationCliTests(unittest.TestCase):
             "pr_branch": None,
             "pr_title": None,
             "pr_ready": False,
+            "fix_test_commands": [],
             "with_deps": False,
             "with_transitive_deps": False,
             "inspect_artifacts": False,
@@ -1968,6 +2068,22 @@ class RemediationCliTests(unittest.TestCase):
         }
         values.update(overrides)
         return SimpleNamespace(**values)
+
+    @staticmethod
+    def _runtime_results(*commands: CommandValidationResult):
+        return (
+            CommandValidationResult(
+                command="python -m pip install -r <resolved graph>",
+                argv=("python", "-m", "pip", "install"),
+                returncode=0,
+            ),
+            CommandValidationResult(
+                command="python -m pip check",
+                argv=("python", "-m", "pip", "check"),
+                returncode=0,
+            ),
+            commands,
+        )
 
     def test_parser_exposes_remediation_modes(self) -> None:
         parser = build_parser()
@@ -2261,6 +2377,56 @@ class RemediationCliTests(unittest.TestCase):
         self.assertTrue(observed["include_osv"])
         self.assertEqual(observed["locked_versions"], {"demo": "2.0"})
 
+    def test_fix_runtime_installs_graph_and_runs_configured_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prepared = PreparedRemediation(
+                plan=validated_plan(root / "requirements.txt"),
+                root=root,
+                source_root=root,
+            )
+            resolution = Resolution(
+                distributions=[
+                    ResolvedDistribution(name="demo", version="2.0")
+                ]
+            )
+            calls: list[list[str]] = []
+
+            def runner(command, **kwargs):
+                del kwargs
+                calls.append(list(command))
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout="ok",
+                    stderr="",
+                )
+
+            with patch("trustcheck.cli.subprocess.run", side_effect=runner):
+                install, pip_check, command_results = cli_module._validate_fix_runtime(
+                    prepared,
+                    resolution,
+                    args=self._args(
+                        fix_test_commands=[
+                            "python -m compileall src",
+                            "pytest -q",
+                        ],
+                    ),
+                    offline=True,
+                )
+
+        self.assertTrue(install.passed)
+        self.assertTrue(pip_check.passed)
+        self.assertEqual(
+            [result.command for result in command_results],
+            ["python -m compileall src", "pytest -q"],
+        )
+        self.assertEqual(calls[0][1:3], ["-m", "venv"])
+        self.assertIn("--no-index", calls[1])
+        self.assertEqual(calls[2][-2:], ["pip", "check"])
+        self.assertEqual(calls[3][1:], ["-m", "compileall", "src"])
+        self.assertEqual(calls[4], ["pytest", "-q"])
+
     def test_generated_requirements_reuses_hashes_from_pip_tools_output(self) -> None:
         class FakeResolver:
             def resolve_requirements_file(self, path, **kwargs):
@@ -2366,6 +2532,12 @@ class RemediationCliTests(unittest.TestCase):
                         source_root=root,
                     )
                     apply_mock = unittest.mock.Mock()
+                    patch_path = root / "trustcheck-fix.patch"
+
+                    def write_patch(prepared):
+                        prepared.plan.patch_path = str(patch_path)
+                        return patch_path
+
                     with (
                         patch(
                             "trustcheck.cli._remediation_root_requirements",
@@ -2387,6 +2559,21 @@ class RemediationCliTests(unittest.TestCase):
                         patch(
                             "trustcheck.cli._scan_resolution_for_remediation",
                             return_value={"demo": make_report("2.0")},
+                        ),
+                        patch(
+                            "trustcheck.cli._validate_fix_runtime",
+                            return_value=self._runtime_results(
+                                CommandValidationResult(
+                                    command="pytest -q",
+                                    argv=("pytest", "-q"),
+                                    returncode=0,
+                                    stdout="1 passed",
+                                )
+                            ),
+                        ),
+                        patch(
+                            "trustcheck.cli._write_default_fix_patch",
+                            side_effect=write_patch,
                         ),
                         patch(
                             "trustcheck.cli.apply_prepared_remediation",
@@ -2415,6 +2602,15 @@ class RemediationCliTests(unittest.TestCase):
                     self.assertEqual(
                         result.post_fix_result.dependency_graph_sha256,
                         result.after_graph.sha256,
+                    )
+                    self.assertIsNotNone(result.post_fix_result.clean_install)
+                    self.assertEqual(
+                        result.post_fix_result.test_commands[0].command,
+                        "pytest -q",
+                    )
+                    self.assertEqual(
+                        result.patch_path,
+                        str(patch_path),
                     )
                     self.assertIn("trustcheck", result.post_fix_result.command[0])
                     if dry_run:
@@ -2795,6 +2991,10 @@ class RemediationCliTests(unittest.TestCase):
                         patch(
                             "trustcheck.cli._scan_resolution_for_remediation",
                             return_value={"demo": make_report("2")},
+                        ),
+                        patch(
+                            "trustcheck.cli._validate_fix_runtime",
+                            return_value=self._runtime_results(),
                         ),
                         patch(
                             "trustcheck.cli.create_pull_request",

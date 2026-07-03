@@ -36,6 +36,9 @@ from .remediation_models import (
     CommandRunner as CommandRunner,
 )
 from .remediation_models import (
+    CommandValidationResult as CommandValidationResult,
+)
+from .remediation_models import (
     DependencyGraph as DependencyGraph,
 )
 from .remediation_models import (
@@ -130,15 +133,22 @@ def plan_remediation(
 
     candidates: dict[str, tuple[Version, ...]] = {}
     advisory_ids: dict[str, tuple[str, ...]] = {}
+    target_reasons: dict[str, tuple[str, ...]] = {}
     for name, report in normalized_reports.items():
         distribution = distributions.get(name)
         if distribution is None:
             continue
         active = _active_fixable_vulnerabilities(report.vulnerabilities)
-        if not active:
+        policy_failed = not report.policy.passed
+        if not active and not policy_failed:
             continue
         ids = tuple(sorted({_primary_identifier(item) for item in active}))
         advisory_ids[name] = ids
+        target_reasons[name] = _remediation_target_reasons(
+            active,
+            policy_failed=policy_failed,
+            report=report,
+        )
         immutable_reason = _immutable_reason(
             distribution,
             source_types.get(name, "index"),
@@ -153,21 +163,33 @@ def plan_remediation(
                 )
             )
             continue
-        fixed_versions = _secure_fixed_versions(
-            active,
-            current=distribution.version,
-            available=available_versions.get(name, ()),
-        )
+        if active:
+            fixed_versions = _secure_fixed_versions(
+                active,
+                current=distribution.version,
+                available=available_versions.get(name, ()),
+            )
+        else:
+            fixed_versions = _policy_candidate_versions(
+                distribution.version,
+                available_versions.get(name, ()),
+            )
         if not fixed_versions:
+            reason = (
+                "no higher registry release was available to re-check against "
+                "the selected policy"
+                if policy_failed and not active
+                else (
+                    "the advisory providers did not supply a valid non-downgrade "
+                    "fixed release"
+                )
+            )
             plan.blocked.append(
                 BlockedFix(
                     project=distribution.name,
                     version=distribution.version,
                     advisory_ids=ids,
-                    reason=(
-                        "the advisory providers did not supply a valid non-downgrade "
-                        "fixed release"
-                    ),
+                    reason=reason,
                 )
             )
             continue
@@ -227,6 +249,7 @@ def plan_remediation(
         ]
     ] = []
     exhausted = False
+    last_rejection: str | None = None
 
     for relaxed_count in range(len(unchanged) + 1):
         level_complete = True
@@ -234,11 +257,15 @@ def plan_remediation(
             *(candidates[name] for name in vulnerable_names)
         ):
             selected = dict(zip(vulnerable_names, selected_versions, strict=True))
-            adjusted_roots = _requirements_for_candidate(
-                root_requirements,
-                selected,
-                allow_constraint_changes=allow_constraint_changes,
-            )
+            try:
+                adjusted_roots = _requirements_for_candidate(
+                    root_requirements,
+                    selected,
+                    allow_constraint_changes=allow_constraint_changes,
+                )
+            except RemediationError as exc:
+                last_rejection = _truncate_detail(str(exc))
+                continue
             for relaxed in itertools.combinations(unchanged, relaxed_count):
                 if plan.attempts >= max_attempts:
                     exhausted = True
@@ -262,9 +289,11 @@ def plan_remediation(
                         baseline,
                         resolution,
                     ):
+                        last_rejection = "candidate selected a yanked release"
                         continue
                     candidate_reports = scan(resolution)
-                except (ResolutionError, RemediationError, ValueError):
+                except (ResolutionError, RemediationError, ValueError) as exc:
+                    last_rejection = _truncate_detail(str(exc))
                     continue
                 validation = validate_candidate(
                     baseline=baseline,
@@ -276,6 +305,7 @@ def plan_remediation(
                     baseline_violations=baseline_violations,
                 )
                 if not validation.accepted:
+                    last_rejection = _truncate_detail("; ".join(validation.errors))
                     continue
                 objective = _candidate_objective(
                     baseline,
@@ -308,6 +338,18 @@ def plan_remediation(
     if not successful:
         plan.status = "blocked"
         plan.message = "no constraint-compatible secure resolution was found"
+        plan.blocked.extend(
+            BlockedFix(
+                project=distributions[name].name,
+                version=distributions[name].version,
+                advisory_ids=advisory_ids.get(name, ()),
+                reason=(
+                    "no candidate satisfied the existing dependency constraints"
+                    + (f": {last_rejection}" if last_rejection else "")
+                ),
+            )
+            for name in vulnerable_names
+        )
         return plan
 
     successful.sort(key=lambda item: item[0])
@@ -324,8 +366,8 @@ def plan_remediation(
             advisory_ids=advisory_ids[name],
             direct=name in root_names,
             reason=(
-                "lowest constraint-compatible release that removes all active "
-                "fixable advisories in the selected environment"
+                "lowest constraint-compatible release that "
+                + " and ".join(target_reasons.get(name, ("satisfies remediation targets",)))
             ),
             compatibility_confidence=_compatibility_confidence(
                 distributions[name].version,
@@ -436,6 +478,35 @@ def _changelog_url(report: TrustReport | None) -> str | None:
     return f"{github}/releases" if github else None
 
 
+def _remediation_target_reasons(
+    vulnerabilities: Sequence[VulnerabilityRecord],
+    *,
+    policy_failed: bool,
+    report: TrustReport,
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    if vulnerabilities:
+        count = len(vulnerabilities)
+        noun = "advisory" if count == 1 else "advisories"
+        reasons.append(f"removes {count} active fixable {noun}")
+    if policy_failed:
+        codes = sorted(
+            {
+                violation.code
+                for violation in report.policy.violations
+                if violation.code
+            }
+        )
+        if codes:
+            reasons.append(
+                "passes selected policy checks currently failing: "
+                + ", ".join(codes)
+            )
+        else:
+            reasons.append("passes selected policy checks")
+    return tuple(reasons)
+
+
 def _transitive_explanation(project: str, resolution: Resolution) -> str:
     parents: list[str] = []
     for distribution in resolution.distributions:
@@ -515,6 +586,20 @@ def validate_candidate(
     if not provenance_preserved:
         errors.append("candidate changes one or more package index origins")
 
+    policy_passed = all(
+        report.policy.passed for report in normalized_candidate_reports.values()
+    )
+    if not policy_passed:
+        failed = sorted(
+            report.project
+            for report in normalized_candidate_reports.values()
+            if not report.policy.passed
+        )
+        errors.append(
+            "candidate does not pass selected policy checks"
+            + (": " + ", ".join(failed) if failed else "")
+        )
+
     return RemediationValidation(
         resolution_passed=bool(candidate.distributions),
         rescan_passed=bool(normalized_candidate_reports),
@@ -522,9 +607,7 @@ def validate_candidate(
         no_new_vulnerabilities=not new_vulnerabilities,
         no_new_policy_violations=not new_violations,
         index_provenance_preserved=provenance_preserved,
-        policy_passed=all(
-            report.policy.passed for report in normalized_candidate_reports.values()
-        ),
+        policy_passed=policy_passed,
         errors=tuple(errors),
     )
 
@@ -732,6 +815,48 @@ def apply_prepared_remediation(prepared: PreparedRemediation) -> None:
         raise
     prepared.plan.status = "applied"
     prepared.plan.message = "validated remediation was applied atomically"
+
+
+def write_remediation_patch(
+    plan: RemediationPlan,
+    path: str | Path,
+) -> Path:
+    if not plan.patches:
+        raise RemediationError("no remediation patch is available to write")
+    requested = Path(path).resolve()
+    requested.parent.mkdir(parents=True, exist_ok=True)
+    content = "".join(
+        patch.diff if patch.diff.endswith("\n") else patch.diff + "\n"
+        for patch in plan.patches
+    )
+    output = _available_patch_path(requested, content)
+    output.write_text(content, encoding="utf-8", newline="")
+    plan.patch_path = str(output)
+    return output
+
+
+def _available_patch_path(requested: Path, content: str) -> Path:
+    if not requested.exists():
+        return requested
+    try:
+        if requested.read_text(encoding="utf-8") == content:
+            return requested
+    except UnicodeDecodeError:
+        pass
+    stem = requested.stem
+    suffix = requested.suffix or ".patch"
+    for index in range(1, 1000):
+        candidate = requested.with_name(f"{stem}-{index}{suffix}")
+        if not candidate.exists():
+            return candidate
+        try:
+            if candidate.read_text(encoding="utf-8") == content:
+                return candidate
+        except UnicodeDecodeError:
+            continue
+    raise RemediationError(
+        f"unable to choose an unused remediation patch path near {requested}"
+    )
 
 
 def create_pull_request(
@@ -957,6 +1082,9 @@ def post_fix_result(
     reports: Mapping[str, TrustReport],
     validation: RemediationValidation,
     expected_versions: Mapping[str, str],
+    clean_install: CommandValidationResult | None = None,
+    pip_check: CommandValidationResult | None = None,
+    test_commands: Sequence[CommandValidationResult] = (),
 ) -> PostFixResult:
     graph = dependency_graph_from_resolution(resolution)
     return PostFixResult(
@@ -965,6 +1093,9 @@ def post_fix_result(
         dependency_graph_sha256=graph.sha256,
         reports_sha256=reports_sha256(reports),
         validation=validation,
+        clean_install=clean_install,
+        pip_check=pip_check,
+        test_commands=tuple(test_commands),
     )
 
 
@@ -1038,6 +1169,32 @@ def _secure_fixed_versions(
     if not available and lower_bound not in candidates:
         candidates.insert(0, lower_bound)
     return tuple(candidates)
+
+
+def _policy_candidate_versions(
+    current: str,
+    available: Sequence[str],
+) -> tuple[Version, ...]:
+    try:
+        current_version = Version(current)
+    except InvalidVersion:
+        return ()
+    candidates: set[Version] = set()
+    for raw_version in available:
+        try:
+            parsed = Version(raw_version)
+        except InvalidVersion:
+            continue
+        if parsed > current_version and not parsed.is_prerelease:
+            candidates.add(parsed)
+    return tuple(sorted(candidates))
+
+
+def _truncate_detail(value: str, *, limit: int = 600) -> str:
+    detail = " ".join(value.split())
+    if len(detail) <= limit:
+        return detail
+    return detail[: limit - 3].rstrip() + "..."
 
 
 def _immutable_reason(
@@ -1347,7 +1504,7 @@ def _discover_source_manifest(target: Path) -> Path | None:
     pyproject = target.parent / "pyproject.toml"
     if pyproject.is_file():
         return pyproject
-    if target.name.lower() == "requirements.txt":
+    if _is_requirements_named_file(target):
         source = target.with_suffix(".in")
         if source.is_file():
             return source
@@ -1366,9 +1523,25 @@ def _input_kind(path: Path) -> str:
         return "poetry"
     if name == "pdm.lock":
         return "pdm"
-    if path.suffix.lower() in {".txt", ".in"}:
+    if path.suffix.lower() in {".txt", ".in"} or _is_requirements_lock(path):
         return "requirements"
     return "unsupported"
+
+
+def _is_requirements_named_file(path: Path) -> bool:
+    name = path.name.lower()
+    return (
+        name == "requirements.txt"
+        or name == "requirements.lock"
+        or (name.startswith("requirements") and path.suffix.lower() in {".txt", ".lock"})
+    )
+
+
+def _is_requirements_lock(path: Path) -> bool:
+    name = path.name.lower()
+    return name == "requirements.lock" or (
+        name.startswith("requirements") and path.suffix.lower() == ".lock"
+    )
 
 
 def _looks_hash_pinned(path: Path) -> bool:
@@ -2000,6 +2173,7 @@ def _is_dependency_file(path: Path) -> bool:
             "uv.lock",
         }
         or re.fullmatch(r"pylock(?:\.[^.]+)?\.toml", name) is not None
+        or _is_requirements_lock(path)
         or path.suffix.lower() in {".in", ".txt"}
     )
 

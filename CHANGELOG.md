@@ -22,6 +22,10 @@ The project follows Semantic Versioning for the supported public API described i
   enforcement.
 - Added a pinned GitHub Dependency Review pull-request gate for vulnerable
   dependency.
+- Strengthened `scan --fix` to target policy-failing packages, validate the
+  generated graph in a clean virtual environment, run
+  `[tool.trustcheck.fix].test_commands`, support `requirements.lock`, and write
+  a review patch artifact; advanced the remediation schema to `1.3.0`.
 
 ### Changed
 

@@ -287,7 +287,9 @@ Regenerate and validate the exact patch in an isolated project mirror:
 trustcheck scan -f pyproject.toml --with-osv --fix --dry-run
 ```
 
-Apply the validated bytes transactionally:
+Apply the validated bytes transactionally after re-resolution, clean virtualenv
+installation, `pip check`, configured validation commands, and a complete
+rescan:
 
 ```bash
 trustcheck scan -f uv.lock --with-osv --fix
@@ -297,6 +299,13 @@ trustcheck scan -f uv.lock --with-osv --fix
 all secure releases are excluded. `--source-manifest` identifies the roots for
 a generated lockfile. `--max-fix-attempts` bounds branch-and-bound resolution;
 Trustcheck refuses application when the search cannot prove minimality.
+Successful fix runs write a review patch such as `trustcheck-fix.patch`.
+Optional validation commands are read from `[tool.trustcheck.fix]`:
+
+```toml
+[tool.trustcheck.fix]
+test_commands = ["pytest -q", "python -m compileall src"]
+```
 
 `--create-pr` publishes the validated patch through fixed-argument `git` and
 `gh` commands from a temporary worktree. Use `--pr-base`, `--pr-branch`,

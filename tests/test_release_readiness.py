@@ -87,6 +87,28 @@ class ReleaseReadinessTests(unittest.TestCase):
             docs_changelog,
         )
 
+    def test_github_action_docs_use_current_major_ref(self) -> None:
+        current_major = f"v{RELEASE_VERSION.split('.', 1)[0]}"
+        documentation = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in [
+                ROOT / "README.md",
+                *(ROOT / "docs").rglob("*.md"),
+            ]
+        )
+
+        self.assertIn(f"Halfblood-Prince/trustcheck@{current_major}", documentation)
+        self.assertIn(
+            f"compatible major ref `{current_major}`",
+            documentation,
+        )
+        self.assertIn(
+            f"Use `@{current_major}` for compatible updates",
+            documentation,
+        )
+        if current_major != "v1":
+            self.assertNotIn("Halfblood-Prince/trustcheck@v1", documentation)
+
     def test_public_support_links_use_stable_github_pages(self) -> None:
         with (ROOT / "pyproject.toml").open("rb") as pyproject_file:
             project_urls = tomllib.load(pyproject_file)["project"]["urls"]

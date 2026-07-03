@@ -5,7 +5,7 @@
 ```yaml
 steps:
   - uses: actions/checkout@v7
-  - uses: Halfblood-Prince/trustcheck@v1
+  - uses: Halfblood-Prince/trustcheck@v2
     with:
       target: requirements.txt
       policy: strict
@@ -91,6 +91,34 @@ trustcheck scan -f requirements.txt
 Pip resolves the complete dependency set before trustcheck audits it. Nested
 requirements, constraints, hashes, editable installs, and VCS references are
 supported.
+
+## Verify and install dependencies
+
+```bash
+trustcheck install -r requirements.txt --policy strict
+trustcheck install -r requirements.txt --lock trustcheck.lock
+trustcheck install requests==2.32.5 --require-provenance
+```
+
+`trustcheck install` closes the check-to-install gap: it resolves the complete
+graph, verifies the selected wheels, fails before pip runs when policy fails,
+and installs only from a temporary local wheelhouse with `--no-index` and
+`--find-links`. Source distributions are rejected by default unless
+`--allow-sdist` is passed. Each run writes `trustcheck.lock`,
+`trustcheck-install-report.json`, and `trustcheck-install-attestation.json`.
+
+## Prioritize vulnerable packages by source usage
+
+```bash
+trustcheck impact -f requirements.lock --source .
+```
+
+Impact triage answers which vulnerable packages are directly imported,
+reachable through imported dependencies, test-only, development-only, not
+observed in project source, or unknown because dynamic loading is present. It
+never claims "not exploitable"; no first-party usage means only that static
+analysis did not observe usage. Dynamic imports, plugins, and runtime
+configuration still require manual review.
 
 Resolve potentially untrusted input in Bubblewrap or Docker/Podman, with a
 wheel-only fallback when neither runtime is available:

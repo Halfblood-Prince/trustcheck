@@ -53,6 +53,11 @@ For a selected package version, `trustcheck` can:
 - resolve against PEP 503/691 private indexes with optional keyring credentials
 - block dependency-confusion collisions across public and private indexes
 - preserve and verify lockfile artifact hashes before trusting downloaded bytes
+- verify and install dependencies in one gate with a temporary local wheelhouse
+  and reproducible lock, report, and attestation evidence
+- prioritize vulnerable packages by observed first-party imports, dependency
+  reachability, test-only usage, development-only usage, and unresolved dynamic
+  imports
 - plan, dry-run, apply, or publish the smallest validated secure dependency
   upgrade set without silently widening declared constraints
 - review dependency update pull requests by comparing only changed lockfile
@@ -191,7 +196,7 @@ before merge:
 ```yaml
 steps:
   - uses: actions/checkout@v7
-  - uses: Halfblood-Prince/trustcheck@v1
+  - uses: Halfblood-Prince/trustcheck@v2
     with:
       target: requirements.txt
       policy: strict
@@ -207,7 +212,7 @@ compatible major action tag used above.
 Produce SARIF for GitHub code scanning without repeating the audit:
 
 ```yaml
-- uses: Halfblood-Prince/trustcheck@v1
+- uses: Halfblood-Prince/trustcheck@v2
   id: trustcheck
   with:
     target: requirements.txt
@@ -256,6 +261,37 @@ trustcheck scan sampleproject --full --artifact-scope all --strict
 
 Use `--artifact-scope sdist` for source review or `--artifact-scope all` for a
 strict whole-release review.
+
+Verify and install the exact resolved dependency graph in one workflow:
+
+```bash
+trustcheck install -r requirements.txt --policy strict
+trustcheck install -r requirements.txt --lock trustcheck.lock
+trustcheck install requests==2.32.5 --require-provenance
+```
+
+`trustcheck install` resolves the complete graph, verifies the selected
+artifacts, materializes a temporary verified wheelhouse, and invokes pip with
+`--no-index --find-links` plus hash-pinned exact requirements. Nothing is
+installed if policy, provenance, advisory, hash, artifact, or private-index
+origin checks fail. Each run writes `trustcheck.lock`,
+`trustcheck-install-report.json`, and `trustcheck-install-attestation.json`.
+
+Prioritize vulnerable packages by observed application usage:
+
+```bash
+trustcheck impact -f requirements.lock --source .
+trustcheck impact -f requirements.lock --source src --source services/api --format json
+```
+
+`trustcheck impact` combines the resolved dependency graph with a conservative
+static import graph from first-party source, console-script metadata, pytest
+plugins, and common framework imports. Findings are classified as directly
+used, transitively reachable, test-only, development-only, not observed in
+project source, or unknown due to dynamic loading. It never claims a dependency
+is not exploitable; no first-party usage means only that static analysis did
+not observe it, and dynamic imports, plugins, and runtime configuration still
+require manual review.
 
 Enrich vulnerability intelligence with OSV and GitHub Advisory Database data:
 
@@ -367,17 +403,28 @@ trustcheck scan -f requirements.txt \
   --remediation-output reports/trustcheck-remediation.json
 ```
 
-Generate and validate the exact patch without changing the working tree:
+Generate and validate the exact patch without changing dependency files:
 
 ```bash
 trustcheck scan -f pyproject.toml --with-osv --fix --dry-run
 ```
 
-Apply the same transaction only after re-resolution and a complete rescan:
+Apply the same transaction only after re-resolution, a clean virtualenv
+install, `pip check`, configured validation commands, and a complete rescan:
 
 ```bash
 trustcheck scan -f uv.lock --with-osv --fix
 ```
+
+Configured fix validation commands live under `[tool.trustcheck.fix]`:
+
+```toml
+[tool.trustcheck.fix]
+test_commands = ["pytest -q", "python -m compileall src"]
+```
+
+Successful fix runs write a review patch such as `trustcheck-fix.patch` and
+record the exact path in the remediation output.
 
 Secure versions excluded by a declared range remain blocked unless
 `--allow-constraint-changes` is passed. Editable, local-path, direct-archive,

@@ -13,7 +13,7 @@ from packaging.utils import canonicalize_name
 from .models import TrustReport
 from .resolver import Resolution, ResolvedDistribution
 
-REMEDIATION_SCHEMA_VERSION: Final = "1.2.0"
+REMEDIATION_SCHEMA_VERSION: Final = "1.3.0"
 REMEDIATION_SCHEMA_ID: Final = (
     f"urn:trustcheck:remediation:{REMEDIATION_SCHEMA_VERSION}"
 )
@@ -219,6 +219,29 @@ class LockfileHashValidation:
 
 
 @dataclass(frozen=True, slots=True)
+class CommandValidationResult:
+    command: str
+    argv: tuple[str, ...]
+    returncode: int
+    stdout: str = ""
+    stderr: str = ""
+
+    @property
+    def passed(self) -> bool:
+        return self.returncode == 0
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "command": self.command,
+            "argv": list(self.argv),
+            "returncode": self.returncode,
+            "passed": self.passed,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RemediationValidation:
     resolution_passed: bool = False
     rescan_passed: bool = False
@@ -227,6 +250,8 @@ class RemediationValidation:
     no_new_policy_violations: bool = False
     index_provenance_preserved: bool = False
     policy_passed: bool = False
+    clean_install_passed: bool = True
+    configured_commands_passed: bool = True
     errors: tuple[str, ...] = ()
 
     @property
@@ -239,6 +264,9 @@ class RemediationValidation:
                 self.no_new_vulnerabilities,
                 self.no_new_policy_violations,
                 self.index_provenance_preserved,
+                self.policy_passed,
+                self.clean_install_passed,
+                self.configured_commands_passed,
             )
         ) and not self.errors
 
@@ -251,6 +279,8 @@ class RemediationValidation:
             "no_new_policy_violations": self.no_new_policy_violations,
             "index_provenance_preserved": self.index_provenance_preserved,
             "policy_passed": self.policy_passed,
+            "clean_install_passed": self.clean_install_passed,
+            "configured_commands_passed": self.configured_commands_passed,
             "accepted": self.accepted,
             "errors": list(self.errors),
         }
@@ -263,6 +293,9 @@ class PostFixResult:
     dependency_graph_sha256: str
     reports_sha256: str
     validation: RemediationValidation
+    clean_install: CommandValidationResult | None = None
+    pip_check: CommandValidationResult | None = None
+    test_commands: tuple[CommandValidationResult, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -271,6 +304,17 @@ class PostFixResult:
             "dependency_graph_sha256": self.dependency_graph_sha256,
             "reports_sha256": self.reports_sha256,
             "validation": self.validation.to_dict(),
+            "clean_install": (
+                self.clean_install.to_dict()
+                if self.clean_install is not None
+                else None
+            ),
+            "pip_check": (
+                self.pip_check.to_dict()
+                if self.pip_check is not None
+                else None
+            ),
+            "test_commands": [item.to_dict() for item in self.test_commands],
         }
 
 
@@ -305,6 +349,7 @@ class RemediationPlan:
     post_fix_result: PostFixResult | None = None
     validation: RemediationValidation = field(default_factory=RemediationValidation)
     pull_request: PullRequestResult | None = None
+    patch_path: str | None = None
     message: str = ""
     minimal_secure_upgrade_proof: dict[str, object] = field(default_factory=dict)
     candidate_resolution: Resolution | None = field(default=None, repr=False)
@@ -352,6 +397,7 @@ class RemediationPlan:
                 if self.pull_request is not None
                 else None
             ),
+            "patch_path": self.patch_path,
             "message": self.message,
             "minimal_secure_upgrade_proof": self.minimal_secure_upgrade_proof,
         }

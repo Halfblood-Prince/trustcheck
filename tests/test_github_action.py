@@ -612,6 +612,10 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn('exit "$TRUSTCHECK_EXIT_CODE"', action)
         self.assertIn("default: strict", action)
         self.assertIn("sandbox-image:", action)
+        self.assertIn("TRUSTCHECK_ACTION_REF: ${{ github.action_ref }}", action)
+        self.assertIn('action_ref="${TRUSTCHECK_ACTION_REF:-}"', action)
+        self.assertIn("SETUPTOOLS_SCM_PRETEND_VERSION", action)
+        self.assertIn("SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK", action)
 
     def test_all_external_actions_are_commit_pinned(self) -> None:
         files = [Path("action.yml"), *Path(".github/workflows").glob("*.yml")]
@@ -679,6 +683,9 @@ class GitHubActionTests(unittest.TestCase):
         self.assertNotIn("target_commitish:", workflow)
         self.assertIn("Validate stable release version", workflow)
         self.assertIn("action_major_tag:", workflow)
+        self.assertIn('version="${TAG_NAME#v}"', workflow)
+        self.assertIn('IFS=. read -r major minor patch extra <<< "$version"', workflow)
+        self.assertIn('echo "major_tag=v${major}" >> "$GITHUB_OUTPUT"', workflow)
         self.assertIn("needs['verify-tag'].outputs.action_major_tag", workflow)
         self.assertIn("publish-github-action:", workflow)
         self.assertIn("Publish moving major action tag", workflow)
