@@ -179,6 +179,7 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("--hash=sha256:", semgrep_lock)
         self.assertIn("--hash=sha256:", fuzz_lock)
         self.assertIn("semgrep==", semgrep_lock)
+        self.assertNotIn("pywin32==", semgrep_lock)
         self.assertIn("atheris==3.0.0", fuzz_lock)
         self.assertIn('pyyaml-ft==8.0.0 ; python_version == "3.13"', ci_lock)
         self.assertNotIn("python -m pip install semgrep", combined)
