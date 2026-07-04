@@ -1,4 +1,4 @@
-cryptography>=48.0.1,<49
+cryptography>=48.0.1,<50
 packaging>=24,<27
 pydantic>=2.12,<3
 sigstore>=4.3,<5
@@ -27,9 +27,9 @@ pyyaml-ft>=8.0.0; python_version == "3.13"
 mypy
 pip-audit
 # Keep psutil on a release published for Linux Python 3.13.
-psutil<=7.1.1
-pyinstaller>=6.20,<7
+psutil<=7.2.2
+pyinstaller>=6.21.0,<7
 # PyInstaller requires macholib on macOS; pin it explicitly for hashed CI installs.
-macholib>=1.8,<2
+macholib>=1.16.4,<2
 pytest-cov
 ruff
