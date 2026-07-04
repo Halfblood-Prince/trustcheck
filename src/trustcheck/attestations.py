@@ -467,7 +467,7 @@ def _sigstore_policy() -> Any:
 
 def _sigstore_verification_error(message: str) -> Exception:
     try:
-        error_type = _sigstore_symbol("SigstoreVerificationError")
+        error_type = cast(type[Exception], _sigstore_symbol("SigstoreVerificationError"))
     except ImportError:
         return VerificationError(message)
     return error_type(message)
