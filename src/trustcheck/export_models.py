@@ -15,7 +15,10 @@ OUTPUT_FORMATS: Final = (
     "sarif",
     "cyclonedx-json",
     "cyclonedx-xml",
+    "cyclonedx-1.7-json",
+    "cyclonedx-1.7-xml",
     "spdx-json",
+    "spdx-3-json",
     "openvex",
     "markdown",
 )
@@ -25,7 +28,10 @@ SARIF_SCHEMA = (
     "errata01/os/schemas/sarif-schema-2.1.0.json"
 )
 CYCLONEDX_NAMESPACE = "http://cyclonedx.org/schema/bom/1.6"
+CYCLONEDX_17_NAMESPACE = "http://cyclonedx.org/schema/bom/1.7"
 OPENVEX_CONTEXT = "https://openvex.dev/ns/v0.2.0"
+SPDX_3_CONTEXT = "https://spdx.org/rdf/3.0.1/spdx-context.jsonld"
+SPDX_3_SPEC_VERSION = "3.0.1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +64,10 @@ def recommended_extension(output_format: str) -> str:
         "sarif": ".sarif",
         "cyclonedx-json": ".cdx.json",
         "cyclonedx-xml": ".cdx.xml",
+        "cyclonedx-1.7-json": ".cdx17.json",
+        "cyclonedx-1.7-xml": ".cdx17.xml",
         "spdx-json": ".spdx.json",
+        "spdx-3-json": ".spdx3.json",
         "openvex": ".openvex.json",
         "markdown": ".md",
     }

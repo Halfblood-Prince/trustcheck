@@ -128,8 +128,9 @@ sarif = render_export(
 ```
 
 `render_export` accepts `sarif`, `cyclonedx-json`, `cyclonedx-xml`,
-`spdx-json`, `openvex`, or `markdown`. `ExportPackage.artifacts` can carry
-lockfile `ArtifactReference` records so multi-algorithm hashes are retained.
+`cyclonedx-1.7-json`, `cyclonedx-1.7-xml`, `spdx-json`, `spdx-3-json`,
+`openvex`, or `markdown`. `ExportPackage.artifacts` can carry lockfile
+`ArtifactReference` records so multi-algorithm hashes are retained.
 
 ## Malicious-package heuristics
 

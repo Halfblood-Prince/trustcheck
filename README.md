@@ -83,8 +83,8 @@ For a selected package version, `trustcheck` can:
 - optionally inspect wheel and sdist contents without importing or executing package code
 - score typosquatting, dependency-confusion, package-history, source-code, and
   native-binary heuristic indicators without claiming a malware verdict
-- emit text, JSON, SARIF 2.1.0, CycloneDX 1.6 JSON/XML, SPDX 2.3 JSON,
-  OpenVEX 0.2.0, or Markdown
+- emit text, JSON, SARIF 2.1.0, CycloneDX 1.6 or 1.7 JSON/XML,
+  SPDX 2.3 or SPDX 3 JSON, OpenVEX 0.2.0, or Markdown
 - emit a concise decision report for release gates and pull request checks
 
 Check local prerequisites before relying on resolver isolation, private indexes,
@@ -628,9 +628,11 @@ trustcheck scan -f pylock.toml \
 ```
 
 Supported industry formats are `sarif`, `cyclonedx-json`, `cyclonedx-xml`,
-`spdx-json`, `openvex`, and `markdown`. SBOM exports retain package purls,
-vulnerabilities, provenance coverage, artifact hashes, recommendations, and
-policy violations.
+`cyclonedx-1.7-json`, `cyclonedx-1.7-xml`, `spdx-json`, `spdx-3-json`,
+`openvex`, and `markdown`. The unversioned CycloneDX and SPDX format names
+remain compatible aliases for CycloneDX 1.6 and SPDX 2.3. SBOM exports retain
+package purls, vulnerabilities, provenance coverage, artifact hashes,
+recommendations, and policy violations.
 
 Emit only vulnerability records as JSON:
 

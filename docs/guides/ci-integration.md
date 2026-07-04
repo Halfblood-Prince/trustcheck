@@ -255,7 +255,7 @@ higher severity and denies AGPL/GPL license introductions before merge.
 | `pr-branch` | generated | Pull request head branch. |
 | `pr-title` | generated | Pull request title. |
 | `pr-ready` | `false` | Create a ready PR instead of a draft. |
-| `format` | `text` | `text`, `json`, `sarif`, `cyclonedx-json`, `cyclonedx-xml`, `spdx-json`, `openvex`, or `markdown`. |
+| `format` | `text` | `text`, `json`, `sarif`, `cyclonedx-json`, `cyclonedx-xml`, `cyclonedx-1.7-json`, `cyclonedx-1.7-xml`, `spdx-json`, `spdx-3-json`, `openvex`, or `markdown`. |
 | `report-path` | derived | Report location; the default extension follows `format`. |
 | `artifact-name` | `trustcheck-report` | Uploaded workflow artifact name. |
 | `python-version` | `3.12` | Python version used by the action. |

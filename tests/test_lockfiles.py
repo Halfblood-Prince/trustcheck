@@ -39,6 +39,8 @@ from trustcheck.lockfiles import (
 )
 from trustcheck.resolver import ArtifactReference
 
+ROOT = Path(__file__).parents[1]
+
 
 class LockfileTests(unittest.TestCase):
     def test_supported_lockfile_names_are_case_insensitive(self) -> None:
@@ -165,6 +167,17 @@ class LockfileTests(unittest.TestCase):
                     _is_registry_package(package, lockfile_kind),
                     expected,
                 )
+
+    def test_benchmark_corpus_pdm_lock_loads(self) -> None:
+        resolution = load_lockfile(ROOT / "benchmarks" / "corpus" / "pdm.lock")
+
+        self.assertEqual(resolution.format, "pdm.lock")
+        self.assertEqual(resolution.versions["urllib3"], "2.2.2")
+        self.assertEqual(resolution.versions["certifi"], "2024.7.4")
+        self.assertEqual(
+            resolution.packages[0].artifacts[0].hashes,
+            (("sha256", "a" * 64),),
+        )
 
     def test_load_pylock_supports_markers_groups_indexes_and_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

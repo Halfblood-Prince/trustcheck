@@ -8,7 +8,10 @@ documents:
 | `sarif` | SARIF 2.1.0 |
 | `cyclonedx-json` | CycloneDX 1.6 JSON |
 | `cyclonedx-xml` | CycloneDX 1.6 XML |
+| `cyclonedx-1.7-json` | CycloneDX 1.7 JSON |
+| `cyclonedx-1.7-xml` | CycloneDX 1.7 XML |
 | `spdx-json` | SPDX 2.3 JSON |
+| `spdx-3-json` | SPDX 3.0.1 JSON-LD |
 | `openvex` | OpenVEX 0.2.0 JSON |
 | `markdown` | Human-readable Markdown |
 
@@ -50,7 +53,10 @@ inspection uses the package release URL.
 ## CycloneDX
 
 CycloneDX JSON and XML use canonical `pkg:pypi` purls as component and
-dependency references. Components include trustcheck properties for:
+dependency references. The unversioned `cyclonedx-json` and `cyclonedx-xml`
+formats remain CycloneDX 1.6 for compatibility; `cyclonedx-1.7-json` and
+`cyclonedx-1.7-xml` opt in to the CycloneDX 1.7 schema and XML namespace.
+Components include trustcheck properties for:
 
 - recommendation and policy status
 - policy profile and violations
@@ -70,9 +76,10 @@ timestamps record generation time.
 
 ## SPDX
 
-SPDX output uses version 2.3 JSON. Root reports and inspected dependencies are
-packages connected with `DESCRIBES` and `DEPENDS_ON` relationships. Canonical
-purls are package-manager external references.
+SPDX output uses version 2.3 JSON for the compatibility `spdx-json` format and
+SPDX 3.0.1 JSON-LD for the opt-in `spdx-3-json` format. Root reports and
+inspected dependencies are packages connected with `DESCRIBES`/`dependsOn`
+relationships. Canonical purls are package-manager external references.
 
 SPDX 2.3 does not define CycloneDX-style arbitrary properties, so trustcheck
 evidence is represented through package comments and document annotations.

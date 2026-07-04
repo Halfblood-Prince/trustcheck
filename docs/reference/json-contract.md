@@ -309,7 +309,7 @@ schema = get_json_schema()
 ## Other machine-readable formats
 
 The JSON contract above remains the lossless trustcheck-native envelope.
-Standard exports are available for SARIF 2.1.0, CycloneDX 1.6 JSON/XML,
-SPDX 2.3 JSON, and OpenVEX 0.2.0. See
+Standard exports are available for SARIF 2.1.0, CycloneDX 1.6 and 1.7
+JSON/XML, SPDX 2.3 JSON, SPDX 3 JSON-LD, and OpenVEX 0.2.0. See
 [Industry output formats](industry-formats.md) for their mappings and
 stability guarantees.

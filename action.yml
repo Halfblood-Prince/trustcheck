@@ -175,7 +175,7 @@ inputs:
     required: false
     default: "false"
   format:
-    description: Report format (text, json, sarif, cyclonedx-json, cyclonedx-xml, spdx-json, openvex, or markdown).
+    description: Report format (text, json, sarif, cyclonedx-json, cyclonedx-xml, cyclonedx-1.7-json, cyclonedx-1.7-xml, spdx-json, spdx-3-json, openvex, or markdown).
     required: false
     default: text
   report-path:

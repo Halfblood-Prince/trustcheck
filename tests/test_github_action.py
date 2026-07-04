@@ -875,6 +875,15 @@ class GitHubActionTests(unittest.TestCase):
 
         self.assertEqual(settings.report_path, "trustcheck-report.cdx.xml")
         self.assertEqual(settings.sandbox, "strict")
+
+        spdx3 = ActionSettings.from_environment(
+            {
+                "TRUSTCHECK_ACTION_TARGET": "sampleproject",
+                "TRUSTCHECK_ACTION_FORMAT": "spdx-3-json",
+            }
+        )
+        self.assertEqual(spdx3.report_path, "trustcheck-report.spdx3.json")
+
         with self.assertRaisesRegex(ActionInputError, "format"):
             ActionSettings.from_environment(
                 {

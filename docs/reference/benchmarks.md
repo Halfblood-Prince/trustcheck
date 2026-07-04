@@ -8,12 +8,12 @@ samples. The Trustcheck command explicitly uses `--fast`, limiting it to
 advisory lookup and lockfile/requirements parsing for an apples-to-apples
 comparison.
 
-The corpus is `benchmarks/corpus/corpus.json`. Version `2026.06` contains 133
+The corpus is `benchmarks/corpus/corpus.json`. Version `2026.06` contains 135
 package entries: 100 mixed clean and historically vulnerable PyPI pins, marker
-and extra cases, private-index inputs, pip-tools and TOML lockfiles, VCS and
-editable dependencies, intentionally malformed requirements, and dedicated
-resolution/profile evidence cases. Direct timing and correctness use only cases
-marked `compare_with_pip_audit`.
+and extra cases, private-index inputs, pip-tools, PEP 751, uv, Poetry, and PDM
+lockfiles, VCS and editable dependencies, intentionally malformed
+requirements, and dedicated resolution/profile evidence cases. Direct timing
+and correctness use only cases marked `compare_with_pip_audit`.
 
 Comparable requirements cases audit their declared pins directly. Trustcheck
 and pip-audit both use `--no-deps`, and pip-audit also uses `--disable-pip`, so
@@ -61,3 +61,16 @@ python benchmarks/benchmark_against_pip_audit.py
 Wall-time results include package metadata and advisory requests plus output
 generation. The benchmark reports observed performance rather than claiming
 feature-equivalent work.
+
+## Acceptance matrix
+
+The `Acceptance Matrix` workflow is separate from fast pull-request and push
+CI. It runs nightly and manually across Linux, macOS, Windows, and every
+supported Python version. Each job executes one real `trustcheck scan` case
+from `scripts/acceptance_matrix.py` and uploads the rendered report.
+
+The matrix covers selected public packages and corpus fixtures for pip-tools,
+uv, Poetry, PDM, PEP 751 `pylock.toml`, extras and markers, private-index
+directives, native wheels, and sdists. The private-index fixture accepts the
+expected upstream failure for intentionally internal package names but still
+requires a rendered report.

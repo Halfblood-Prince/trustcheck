@@ -43,7 +43,8 @@ trustcheck --version
 - `--version`: inspect a specific release instead of the latest project version
 - `--expected-repo`: require repository evidence to match an expected GitHub or GitLab repository
 - `--format FORMAT`: choose `text`, `json`, `sarif`, `cyclonedx-json`,
-  `cyclonedx-xml`, `spdx-json`, `openvex`, or `markdown`
+  `cyclonedx-xml`, `cyclonedx-1.7-json`, `cyclonedx-1.7-xml`, `spdx-json`,
+  `spdx-3-json`, `openvex`, or `markdown`
 - `--output-file PATH`: write the rendered report to a file and suppress stdout
 - `--verbose`: include per-file provenance, digest, publisher, and note fields in text output
 - `--with-osv`: query the public OSV API

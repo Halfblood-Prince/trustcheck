@@ -227,7 +227,8 @@ trustcheck scan -f pylock.toml \
   --output-file reports/trustcheck.cdx.json
 ```
 
-Other formats are `cyclonedx-xml`, `spdx-json`, `openvex`, and `markdown`.
+Other formats are `cyclonedx-xml`, `cyclonedx-1.7-json`,
+`cyclonedx-1.7-xml`, `spdx-json`, `spdx-3-json`, `openvex`, and `markdown`.
 
 To emit only the known vulnerability records in JSON:
 

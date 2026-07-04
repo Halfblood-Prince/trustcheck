@@ -26,8 +26,8 @@ For a selected package version, `trustcheck` can:
 - inspect declared runtime dependencies and summarize the worst-risk dependency in the set
 - scan requirements files, project TOML, PEP 751 `pylock.toml`,
   `Pipfile.lock`, and `uv.lock`, `poetry.lock`, or `pdm.lock`
-- export SARIF 2.1.0, CycloneDX 1.6 JSON/XML, SPDX 2.3 JSON,
-  OpenVEX 0.2.0, Markdown, or native JSON
+- export SARIF 2.1.0, CycloneDX 1.6 or 1.7 JSON/XML, SPDX 2.3 or
+  SPDX 3 JSON, OpenVEX 0.2.0, Markdown, or native JSON
 - statically inspect wheel and sdist contents without importing package code
 - score typosquatting and package-history anomalies, and inspect Python ASTs
   plus PE, ELF, and Mach-O binaries for suspicious capabilities

@@ -8,7 +8,15 @@ import atheris
 with atheris.instrument_imports():
     from trustcheck.exports import render_payload_export
 
-FORMATS = ("sarif", "spdx-json", "cyclonedx-json", "cyclonedx-xml")
+FORMATS = (
+    "sarif",
+    "spdx-json",
+    "spdx-3-json",
+    "cyclonedx-json",
+    "cyclonedx-xml",
+    "cyclonedx-1.7-json",
+    "cyclonedx-1.7-xml",
+)
 
 
 def test_one_input(data: bytes) -> None:

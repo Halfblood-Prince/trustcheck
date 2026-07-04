@@ -10,7 +10,10 @@ from xml.etree import ElementTree
 
 import trustcheck.exports as exports
 from trustcheck.exports import (
+    CYCLONEDX_17_NAMESPACE,
     CYCLONEDX_NAMESPACE,
+    SPDX_3_CONTEXT,
+    SPDX_3_SPEC_VERSION,
     ExportPackage,
     SourceLocation,
     export_packages_from_payload,
@@ -566,6 +569,41 @@ class ExportTests(unittest.TestCase):
             )
         )
 
+    def test_cyclonedx_17_exports_are_explicit_opt_in(self) -> None:
+        json_payload = json.loads(
+            render_export(
+                "cyclonedx-1.7-json",
+                [make_package()],
+                source_name="requirements.txt",
+                generated_at=GENERATED_AT,
+            )
+        )
+        xml_payload = render_export(
+            "cyclonedx-1.7-xml",
+            [make_package()],
+            source_name="requirements.txt",
+            generated_at=GENERATED_AT,
+        )
+        root = ElementTree.fromstring(xml_payload)
+
+        self.assertEqual(json_payload["bomFormat"], "CycloneDX")
+        self.assertEqual(json_payload["specVersion"], "1.7")
+        self.assertEqual(
+            json_payload["$schema"],
+            "http://cyclonedx.org/schema/bom-1.7.schema.json",
+        )
+        self.assertEqual(root.tag, f"{{{CYCLONEDX_17_NAMESPACE}}}bom")
+
+        compatibility_payload = json.loads(
+            render_export(
+                "cyclonedx-json",
+                [make_package()],
+                source_name="requirements.txt",
+                generated_at=GENERATED_AT,
+            )
+        )
+        self.assertEqual(compatibility_payload["specVersion"], "1.6")
+
     def test_spdx_contains_packages_relationships_annotations_and_checksums(self) -> None:
         payload = json.loads(
             render_export(
@@ -605,6 +643,55 @@ class ExportTests(unittest.TestCase):
         )
         self.assertIn("kev=true", root["comment"])
         self.assertIn("epss=0.8123", root["comment"])
+
+    def test_spdx3_json_contains_packages_relationships_and_hashes(self) -> None:
+        payload = json.loads(
+            render_export(
+                "spdx-3-json",
+                [make_package()],
+                source_name="requirements.txt",
+                generated_at=GENERATED_AT,
+            )
+        )
+
+        self.assertEqual(payload["@context"], SPDX_3_CONTEXT)
+        self.assertEqual(payload["type"], "SpdxDocument")
+        self.assertEqual(
+            payload["creationInfo"]["specVersion"],
+            SPDX_3_SPEC_VERSION,
+        )
+        self.assertEqual(
+            payload["profileConformance"],
+            ["core", "software", "simpleLicensing"],
+        )
+        packages = [
+            item for item in payload["element"]
+            if item["type"] == "Package"
+        ]
+        root = next(
+            item for item in packages
+            if item["name"] == "Demo_Package"
+        )
+        self.assertEqual(root["packageUrl"], package_purl("Demo_Package", "1.2.3"))
+        self.assertEqual(
+            {item["algorithm"] for item in root["verifiedUsing"]},
+            {"SHA256", "SHA512"},
+        )
+        self.assertIn("trustcheck:provenance:status=unverified", root["comment"])
+        self.assertTrue(
+            any(
+                item["type"] == "Relationship"
+                and item["relationshipType"] == "dependsOn"
+                for item in payload["element"]
+            )
+        )
+        self.assertTrue(
+            any(
+                item["type"] == "Annotation"
+                and "trustcheck:vulnerability:CVE-2026-1234" in item["statement"]
+                for item in payload["element"]
+            )
+        )
 
     def test_openvex_marks_observed_vulnerability_affected(self) -> None:
         payload = json.loads(
@@ -703,7 +790,10 @@ class ExportTests(unittest.TestCase):
     def test_recommended_extensions_and_invalid_format(self) -> None:
         self.assertEqual(recommended_extension("sarif"), ".sarif")
         self.assertEqual(recommended_extension("cyclonedx-json"), ".cdx.json")
+        self.assertEqual(recommended_extension("cyclonedx-1.7-json"), ".cdx17.json")
+        self.assertEqual(recommended_extension("cyclonedx-1.7-xml"), ".cdx17.xml")
         self.assertEqual(recommended_extension("spdx-json"), ".spdx.json")
+        self.assertEqual(recommended_extension("spdx-3-json"), ".spdx3.json")
         with self.assertRaisesRegex(ValueError, "unsupported output format"):
             recommended_extension("unknown")
         with self.assertRaisesRegex(ValueError, "unsupported industry"):

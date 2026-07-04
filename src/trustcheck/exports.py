@@ -16,14 +16,17 @@ from packaging.utils import canonicalize_name
 
 from .contract import deserialize_report
 from .export_models import (
+    CYCLONEDX_17_NAMESPACE,
+    OPENVEX_CONTEXT,
+    SARIF_SCHEMA,
+    SPDX_3_CONTEXT,
+    SPDX_3_SPEC_VERSION,
+)
+from .export_models import (
     CYCLONEDX_NAMESPACE as CYCLONEDX_NAMESPACE,
 )
 from .export_models import (
     INDUSTRY_OUTPUT_FORMATS as INDUSTRY_OUTPUT_FORMATS,
-)
-from .export_models import (
-    OPENVEX_CONTEXT,
-    SARIF_SCHEMA,
 )
 from .export_models import (
     OUTPUT_FORMATS as OUTPUT_FORMATS,
@@ -88,8 +91,28 @@ def render_export(
         return _json_text(payload)
     if output_format == "cyclonedx-xml":
         return _cyclonedx_xml(packages, source_name, failures, timestamp)
+    if output_format == "cyclonedx-1.7-json":
+        payload = _cyclonedx_document(
+            packages,
+            source_name,
+            failures,
+            timestamp,
+            spec_version="1.7",
+        )
+        return _json_text(payload)
+    if output_format == "cyclonedx-1.7-xml":
+        return _cyclonedx_xml(
+            packages,
+            source_name,
+            failures,
+            timestamp,
+            spec_version="1.7",
+        )
     if output_format == "spdx-json":
         payload = _spdx_document(packages, source_name, failures, timestamp)
+        return _json_text(payload)
+    if output_format == "spdx-3-json":
+        payload = _spdx3_document(packages, source_name, failures, timestamp)
         return _json_text(payload)
     if output_format == "openvex":
         payload = _openvex_document(packages, source_name, timestamp)
@@ -660,6 +683,8 @@ def _cyclonedx_document(
     source_name: str,
     failures: Sequence[Mapping[str, str]],
     timestamp: str,
+    *,
+    spec_version: str = "1.6",
 ) -> dict[str, Any]:
     components = _cyclonedx_components(packages)
     properties = [
@@ -696,9 +721,9 @@ def _cyclonedx_document(
         ),
     )
     return {
-        "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+        "$schema": f"http://cyclonedx.org/schema/bom-{spec_version}.schema.json",
         "bomFormat": "CycloneDX",
-        "specVersion": "1.6",
+        "specVersion": spec_version,
         "serialNumber": f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, identity)}",
         "version": 1,
         "metadata": {
@@ -1095,45 +1120,64 @@ def _cyclonedx_xml(
     source_name: str,
     failures: Sequence[Mapping[str, str]],
     timestamp: str,
+    *,
+    spec_version: str = "1.6",
 ) -> str:
-    document = _cyclonedx_document(packages, source_name, failures, timestamp)
+    namespace = _cyclonedx_namespace(spec_version)
+
+    def tag(name: str) -> str:
+        return _xml_tag(name, namespace=namespace)
+
+    def text(parent: _XmlElement, name: str, value: str) -> None:
+        _xml_text(parent, name, value, namespace=namespace)
+
+    def properties(parent: _XmlElement, values: object) -> None:
+        _xml_properties(parent, values, namespace=namespace)
+
+    document = _cyclonedx_document(
+        packages,
+        source_name,
+        failures,
+        timestamp,
+        spec_version=spec_version,
+    )
     root = _XmlTree.Element(
-        _xml_tag("bom"),
+        tag("bom"),
         {
             "serialNumber": str(document["serialNumber"]),
             "version": "1",
         },
     )
-    metadata = _XmlTree.SubElement(root, _xml_tag("metadata"))
-    _xml_text(metadata, "timestamp", timestamp)
-    tools = _XmlTree.SubElement(metadata, _xml_tag("tools"))
-    tool_components = _XmlTree.SubElement(tools, _xml_tag("components"))
+    metadata = _XmlTree.SubElement(root, tag("metadata"))
+    text(metadata, "timestamp", timestamp)
+    tools = _XmlTree.SubElement(metadata, tag("tools"))
+    tool_components = _XmlTree.SubElement(tools, tag("components"))
     tool = _XmlTree.SubElement(
         tool_components,
-        _xml_tag("component"),
+        tag("component"),
         {"type": "application"},
     )
-    _xml_text(tool, "name", "trustcheck")
-    _xml_text(tool, "version", _tool_version())
-    _xml_properties(
+    text(tool, "name", "trustcheck")
+    text(tool, "version", _tool_version())
+    properties(
         metadata,
         document["metadata"]["properties"],
     )
 
-    components_element = _XmlTree.SubElement(root, _xml_tag("components"))
+    components_element = _XmlTree.SubElement(root, tag("components"))
     for component in document["components"]:
         component_element = _XmlTree.SubElement(
             components_element,
-            _xml_tag("component"),
+            tag("component"),
             {
                 "type": str(component["type"]),
                 "bom-ref": str(component["bom-ref"]),
             },
         )
-        _xml_text(component_element, "name", str(component["name"]))
-        _xml_text(component_element, "version", str(component["version"]))
+        text(component_element, "name", str(component["name"]))
+        text(component_element, "version", str(component["version"]))
         if component.get("description"):
-            _xml_text(
+            text(
                 component_element,
                 "description",
                 str(component["description"]),
@@ -1141,44 +1185,44 @@ def _cyclonedx_xml(
         if component.get("hashes"):
             hashes = _XmlTree.SubElement(
                 component_element,
-                _xml_tag("hashes"),
+                tag("hashes"),
             )
             for item in component["hashes"]:
                 hash_element = _XmlTree.SubElement(
                     hashes,
-                    _xml_tag("hash"),
+                    tag("hash"),
                     {"alg": str(item["alg"])},
                 )
                 hash_element.text = str(item["content"])
-        _xml_text(component_element, "purl", str(component["purl"]))
+        text(component_element, "purl", str(component["purl"]))
         if component.get("externalReferences"):
             references = _XmlTree.SubElement(
                 component_element,
-                _xml_tag("externalReferences"),
+                tag("externalReferences"),
             )
             for reference in component["externalReferences"]:
                 reference_element = _XmlTree.SubElement(
                     references,
-                    _xml_tag("reference"),
+                    tag("reference"),
                     {"type": str(reference["type"])},
                 )
-                _xml_text(reference_element, "url", str(reference["url"]))
-        _xml_properties(component_element, component.get("properties", []))
+                text(reference_element, "url", str(reference["url"]))
+        properties(component_element, component.get("properties", []))
 
     dependencies_element = _XmlTree.SubElement(
         root,
-        _xml_tag("dependencies"),
+        tag("dependencies"),
     )
     for relationship in document["dependencies"]:
         dependency = _XmlTree.SubElement(
             dependencies_element,
-            _xml_tag("dependency"),
+            tag("dependency"),
             {"ref": str(relationship["ref"])},
         )
         for child_ref in relationship["dependsOn"]:
             _XmlTree.SubElement(
                 dependency,
-                _xml_tag("dependency"),
+                tag("dependency"),
                 {"ref": str(child_ref)},
             )
 
@@ -1186,55 +1230,55 @@ def _cyclonedx_xml(
     if vulnerabilities:
         vulnerabilities_element = _XmlTree.SubElement(
             root,
-            _xml_tag("vulnerabilities"),
+            tag("vulnerabilities"),
         )
         for vulnerability in vulnerabilities:
             vulnerability_element = _XmlTree.SubElement(
                 vulnerabilities_element,
-                _xml_tag("vulnerability"),
+                tag("vulnerability"),
                 {"bom-ref": str(vulnerability["bom-ref"])},
             )
-            _xml_text(vulnerability_element, "id", str(vulnerability["id"]))
+            text(vulnerability_element, "id", str(vulnerability["id"]))
             source = vulnerability.get("source")
             if isinstance(source, Mapping):
                 source_element = _XmlTree.SubElement(
                     vulnerability_element,
-                    _xml_tag("source"),
+                    tag("source"),
                 )
                 if source.get("name"):
-                    _xml_text(source_element, "name", str(source["name"]))
+                    text(source_element, "name", str(source["name"]))
                 if source.get("url"):
-                    _xml_text(source_element, "url", str(source["url"]))
+                    text(source_element, "url", str(source["url"]))
             ratings = vulnerability.get("ratings")
             if isinstance(ratings, list) and ratings:
                 ratings_element = _XmlTree.SubElement(
                     vulnerability_element,
-                    _xml_tag("ratings"),
+                    tag("ratings"),
                 )
                 for rating in ratings:
                     rating_element = _XmlTree.SubElement(
                         ratings_element,
-                        _xml_tag("rating"),
+                        tag("rating"),
                     )
                     if rating.get("score") is not None:
-                        _xml_text(
+                        text(
                             rating_element,
                             "score",
                             str(rating["score"]),
                         )
-                    _xml_text(
+                    text(
                         rating_element,
                         "severity",
                         str(rating["severity"]),
                     )
                     if rating.get("method"):
-                        _xml_text(
+                        text(
                             rating_element,
                             "method",
                             str(rating["method"]),
                         )
                     if rating.get("vector"):
-                        _xml_text(
+                        text(
                             rating_element,
                             "vector",
                             str(rating["vector"]),
@@ -1243,30 +1287,30 @@ def _cyclonedx_xml(
             if isinstance(cwes, list) and cwes:
                 cwes_element = _XmlTree.SubElement(
                     vulnerability_element,
-                    _xml_tag("cwes"),
+                    tag("cwes"),
                 )
                 for cwe in cwes:
-                    _xml_text(cwes_element, "cwe", str(cwe))
-            _xml_text(
+                    text(cwes_element, "cwe", str(cwe))
+            text(
                 vulnerability_element,
                 "description",
                 str(vulnerability["description"]),
             )
             affects_element = _XmlTree.SubElement(
                 vulnerability_element,
-                _xml_tag("affects"),
+                tag("affects"),
             )
             for affected in vulnerability["affects"]:
                 target_element = _XmlTree.SubElement(
                     affects_element,
-                    _xml_tag("target"),
+                    tag("target"),
                 )
-                _xml_text(target_element, "ref", str(affected["ref"]))
-            _xml_properties(
+                text(target_element, "ref", str(affected["ref"]))
+            properties(
                 vulnerability_element,
                 vulnerability.get("properties", []),
             )
-    return _XmlTree.serialize(root)
+    return _XmlTree.serialize(root, namespace=namespace)
 
 
 def _spdx_document(
@@ -1363,6 +1407,263 @@ def _spdx_document(
             "\n"
             f"trustcheck:recommendation={_worst_recommendation(packages)}"
         ),
+    }
+
+
+def _spdx3_document(
+    packages: Sequence[ExportPackage],
+    source_name: str,
+    failures: Sequence[Mapping[str, str]],
+    timestamp: str,
+) -> dict[str, object]:
+    identity = _stable_digest(
+        source_name,
+        *(package.purl for package in packages),
+        *(
+            vulnerability.id
+            for package in packages
+            for vulnerability in package.report.vulnerabilities
+        ),
+        *(
+            f"{failure.get('requirement') or 'unknown'}:"
+            f"{failure.get('message') or 'unknown failure'}"
+            for failure in failures
+        ),
+    )
+    namespace = f"https://trustcheck.dev/spdx3/{identity}"
+    document_id = f"{namespace}#SPDXRef-DOCUMENT"
+    tool_id = f"{namespace}#SPDXRef-Tool-trustcheck"
+    creation_info: dict[str, object] = {
+        "type": "CreationInfo",
+        "specVersion": SPDX_3_SPEC_VERSION,
+        "created": timestamp,
+        "createdUsing": [tool_id],
+        "createdBy": [tool_id],
+    }
+
+    package_items: dict[str, dict[str, object]] = {}
+    relationships: list[dict[str, object]] = []
+    annotations: list[dict[str, object]] = []
+    for package in packages:
+        spdx_id = _spdx3_id(namespace, package.report.project, package.report.version)
+        package_items[package.purl] = _spdx3_package(
+            package,
+            spdx_id,
+            creation_info,
+        )
+        relationships.append(
+            _spdx3_relationship(
+                namespace,
+                document_id,
+                "describes",
+                spdx_id,
+                creation_info,
+            )
+        )
+        for dependency in package.report.dependencies:
+            dependency_purl = package_purl(
+                dependency.project,
+                dependency.version,
+            )
+            dependency_id = _spdx3_id(
+                namespace,
+                dependency.project,
+                dependency.version,
+            )
+            package_items.setdefault(
+                dependency_purl,
+                _spdx3_dependency_package(
+                    dependency,
+                    dependency_id,
+                    creation_info,
+                ),
+            )
+            relationships.append(
+                _spdx3_relationship(
+                    namespace,
+                    spdx_id,
+                    "dependsOn",
+                    dependency_id,
+                    creation_info,
+                )
+            )
+        annotations.extend(_spdx3_annotations(package, spdx_id, creation_info))
+    annotations.extend(
+        _spdx3_annotation(
+            namespace,
+            document_id,
+            (
+                "trustcheck:scan-failure:"
+                f"{failure.get('requirement') or 'unknown'}="
+                f"{failure.get('message') or 'unknown failure'}"
+            ),
+            creation_info,
+        )
+        for failure in failures
+    )
+    policy_passed = (
+        all(package.report.policy.passed for package in packages)
+        and not failures
+    )
+    root_elements: list[str] = []
+    for relationship in relationships:
+        raw_to = relationship.get("to")
+        if relationship.get("relationshipType") == "describes" and isinstance(raw_to, list):
+            root_elements.extend(str(item) for item in raw_to)
+    elements: list[dict[str, object]] = [
+        {
+            "type": "Tool",
+            "spdxId": tool_id,
+            "creationInfo": creation_info,
+            "name": "trustcheck",
+            "softwareVersion": _tool_version(),
+        },
+        *[package_items[key] for key in sorted(package_items)],
+        *_dedupe_object_dicts(relationships),
+        *annotations,
+    ]
+    return {
+        "@context": SPDX_3_CONTEXT,
+        "type": "SpdxDocument",
+        "spdxId": document_id,
+        "creationInfo": creation_info,
+        "name": f"trustcheck-{_filename_token(source_name)}",
+        "dataLicense": "CC0-1.0",
+        "profileConformance": ["core", "software", "simpleLicensing"],
+        "rootElement": root_elements,
+        "element": elements,
+        "comment": (
+            f"trustcheck:source={source_name}\n"
+            f"trustcheck:policy:passed={_bool_text(policy_passed)}"
+            "\n"
+            f"trustcheck:recommendation={_worst_recommendation(packages)}"
+        ),
+    }
+
+
+def _spdx3_package(
+    package: ExportPackage,
+    spdx_id: str,
+    creation_info: dict[str, object],
+) -> dict[str, object]:
+    report = package.report
+    return _without_empty(
+        {
+            "type": "Package",
+            "spdxId": spdx_id,
+            "creationInfo": creation_info,
+            "name": report.project,
+            "packageVersion": report.version,
+            "downloadLocation": report.package_url or "NOASSERTION",
+            "packageUrl": package.purl,
+            "primaryPurpose": "library",
+            "summary": report.summary,
+            "homePage": (
+                report.repository_urls[0]
+                if report.repository_urls
+                else report.package_url
+            ),
+            "verifiedUsing": _spdx3_hashes(package),
+            "externalIdentifier": [
+                {
+                    "type": "ExternalIdentifier",
+                    "externalIdentifierType": "purl",
+                    "identifier": package.purl,
+                }
+            ],
+            "comment": _spdx_trust_comment(package),
+        }
+    )
+
+
+def _spdx3_dependency_package(
+    dependency: Any,
+    spdx_id: str,
+    creation_info: dict[str, object],
+) -> dict[str, object]:
+    purl = package_purl(dependency.project, dependency.version)
+    return _without_empty(
+        {
+            "type": "Package",
+            "spdxId": spdx_id,
+            "creationInfo": creation_info,
+            "name": dependency.project,
+            "packageVersion": dependency.version,
+            "downloadLocation": dependency.package_url or "NOASSERTION",
+            "packageUrl": purl,
+            "primaryPurpose": "library",
+            "externalIdentifier": [
+                {
+                    "type": "ExternalIdentifier",
+                    "externalIdentifierType": "purl",
+                    "identifier": purl,
+                }
+            ],
+            "comment": (
+                f"trustcheck:recommendation={dependency.recommendation}\n"
+                f"trustcheck:dependency:depth={dependency.depth}"
+            ),
+        }
+    )
+
+
+def _spdx3_relationship(
+    namespace: str,
+    from_id: str,
+    relationship_type: str,
+    to_id: str,
+    creation_info: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "type": "Relationship",
+        "spdxId": (
+            f"{namespace}#SPDXRef-Relationship-"
+            f"{_stable_digest(from_id, relationship_type, to_id)[:16]}"
+        ),
+        "creationInfo": creation_info,
+        "from": from_id,
+        "relationshipType": relationship_type,
+        "to": [to_id],
+    }
+
+
+def _spdx3_annotations(
+    package: ExportPackage,
+    spdx_id: str,
+    creation_info: dict[str, object],
+) -> list[dict[str, object]]:
+    namespace = spdx_id.split("#", 1)[0]
+    return [
+        _spdx3_annotation(
+            namespace,
+            spdx_id,
+            annotation["comment"],
+            creation_info,
+        )
+        for annotation in _spdx_annotations(
+            package,
+            spdx_id,
+            str(creation_info["created"]),
+        )
+    ]
+
+
+def _spdx3_annotation(
+    namespace: str,
+    subject_id: str,
+    comment: object,
+    creation_info: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "type": "Annotation",
+        "spdxId": (
+            f"{namespace}#SPDXRef-Annotation-"
+            f"{_stable_digest(subject_id, str(comment))[:16]}"
+        ),
+        "creationInfo": creation_info,
+        "subject": subject_id,
+        "annotationType": "other",
+        "statement": str(comment),
     }
 
 
@@ -1933,6 +2234,23 @@ def _spdx_checksums(
     )
 
 
+def _spdx3_hashes(package: ExportPackage) -> list[dict[str, str]]:
+    return [
+        {
+            "type": "Hash",
+            "algorithm": algorithm,
+            "hashValue": digest,
+        }
+        for algorithm, digest in _spdx_checksums(package)
+    ]
+
+
+def _cyclonedx_namespace(spec_version: str) -> str:
+    if spec_version == "1.7":
+        return CYCLONEDX_17_NAMESPACE
+    return CYCLONEDX_NAMESPACE
+
+
 def _cyclonedx_hash_name(algorithm: str) -> str | None:
     names = {
         "md5": "MD5",
@@ -2063,6 +2381,10 @@ def _spdx_id(project: str, version: str) -> str:
     return f"SPDXRef-Package-{token}-{_stable_digest(project, version)[:10]}"
 
 
+def _spdx3_id(namespace: str, project: str, version: str) -> str:
+    return f"{namespace}#{_spdx_id(project, version)}"
+
+
 def _sarif_uri(value: str) -> str:
     if re.match(r"^[A-Za-z]:[\\/]", value):
         return value.replace("\\", "/")
@@ -2127,6 +2449,19 @@ def _dedupe_dicts(
     result: list[dict[str, str]] = []
     for value in values:
         key = tuple(sorted(value.items()))
+        if key not in seen:
+            seen.add(key)
+            result.append(dict(value))
+    return result
+
+
+def _dedupe_object_dicts(
+    values: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    seen: set[str] = set()
+    result: list[dict[str, object]] = []
+    for value in values:
+        key = json.dumps(value, sort_keys=True, separators=(",", ":"))
         if key not in seen:
             seen.add(key)
             result.append(dict(value))

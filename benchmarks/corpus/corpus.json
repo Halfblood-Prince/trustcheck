@@ -96,6 +96,15 @@
       "description": "Poetry lockfile shape with file hashes."
     },
     {
+      "id": "pdm-lock",
+      "path": "pdm.lock",
+      "kind": "pdm-lock",
+      "category": "lockfiles",
+      "package_count": 2,
+      "compare_with_pip_audit": false,
+      "description": "PDM lockfile shape with file hashes."
+    },
+    {
       "id": "malformed-inputs",
       "path": "requirements-malformed.txt",
       "kind": "requirements",

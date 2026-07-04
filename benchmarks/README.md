@@ -10,10 +10,11 @@ run in direct-pin mode
 independently instead of executing their build backends or requiring them to
 form one compatible environment.
 The corpus manifest lives at `benchmarks/corpus/corpus.json` and currently
-contains 133 package entries across comparable PyPI pins, marker and extra
-cases, private-index examples, lockfiles, VCS/editable requirements, hash-pinned
-requirements, intentionally malformed inputs, a complete-resolution workload,
-and a small provenance/artifact workload.
+contains 135 package entries across comparable PyPI pins, marker and extra
+cases, private-index examples, pip-tools, PEP 751, uv, Poetry, and PDM
+lockfiles, VCS/editable requirements, hash-pinned requirements, intentionally
+malformed inputs, a complete-resolution workload, and a small
+provenance/artifact workload.
 
 Only cases marked `compare_with_pip_audit` are included in timing and
 correctness samples. Non-comparable cases stay in the corpus so parser,

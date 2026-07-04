@@ -1,0 +1,22 @@
+[[package]]
+name = "urllib3"
+version = "2.2.2"
+requires_python = ">=3.8"
+summary = "HTTP library"
+files = [
+    {file = "urllib3-2.2.2-py3-none-any.whl", hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+]
+
+[[package]]
+name = "certifi"
+version = "2024.7.4"
+requires_python = ">=3.6"
+summary = "Python package for providing Mozilla's CA Bundle"
+files = [
+    {file = "certifi-2024.7.4-py3-none-any.whl", hash = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+]
+
+[metadata]
+lock_version = "4.5.0"
+python_versions = ">=3.11"
+content_hash = "0000000000000000000000000000000000000000000000000000000000000000"

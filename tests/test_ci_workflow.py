@@ -284,6 +284,45 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("live-integration.yml/runs", release)
         self.assertIn('"$age_seconds" -gt 172800', release)
 
+    def test_acceptance_matrix_is_nightly_cross_platform_and_separate(self) -> None:
+        workflow = (ROOT / ".github/workflows/acceptance-matrix.yml").read_text(
+            encoding="utf-8"
+        )
+        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        job = _job_block(workflow, "acceptance")
+
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("schedule:", workflow)
+        self.assertNotIn("pull_request:", workflow)
+        self.assertNotIn("push:", workflow)
+        self.assertIn("group: acceptance-matrix-main", workflow)
+        self.assertEqual(
+            _inline_matrix_values(job, "os"),
+            ["ubuntu-latest", "macos-latest", "windows-latest"],
+        )
+        self.assertEqual(
+            _inline_matrix_values(job, "python-version"),
+            ["3.11", "3.12", "3.13", "3.14"],
+        )
+        for acceptance_case in (
+            "pip-tools",
+            "uv-lock",
+            "poetry-lock",
+            "pdm-lock",
+            "pep751-pylock",
+            "extras-markers",
+            "private-index-fixture",
+            "native-wheel",
+            "sdist",
+        ):
+            with self.subTest(acceptance_case=acceptance_case):
+                self.assertIn(acceptance_case, workflow)
+        self.assertIn("python scripts/acceptance_matrix.py", workflow)
+        self.assertIn('TRUSTCHECK_RUN_ACCEPTANCE: "1"', workflow)
+        self.assertIn("requirements/runtime.lock", workflow)
+        self.assertIn("acceptance-reports/", workflow)
+        self.assertNotIn("acceptance_matrix.py", ci)
+
     def test_sarif_integration_uploads_stable_fixture_alerts(self) -> None:
         workflow = (ROOT / ".github/workflows/sarif-integration.yml").read_text(
             encoding="utf-8"
