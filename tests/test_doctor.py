@@ -7,8 +7,26 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from trustcheck.doctor import collect_doctor_report, render_doctor_json, render_doctor_text
+from trustcheck.cli_commands import doctor as doctor_command
+from trustcheck.doctor import (
+    _bubblewrap_check,
+    _cache_permissions_check,
+    _directory_writable,
+    _keyring_check,
+    _lockfile_tools_check,
+    _module_available,
+    _private_index_auth_check,
+    _sandbox_selection_check,
+    _sigstore_check,
+    _sigstore_state_directories,
+    collect_doctor_report,
+    render_doctor_json,
+    render_doctor_text,
+    supported_lockfile_patterns,
+)
 
 
 class DoctorTests(unittest.TestCase):
@@ -77,6 +95,196 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(checks["Keyring"].status, "fail")
         self.assertEqual(checks["Sigstore trust roots"].status, "fail")
         self.assertEqual(checks["Resolver sandbox"].status, "fail")
+
+    def test_check_helpers_cover_platform_and_configuration_branches(self) -> None:
+        self.assertEqual(
+            _bubblewrap_check(
+                executable_finder=lambda name: None,
+                platform_system="Windows",
+            ).status,
+            "warn",
+        )
+        self.assertEqual(
+            _keyring_check(
+                keyring_provider="disabled",
+                module_checker=lambda name: False,
+            ).status,
+            "warn",
+        )
+        self.assertEqual(
+            _private_index_auth_check(
+                index_urls=("https://pypi.org/simple/",),
+                keyring_provider="auto",
+                keyring_available=False,
+            ).status,
+            "pass",
+        )
+        username_only = _private_index_auth_check(
+            index_urls=("https://user@packages.example/simple/",),
+            keyring_provider="auto",
+            keyring_available=True,
+        )
+        self.assertEqual(username_only.status, "pass")
+        self.assertIn("packages.example", username_only.evidence[0])
+        self.assertEqual(
+            _cache_permissions_check(cache_dir=None, environ={}).status,
+            "warn",
+        )
+        self.assertEqual(
+            _sandbox_selection_check(
+                sandbox_mode="invalid",
+                executable_finder=lambda name: None,
+                platform_system="Linux",
+            ).status,
+            "fail",
+        )
+        self.assertEqual(
+            _sandbox_selection_check(
+                sandbox_mode="off",
+                executable_finder=lambda name: None,
+                platform_system="Linux",
+            ).status,
+            "pass",
+        )
+        self.assertEqual(
+            _sandbox_selection_check(
+                sandbox_mode="bubblewrap",
+                executable_finder=lambda name: "/usr/bin/bwrap"
+                if name == "bwrap"
+                else None,
+                platform_system="Linux",
+            ).status,
+            "pass",
+        )
+        self.assertEqual(
+            _sandbox_selection_check(
+                sandbox_mode="auto",
+                executable_finder=lambda name: "/usr/bin/docker"
+                if name == "docker"
+                else None,
+                platform_system="Windows",
+            ).status,
+            "pass",
+        )
+        lockfiles = _lockfile_tools_check(
+            executable_finder=lambda name: f"/usr/bin/{name}",
+        )
+        self.assertNotIn("missing generators", "\n".join(lockfiles.evidence))
+        self.assertIn("pylock", "\n".join(supported_lockfile_patterns()))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("trustcheck.doctor._directory_writable", return_value=False):
+                sigstore = _sigstore_check(
+                    module_checker=lambda name: True,
+                    environ={
+                        "XDG_DATA_HOME": str(root / "data"),
+                        "XDG_CACHE_HOME": str(root / "cache"),
+                        "XDG_CONFIG_HOME": str(root / "config"),
+                    },
+                    home=root,
+                )
+                cache = _cache_permissions_check(
+                    cache_dir=str(root / "cache"),
+                    environ={},
+                )
+            self.assertEqual(sigstore.status, "fail")
+            self.assertEqual(cache.status, "fail")
+
+            file_path = root / "not-a-directory"
+            file_path.write_text("x", encoding="utf-8")
+            self.assertFalse(_directory_writable(file_path))
+
+            with patch("trustcheck.doctor.sys.platform", "linux"):
+                roots = _sigstore_state_directories(environ={}, home=root)
+            self.assertEqual(roots[0], root / ".local" / "share" / "sigstore")
+
+        with patch(
+            "trustcheck.doctor.importlib.util.find_spec",
+            side_effect=ValueError("bad module"),
+        ):
+            self.assertFalse(_module_available("bad"))
+
+    def test_doctor_command_renders_json_text_and_strict_status(self) -> None:
+        passed_report = SimpleNamespace(passed=True)
+        failed_report = SimpleNamespace(passed=False)
+        emitted: list[tuple[str, str | None]] = []
+        facade = SimpleNamespace(
+            EXIT_OK=0,
+            EXIT_POLICY_FAILURE=2,
+            _emit_output=lambda rendered, output_file: emitted.append(
+                (rendered, output_file)
+            ),
+        )
+        context = SimpleNamespace(facade=facade)
+
+        json_args = SimpleNamespace(
+            cache_dir=".cache",
+            index_url="https://pypi.org/simple/",
+            extra_index_url=[],
+            keyring_provider="auto",
+            sandbox="strict",
+            format="json",
+            output_file="doctor.json",
+            strict=False,
+        )
+        with (
+            patch.object(
+                doctor_command,
+                "collect_doctor_report",
+                return_value=passed_report,
+            ) as collect,
+            patch.object(
+                doctor_command,
+                "render_doctor_json",
+                return_value='{"passed": true}',
+            ),
+            patch.object(
+                doctor_command,
+                "render_doctor_text",
+                return_value="unused",
+            ),
+        ):
+            self.assertEqual(doctor_command.run(json_args, context), 0)
+
+        collect.assert_called_once_with(
+            cache_dir=".cache",
+            index_urls=("https://pypi.org/simple/",),
+            keyring_provider="auto",
+            sandbox_mode="strict",
+        )
+        self.assertEqual(emitted[-1], ('{"passed": true}', "doctor.json"))
+
+        text_args = SimpleNamespace(
+            cache_dir=None,
+            index_url="https://pypi.org/simple/",
+            extra_index_url=["https://packages.example/simple/"],
+            keyring_provider="import",
+            sandbox="container",
+            format="text",
+            output_file=None,
+            strict=True,
+        )
+        with (
+            patch.object(
+                doctor_command,
+                "collect_doctor_report",
+                return_value=failed_report,
+            ),
+            patch.object(
+                doctor_command,
+                "render_doctor_json",
+                return_value="unused",
+            ),
+            patch.object(
+                doctor_command,
+                "render_doctor_text",
+                return_value="trustcheck doctor",
+            ),
+        ):
+            self.assertEqual(doctor_command.run(text_args, context), 2)
+
+        self.assertEqual(emitted[-1], ("trustcheck doctor", None))
 
     def test_cli_diagnostics_run_without_importable_sigstore(self) -> None:
         root = Path(__file__).resolve().parents[1]

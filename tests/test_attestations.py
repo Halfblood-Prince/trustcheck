@@ -27,6 +27,8 @@ from trustcheck.attestations import (
     _has_windows_symlink_error,
     _optional_claims,
     _production_verifier,
+    _sigstore_policy,
+    _sigstore_verification_error,
 )
 
 
@@ -174,6 +176,14 @@ class BundleTests(unittest.TestCase):
             with self.assertRaisesRegex(ConversionError, "invalid Sigstore bundle"):
                 make_attestation().to_bundle()
 
+    def test_wraps_missing_sigstore_during_bundle_conversion(self) -> None:
+        with patch(
+            "trustcheck.attestations._sigstore_symbol",
+            side_effect=ImportError("missing sigstore"),
+        ):
+            with self.assertRaisesRegex(ConversionError, "missing sigstore"):
+                make_attestation().to_bundle()
+
 
 class VerificationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -236,6 +246,21 @@ class VerificationTests(unittest.TestCase):
             ),
         ):
             with self.assertRaisesRegex(VerificationError, "bad signature"):
+                make_attestation().verify(self.publisher, self.distribution)
+
+    def test_wraps_missing_sigstore_during_verification(self) -> None:
+        with (
+            patch.object(
+                Attestation,
+                "to_bundle",
+                return_value=cast(Bundle, object()),
+            ),
+            patch(
+                "trustcheck.attestations._sigstore_symbol",
+                side_effect=ImportError("missing sigstore"),
+            ),
+        ):
+            with self.assertRaisesRegex(VerificationError, "missing sigstore"):
                 make_attestation().verify(self.publisher, self.distribution)
 
     def test_rejects_wrong_dsse_payload_type(self) -> None:
@@ -494,6 +519,23 @@ class DerClaimTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(SigstoreVerificationError):
                     _decode_der_utf8_string(value)
+
+    def test_lazy_sigstore_policy_reports_missing_dependency(self) -> None:
+        with patch(
+            "trustcheck.attestations._sigstore_symbol",
+            side_effect=ImportError("missing sigstore"),
+        ):
+            with self.assertRaisesRegex(VerificationError, "missing sigstore"):
+                _sigstore_policy()
+
+    def test_lazy_sigstore_verification_error_falls_back_when_missing(self) -> None:
+        with patch(
+            "trustcheck.attestations._sigstore_symbol",
+            side_effect=ImportError("missing sigstore"),
+        ):
+            error = _sigstore_verification_error("bad claim")
+
+        self.assertIsInstance(error, VerificationError)
 
 
 class VerifierFactoryTests(unittest.TestCase):

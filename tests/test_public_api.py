@@ -117,3 +117,9 @@ class PublicApiTests(unittest.TestCase):
         self.assertEqual(trustcheck.JSON_SCHEMA_ID, JSON_SCHEMA_ID)
         self.assertTrue(callable(trustcheck.inspect_package))
         self.assertTrue(callable(trustcheck.get_json_schema))
+
+    def test_lazy_public_api_helpers_cover_missing_and_dir(self) -> None:
+        self.assertEqual(trustcheck.__getattr__("__version__"), trustcheck.__version__)
+        self.assertIn("TrustReport", trustcheck.__dir__())
+        with self.assertRaisesRegex(AttributeError, "definitely_missing"):
+            trustcheck.__getattr__("definitely_missing")

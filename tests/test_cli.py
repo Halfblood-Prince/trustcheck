@@ -43,6 +43,7 @@ from trustcheck.cli import (
     _render_cve_json,
     _render_cve_report,
     _render_decision_report,
+    _render_decision_scan,
     _render_scan_json,
     _render_scan_text,
     _render_text_report,
@@ -1212,6 +1213,88 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("sandbox: docker image=- network=none user=non-root", rendered)
         self.assertIn("result: executed=yes exit_code=0", rendered)
         self.assertNotIn("      error:", rendered)
+
+    def test_text_report_covers_absent_optional_detail_branches(self) -> None:
+        report = make_report()
+        report.dependency_summary.review_required_projects = []
+        report.dependency_summary.metadata_only_projects = ["metadata"]
+        report.dependency_summary.verified_projects = []
+        report.dependencies = [
+            DependencyInspection(
+                requirement="metadata==1",
+                project="metadata",
+                version="1",
+                depth=1,
+                package_url=None,
+                recommendation="metadata-only",
+            )
+        ]
+        report.release_drift.compared_to_version = "2.1.0"
+        report.release_drift.signer_drift = False
+        report.release_drift.publisher_repository_drift = False
+        report.release_drift.publisher_workflow_drift = False
+        report.release_drift.builder_drift = False
+        report.release_drift.source_commit_drift = False
+        report.release_drift.build_type_drift = False
+        report.ownership = {"roles": [{"role": "Maintainer", "user": "alice"}]}
+        report.vulnerabilities = [
+            VulnerabilityRecord(
+                id="CVE-2026-0002",
+                summary="Example vulnerability.",
+                kev=True,
+            )
+        ]
+        report.files[0].sha256 = None
+        report.files[0].observed_sha256 = None
+        report.files[0].publisher_identities = []
+        report.files[0].slsa_provenance = [SlsaProvenance(source_repository="repo")]
+        report.files[0].artifact = ArtifactInspection(
+            inspected=True,
+            kind="wheel",
+            native_binaries=[
+                NativeBinaryInspection(
+                    path="gridoptim/native.so",
+                    format="ELF",
+                    signature_status="absent",
+                )
+            ],
+        )
+        report.risk_flags = [
+            RiskFlag(
+                code="manual_review",
+                severity="medium",
+                message="Review manually.",
+            )
+        ]
+
+        rendered = _render_text_report(report, verbose=True)
+
+        self.assertIn("metadata-only dependencies: metadata", rendered)
+        self.assertIn("release drift baseline: 2.1.0", rendered)
+        self.assertIn("Maintainer: alice", rendered)
+        self.assertIn("kev=yes", rendered)
+        self.assertIn("SLSA provenance:", rendered)
+        self.assertIn("gridoptim/native.so: format=ELF", rendered)
+
+        report.malicious_package = MaliciousPackageAssessment(
+            score=1,
+            level="low",
+            findings=[
+                HeuristicFinding(
+                    code="demo",
+                    category="demo",
+                    severity="low",
+                    confidence="low",
+                    score=1,
+                    message="demo",
+                    evidence=["detail"],
+                )
+            ],
+        )
+        compact = _render_text_report(report, verbose=False)
+
+        self.assertIn("malicious-package heuristic indicators:", compact)
+        self.assertNotIn("evidence: detail", compact)
 
     def test_resolve_scan_target_version_variants(self) -> None:
         class FakeClient:
@@ -2820,6 +2903,109 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("recommended action:", rendered)
         self.assertIn("evidence links:", rendered)
         self.assertNotIn("diagnostics:", rendered)
+
+    def test_decision_scan_covers_failures_empty_and_selected_reports(self) -> None:
+        empty = _render_decision_scan("requirements.txt", [], failures=[])
+        self.assertIn("decision: pass", empty)
+        self.assertIn("affected package: none", empty)
+
+        failed = _render_decision_scan(
+            "requirements.txt",
+            [],
+            failures=[{"requirement": "broken", "message": "parse failed"}],
+        )
+        self.assertIn("decision: fail", failed)
+        self.assertIn("affected package: broken", failed)
+        self.assertIn("recommended action: Fix the target", failed)
+
+        passing = _render_decision_scan(
+            "requirements.txt",
+            [make_report()],
+            failures=[],
+        )
+        self.assertIn("decision: pass", passing)
+        self.assertIn("affected package: gridoptim 2.2.0", passing)
+
+        failing_report = make_report()
+        failing_report.project = "blocked"
+        failing_report.policy.passed = False
+        failing_report.risk_flags = [
+            RiskFlag(
+                code="high_risk",
+                severity="high",
+                message="High risk.",
+            )
+        ]
+        selected = _render_decision_scan(
+            "requirements.txt",
+            [make_report(), failing_report],
+            failures=[],
+        )
+        self.assertIn("decision: fail", selected)
+        self.assertIn("affected package: blocked 2.2.0", selected)
+        self.assertNotIn("affected package: gridoptim 2.2.0", selected)
+
+    def test_decision_report_covers_link_and_action_variants(self) -> None:
+        no_links = TrustReport(
+            project="nolinks",
+            version="1",
+            summary=None,
+            package_url=None,
+        )
+        self.assertIn("  - none", _render_decision_report(no_links))
+
+        vulnerable = TrustReport(
+            project="vulnerable",
+            version="1",
+            summary=None,
+            package_url=None,
+            vulnerabilities=[
+                VulnerabilityRecord(
+                    id="CVE-2026-0001",
+                    summary="Example vulnerability.",
+                )
+            ],
+        )
+        vulnerability_rendered = _render_decision_report(vulnerable)
+        self.assertIn("blocking reason: CVE-2026-0001", vulnerability_rendered)
+        self.assertIn("Upgrade to a fixed version", vulnerability_rendered)
+
+        expected_repo = make_report()
+        expected_repo.risk_flags = [
+            RiskFlag(
+                code="expected_repository_mismatch",
+                severity="high",
+                message="Repository mismatch.",
+            )
+        ]
+        self.assertIn(
+            "Verify the publisher source",
+            _render_decision_report(expected_repo),
+        )
+
+        provenance = make_report()
+        provenance.risk_flags = [
+            RiskFlag(
+                code="provenance_missing",
+                severity="high",
+                message="No provenance.",
+            )
+        ]
+        self.assertIn(
+            "Require verified provenance",
+            _render_decision_report(provenance),
+        )
+
+        review = TrustReport(
+            project="review",
+            version="1",
+            summary=None,
+            package_url=None,
+            recommendation="review-required",
+        )
+        review_rendered = _render_decision_report(review)
+        self.assertIn("recommendation=review-required", review_rendered)
+        self.assertIn("Require verified provenance", review_rendered)
 
     def test_cli_strict_mode_fails_on_missing_verification(self) -> None:
         report = make_report()
