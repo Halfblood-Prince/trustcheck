@@ -429,6 +429,8 @@ class BenchmarkPublicationTests(unittest.TestCase):
                 "trustcheck_only": [],
                 "pip_audit_only": [],
                 "advisory_recall": {"trustcheck": 1.0, "pip_audit": 0.9},
+                "regressions": [],
+                "truth": {"case_count": 123},
             },
             "evidence": {
                 "dependency_resolution": {

@@ -103,14 +103,14 @@ are retained as workflow artifacts by
 <!-- trustcheck-benchmark:start -->
 ## Latest benchmark
 
-Last committed fixed-input `--no-deps` comparison: generated `2026-06-21T08:43:40.047949+00:00` on Python `3.14.6` with `pip-audit 2.10.0`. Corpus `2026.06` contains 133 entries; this table covers 112 comparable package entries.
+Generated `2026-07-04T12:38:12.871592+00:00` on Python `3.14.6` with `pip-audit 2.10.1`. Corpus `2026.06` contains 133 entries; this fixed-input `--no-deps` comparison covers 112 comparable package entries.
 
 | Tool | Cold p50 | Warm p50 | Warm p95 | Peak RSS | Requests p50 | Recall |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| trustcheck scan --fast | 17.08 s | 15.70 s | 15.70 s | 88.3 MiB | unknown | 1 |
-| pip-audit | 38.71 s | 39.96 s | 39.96 s | 74.4 MiB | unknown | 1 |
+| trustcheck scan --fast | 16.00 s | 14.20 s | 14.44 s | 78.0 MiB | unknown | 1 |
+| pip-audit | 36.69 s | 38.51 s | 39.82 s | 75.6 MiB | unknown | 1 |
 
-Alias-aware agreement: `0.759197` across `109` compared packages and `227` matched advisories.
+Alias-aware agreement: `1.0` across `105` compared packages and `263` matched advisories.
 Resolver exact match: `True` (trustcheck `22`, pip-audit `22`).
 <!-- trustcheck-benchmark:end -->
 

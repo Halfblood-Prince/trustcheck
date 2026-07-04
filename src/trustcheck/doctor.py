@@ -422,7 +422,10 @@ def _directory_writable(path: Path) -> bool:
 
 
 def _module_available(name: str) -> bool:
-    return importlib.util.find_spec(name) is not None
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def supported_lockfile_patterns() -> tuple[str, ...]:

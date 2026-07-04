@@ -61,6 +61,7 @@ The latest raw result is committed at `benchmarks/results/latest.json` with a
 detached `latest.json.sig` verified by `benchmark-public-key.pem`. It records
 exact tool versions, OS, Python, cold/warm cache phases, timings, peak RSS,
 corpus hashes, and every advisory disagreement. Published tables require at
-least five warm samples per tool, complete signed truth coverage for every
-comparable package entry, and a recall gate of `1.0`. They report the
-measurements without making a blanket performance claim.
+least five warm samples per tool, a signed truth corpus with declared
+correctness gates, no truth-corpus regressions, and no one-sided advisory
+findings. They report the measurements without making a blanket performance
+claim.

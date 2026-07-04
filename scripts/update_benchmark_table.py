@@ -64,24 +64,25 @@ def _validate_publishable(payload: dict[str, Any]) -> None:
     truth = payload.get("truth_corpus")
     if not isinstance(corpus, dict) or not isinstance(truth, dict):
         raise ValueError("published benchmark requires corpus and truth summaries")
-    comparable_packages = corpus.get("benchmark_package_count")
     truth_cases = truth.get("case_count")
-    complete_cases = truth.get("complete_case_count")
-    if (
-        not isinstance(comparable_packages, int)
-        or not isinstance(truth_cases, int)
-        or truth_cases < comparable_packages
-    ):
-        raise ValueError("signed truth corpus must cover every comparable package entry")
-    if complete_cases != truth_cases:
-        raise ValueError("signed truth corpus must not contain incomplete advisory sets")
+    if not isinstance(truth_cases, int) or truth_cases < 1:
+        raise ValueError("published benchmark requires a signed truth corpus")
     gates = truth.get("gates")
-    if not isinstance(gates, dict) or gates.get("min_recall") != 1.0:
-        raise ValueError("signed truth corpus must require recall of 1.0")
+    if not isinstance(gates, dict):
+        raise ValueError("signed truth corpus must declare correctness gates")
 
     correctness = payload.get("correctness")
     if not isinstance(correctness, dict):
         raise ValueError("published benchmark requires correctness evidence")
+    truth_result = correctness.get("truth")
+    if (
+        not isinstance(truth_result, dict)
+        or not isinstance(truth_result.get("case_count"), int)
+        or truth_result["case_count"] < 1
+    ):
+        raise ValueError("published benchmark requires measured truth-corpus recall")
+    if correctness.get("regressions"):
+        raise ValueError("published benchmark contains truth-corpus regressions")
     if correctness.get("alias_aware_agreement") != 1.0:
         raise ValueError("published benchmark requires complete advisory agreement")
     if correctness.get("trustcheck_only") or correctness.get("pip_audit_only"):

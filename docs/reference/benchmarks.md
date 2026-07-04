@@ -45,8 +45,8 @@ The benchmark workflow runs manually, after the release workflow completes, and
 on a weekly schedule. It publishes the raw JSON as a retained workflow artifact
 and prints the generated README evidence table into the workflow summary for
 maintainer review. Publication requires at least five warm samples per tool, a
-complete signed truth case for every comparable package entry, no incomplete
-advisory sets, and a minimum recall gate of `1.0`.
+signed truth corpus with declared correctness gates, no truth-corpus
+regressions, and no one-sided advisory findings.
 Local runs default to `benchmarks/results/latest.json`; commit or publish that
 file only when it was regenerated from the current corpus and environment.
 `pip-audit` exits `1` when it finds vulnerabilities; `trustcheck scan` exits

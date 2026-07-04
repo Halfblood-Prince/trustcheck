@@ -30,7 +30,7 @@
           "--with-osv",
           "--format",
           "json",
-          "--max-workers",
+          "--workers",
           "8",
           "--cache-dir",
           "<cache>"
@@ -50,7 +50,7 @@
           "--with-osv",
           "--format",
           "json",
-          "--max-workers",
+          "--workers",
           "8",
           "--no-deps",
           "--cache-dir",
@@ -69,7 +69,7 @@
           "--with-osv",
           "--format",
           "json",
-          "--max-workers",
+          "--workers",
           "8",
           "--no-deps",
           "--cache-dir",
@@ -127,7 +127,7 @@
         "--with-osv",
         "--format",
         "json",
-        "--max-workers",
+        "--workers",
         "8",
         "--no-deps",
         "--cache-dir",
@@ -146,7 +146,7 @@
         "--with-osv",
         "--format",
         "json",
-        "--max-workers",
+        "--workers",
         "8",
         "--no-deps",
         "--cache-dir",
@@ -156,9 +156,9 @@
   },
   "configuration": {
     "advisory_service": "OSV",
-    "command_retries": 1,
-    "evidence_iterations": 1,
-    "iterations": 1,
+    "command_retries": 2,
+    "evidence_iterations": 5,
+    "iterations": 5,
     "max_workers": 8,
     "memory_measurement": "psutil process-tree peak resident set size",
     "request_measurement": {
@@ -170,7 +170,7 @@
       "markers-extras"
     ],
     "timeout_seconds": 300.0,
-    "warmups": 0
+    "warmups": 1
   },
   "corpus": {
     "benchmark_case_count": 2,
@@ -325,713 +325,13 @@
       "reference": "signed-curated-truth-corpus",
       "trustcheck": 1.0
     },
-    "alias_aware_agreement": 0.759197,
-    "matched_advisories": 227,
-    "packages_compared": 109,
-    "pip_audit_only": [
-      {
-        "identifiers": [
-          "BIT-DJANGO-2025-57833",
-          "CVE-2025-57833",
-          "GHSA-6W2R-R2M5-XQ5W",
-          "PYSEC-2025-105"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2025-48432",
-          "CVE-2025-48432",
-          "GHSA-7XR5-9HCQ-CHF9",
-          "PYSEC-2025-47"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2022-36359",
-          "CVE-2022-36359",
-          "GHSA-8X94-HMJH-97HQ",
-          "PYSEC-2022-245"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2025-64459",
-          "CVE-2025-64459",
-          "GHSA-FRMV-PR5F-9MCR",
-          "PYSEC-2025-108"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2025-64458",
-          "CVE-2025-64458",
-          "GHSA-QW25-V68C-QJF3",
-          "PYSEC-2025-107"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-12781",
-          "GHSA-6C7V-2F49-8H26",
-          "PYSEC-2019-10"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-14232",
-          "GHSA-C4QH-4VGV-QC6G",
-          "PYSEC-2019-11"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-14233",
-          "GHSA-H5JV-4P7W-64JG",
-          "PYSEC-2019-12"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-14234",
-          "GHSA-6R97-CJ55-9HRQ",
-          "PYSEC-2019-13"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-14235",
-          "GHSA-V9QG-3J8P-R63V",
-          "PYSEC-2019-14"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-19118",
-          "GHSA-HVMF-R92R-27HR",
-          "PYSEC-2019-15"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-19844",
-          "GHSA-VFQ6-HQ5R-27R6",
-          "PYSEC-2019-16"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-12308",
-          "GHSA-7RP2-FM2H-WCHJ",
-          "PYSEC-2019-79"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2020-13254",
-          "CVE-2020-13254",
-          "GHSA-WPJR-J57X-WXFW",
-          "PYSEC-2020-31"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2020-13596",
-          "CVE-2020-13596",
-          "GHSA-2M34-JCJV-45XF",
-          "PYSEC-2020-32"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2020-24583",
-          "CVE-2020-24583",
-          "GHSA-M6GJ-H9GM-GW44",
-          "PYSEC-2020-33"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2020-24584",
-          "CVE-2020-24584",
-          "GHSA-FR28-569J-53C4",
-          "PYSEC-2020-34"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2020-7471",
-          "CVE-2020-7471",
-          "GHSA-HMR4-M2H5-33QX",
-          "PYSEC-2020-35"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2020-9402",
-          "CVE-2020-9402",
-          "GHSA-3GH2-XW74-JMCW",
-          "PYSEC-2020-345",
-          "PYSEC-2020-36"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-44420",
-          "CVE-2021-44420",
-          "GHSA-V6RH-HP5X-86RV",
-          "PYSEC-2021-439"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-28658",
-          "CVE-2021-28658",
-          "GHSA-XGXC-V2QG-CHMH",
-          "PYSEC-2021-6"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-31542",
-          "CVE-2021-31542",
-          "GHSA-RXJP-MFM9-W4WR",
-          "PYSEC-2021-7"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-32052",
-          "CVE-2021-32052",
-          "GHSA-QM57-VHQ3-3FWF",
-          "PYSEC-2021-8"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-3281",
-          "CVE-2021-3281",
-          "GHSA-FVGF-6H6H-3322",
-          "PYSEC-2021-9"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-33203",
-          "CVE-2021-33203",
-          "GHSA-68W8-QJQ3-2GFM",
-          "PYSEC-2021-98"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-33571",
-          "CVE-2021-33571",
-          "GHSA-P99V-5W3C-JQQ9",
-          "PYSEC-2021-99"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-45115",
-          "CVE-2021-45115",
-          "GHSA-53QW-Q765-4FWW",
-          "PYSEC-2022-1"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2022-22818",
-          "CVE-2022-22818",
-          "GHSA-95RW-FX8R-36V6",
-          "PYSEC-2022-19"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2022-28346",
-          "CVE-2022-28346",
-          "GHSA-2GWJ-7JMV-H26R",
-          "PYSEC-2022-190"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2022-28347",
-          "CVE-2022-28347",
-          "GHSA-W24H-V9QH-8GXJ",
-          "PYSEC-2022-191"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-45116",
-          "CVE-2021-45116",
-          "GHSA-8C5J-9R9F-C6W8",
-          "PYSEC-2022-2"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2022-23833",
-          "CVE-2022-23833",
-          "GHSA-6CW3-G6WV-C2XV",
-          "PYSEC-2022-20"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-45452",
-          "CVE-2021-45452",
-          "GHSA-JRH2-HC4R-7JWX",
-          "PYSEC-2022-3"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-11358",
-          "DRUPAL-CORE-2019-006",
-          "GHSA-6C3J-C64M-QHGQ"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2024-45231",
-          "CVE-2024-45231",
-          "GHSA-RRQC-C2JX-6JGV"
-        ],
-        "project": "django",
-        "version": "2.2.0"
-      },
-      {
-        "identifiers": [
-          "CVE-2026-23949",
-          "GHSA-58PV-8J8X-9VJ2"
-        ],
-        "project": "jaraco-context",
-        "version": "5.3.0"
-      }
-    ],
+    "alias_aware_agreement": 1.0,
+    "matched_advisories": 263,
+    "packages_compared": 105,
+    "pip_audit_only": [],
     "pip_audit_vulnerable_packages": 38,
     "regressions": [],
-    "trustcheck_only": [
-      {
-        "identifiers": [
-          "CVE-2019-11358",
-          "DRUPAL-CORE-2019-006",
-          "GHSA-6C3J-C64M-QHGQ"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2025-57833",
-          "CVE-2025-57833",
-          "GHSA-6W2R-R2M5-XQ5W",
-          "PYSEC-2025-105"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2025-48432",
-          "CVE-2025-48432",
-          "GHSA-7XR5-9HCQ-CHF9",
-          "PYSEC-2025-47"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2022-36359",
-          "CVE-2022-36359",
-          "GHSA-8X94-HMJH-97HQ",
-          "PYSEC-2022-245"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2025-64459",
-          "CVE-2025-64459",
-          "GHSA-FRMV-PR5F-9MCR",
-          "PYSEC-2025-108"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2025-64458",
-          "CVE-2025-64458",
-          "GHSA-QW25-V68C-QJF3",
-          "PYSEC-2025-107"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2024-45231",
-          "CVE-2024-45231",
-          "GHSA-RRQC-C2JX-6JGV"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-12781",
-          "GHSA-6C7V-2F49-8H26",
-          "PYSEC-2019-10"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-14232",
-          "GHSA-C4QH-4VGV-QC6G",
-          "PYSEC-2019-11"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-14233",
-          "GHSA-H5JV-4P7W-64JG",
-          "PYSEC-2019-12"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-14234",
-          "GHSA-6R97-CJ55-9HRQ",
-          "PYSEC-2019-13"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-14235",
-          "GHSA-V9QG-3J8P-R63V",
-          "PYSEC-2019-14"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-19118",
-          "GHSA-HVMF-R92R-27HR",
-          "PYSEC-2019-15"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-19844",
-          "GHSA-VFQ6-HQ5R-27R6",
-          "PYSEC-2019-16"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "CVE-2019-12308",
-          "GHSA-7RP2-FM2H-WCHJ",
-          "PYSEC-2019-79"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2020-13254",
-          "CVE-2020-13254",
-          "GHSA-WPJR-J57X-WXFW",
-          "PYSEC-2020-31"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2020-13596",
-          "CVE-2020-13596",
-          "GHSA-2M34-JCJV-45XF",
-          "PYSEC-2020-32"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2020-24583",
-          "CVE-2020-24583",
-          "GHSA-M6GJ-H9GM-GW44",
-          "PYSEC-2020-33"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2020-24584",
-          "CVE-2020-24584",
-          "GHSA-FR28-569J-53C4",
-          "PYSEC-2020-34"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2020-7471",
-          "CVE-2020-7471",
-          "GHSA-HMR4-M2H5-33QX",
-          "PYSEC-2020-35"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2020-9402",
-          "CVE-2020-9402",
-          "GHSA-3GH2-XW74-JMCW",
-          "PYSEC-2020-345",
-          "PYSEC-2020-36"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-44420",
-          "CVE-2021-44420",
-          "GHSA-V6RH-HP5X-86RV",
-          "PYSEC-2021-439"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-28658",
-          "CVE-2021-28658",
-          "GHSA-XGXC-V2QG-CHMH",
-          "PYSEC-2021-6"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-31542",
-          "CVE-2021-31542",
-          "GHSA-RXJP-MFM9-W4WR",
-          "PYSEC-2021-7"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-32052",
-          "CVE-2021-32052",
-          "GHSA-QM57-VHQ3-3FWF",
-          "PYSEC-2021-8"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-3281",
-          "CVE-2021-3281",
-          "GHSA-FVGF-6H6H-3322",
-          "PYSEC-2021-9"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-33203",
-          "CVE-2021-33203",
-          "GHSA-68W8-QJQ3-2GFM",
-          "PYSEC-2021-98"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-33571",
-          "CVE-2021-33571",
-          "GHSA-P99V-5W3C-JQQ9",
-          "PYSEC-2021-99"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-45115",
-          "CVE-2021-45115",
-          "GHSA-53QW-Q765-4FWW",
-          "PYSEC-2022-1"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2022-22818",
-          "CVE-2022-22818",
-          "GHSA-95RW-FX8R-36V6",
-          "PYSEC-2022-19"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2022-28346",
-          "CVE-2022-28346",
-          "GHSA-2GWJ-7JMV-H26R",
-          "PYSEC-2022-190"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2022-28347",
-          "CVE-2022-28347",
-          "GHSA-W24H-V9QH-8GXJ",
-          "PYSEC-2022-191"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-45116",
-          "CVE-2021-45116",
-          "GHSA-8C5J-9R9F-C6W8",
-          "PYSEC-2022-2"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2022-23833",
-          "CVE-2022-23833",
-          "GHSA-6CW3-G6WV-C2XV",
-          "PYSEC-2022-20"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "BIT-DJANGO-2021-45452",
-          "CVE-2021-45452",
-          "GHSA-JRH2-HC4R-7JWX",
-          "PYSEC-2022-3"
-        ],
-        "project": "django",
-        "version": "2.2"
-      },
-      {
-        "identifiers": [
-          "CVE-2026-23949",
-          "GHSA-58PV-8J8X-9VJ2"
-        ],
-        "project": "jaraco.context",
-        "version": "5.3.0"
-      }
-    ],
+    "trustcheck_only": [],
     "trustcheck_vulnerable_packages": 38,
     "truth": {
       "case_count": 9,
@@ -1051,11 +351,11 @@
   },
   "environment": {
     "implementation": "CPython",
-    "pip_audit": "pip-audit 2.10.0",
+    "pip_audit": "pip-audit 2.10.1",
     "platform": "Windows-11-10.0.26200-SP0",
     "processor": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
     "python": "3.14.6",
-    "trustcheck": "trustcheck 1.10.0 (report schema 1.10.0)"
+    "trustcheck": "trustcheck 0.0.0+ci (report schema 1.11.0)"
   },
   "evidence": {
     "dependency_resolution": {
@@ -1096,49 +396,73 @@
             "exit_codes": [
               1
             ],
-            "median_seconds": 35.831414,
+            "median_seconds": 30.82971,
             "memory_samples_bytes": [
-              176115712
+              178638848
             ],
-            "p50_seconds": 35.831414,
-            "p95_seconds": 35.831414,
-            "peak_memory_bytes": 176115712,
+            "p50_seconds": 30.82971,
+            "p95_seconds": 30.82971,
+            "peak_memory_bytes": 178638848,
             "request_count_p50": null,
             "request_count_samples": [],
             "samples_seconds": [
-              35.831414
+              30.82971
             ]
           },
           "exit_codes": [
+            1,
+            1,
+            1,
+            1,
             1
           ],
-          "median_seconds": 35.097864,
+          "median_seconds": 31.58645,
           "memory_samples_bytes": [
-            177258496
+            177827840,
+            176525312,
+            176279552,
+            177131520,
+            176369664
           ],
-          "p50_seconds": 35.097864,
-          "p95_seconds": 35.097864,
-          "peak_memory_bytes": 177258496,
+          "p50_seconds": 31.58645,
+          "p95_seconds": 45.140637,
+          "peak_memory_bytes": 177827840,
           "request_count_p50": null,
           "request_count_samples": [],
           "samples_seconds": [
-            35.097864
+            31.372736,
+            31.938813,
+            31.58645,
+            31.323049,
+            45.140637
           ],
           "warm": {
             "exit_codes": [
+              1,
+              1,
+              1,
+              1,
               1
             ],
-            "median_seconds": 35.097864,
+            "median_seconds": 31.58645,
             "memory_samples_bytes": [
-              177258496
+              177827840,
+              176525312,
+              176279552,
+              177131520,
+              176369664
             ],
-            "p50_seconds": 35.097864,
-            "p95_seconds": 35.097864,
-            "peak_memory_bytes": 177258496,
+            "p50_seconds": 31.58645,
+            "p95_seconds": 45.140637,
+            "peak_memory_bytes": 177827840,
             "request_count_p50": null,
             "request_count_samples": [],
             "samples_seconds": [
-              35.097864
+              31.372736,
+              31.938813,
+              31.58645,
+              31.323049,
+              45.140637
             ]
           }
         },
@@ -1147,49 +471,73 @@
             "exit_codes": [
               0
             ],
-            "median_seconds": 5.055269,
+            "median_seconds": 3.195165,
             "memory_samples_bytes": [
-              180502528
+              134176768
             ],
-            "p50_seconds": 5.055269,
-            "p95_seconds": 5.055269,
-            "peak_memory_bytes": 180502528,
+            "p50_seconds": 3.195165,
+            "p95_seconds": 3.195165,
+            "peak_memory_bytes": 134176768,
             "request_count_p50": null,
             "request_count_samples": [],
             "samples_seconds": [
-              5.055269
+              3.195165
             ]
           },
           "exit_codes": [
+            0,
+            0,
+            0,
+            0,
             0
           ],
-          "median_seconds": 4.414959,
+          "median_seconds": 2.888421,
           "memory_samples_bytes": [
-            181190656
+            135864320,
+            135680000,
+            135610368,
+            134926336,
+            135872512
           ],
-          "p50_seconds": 4.414959,
-          "p95_seconds": 4.414959,
-          "peak_memory_bytes": 181190656,
+          "p50_seconds": 2.888421,
+          "p95_seconds": 2.939019,
+          "peak_memory_bytes": 135872512,
           "request_count_p50": null,
           "request_count_samples": [],
           "samples_seconds": [
-            4.414959
+            2.814913,
+            2.888421,
+            2.812837,
+            2.939019,
+            2.912825
           ],
           "warm": {
             "exit_codes": [
+              0,
+              0,
+              0,
+              0,
               0
             ],
-            "median_seconds": 4.414959,
+            "median_seconds": 2.888421,
             "memory_samples_bytes": [
-              181190656
+              135864320,
+              135680000,
+              135610368,
+              134926336,
+              135872512
             ],
-            "p50_seconds": 4.414959,
-            "p95_seconds": 4.414959,
-            "peak_memory_bytes": 181190656,
+            "p50_seconds": 2.888421,
+            "p95_seconds": 2.939019,
+            "peak_memory_bytes": 135872512,
             "request_count_p50": null,
             "request_count_samples": [],
             "samples_seconds": [
-              4.414959
+              2.814913,
+              2.888421,
+              2.812837,
+              2.939019,
+              2.912825
             ]
           }
         }
@@ -1211,55 +559,87 @@
               "exit_codes": [
                 0
               ],
-              "median_seconds": 3.318855,
+              "median_seconds": 1.926091,
               "memory_samples_bytes": [
-                216678400
+                141840384
               ],
-              "p50_seconds": 3.318855,
-              "p95_seconds": 3.318855,
-              "peak_memory_bytes": 216678400,
+              "p50_seconds": 1.926091,
+              "p95_seconds": 1.926091,
+              "peak_memory_bytes": 141840384,
               "request_count_p50": 12,
               "request_count_samples": [
                 12
               ],
               "samples_seconds": [
-                3.318855
+                1.926091
               ]
             },
             "exit_codes": [
+              0,
+              0,
+              0,
+              0,
               0
             ],
-            "median_seconds": 3.189593,
+            "median_seconds": 1.766644,
             "memory_samples_bytes": [
-              231776256
+              130752512,
+              138956800,
+              128966656,
+              140496896,
+              142036992
             ],
-            "p50_seconds": 3.189593,
-            "p95_seconds": 3.189593,
-            "peak_memory_bytes": 231776256,
+            "p50_seconds": 1.766644,
+            "p95_seconds": 1.789554,
+            "peak_memory_bytes": 142036992,
             "request_count_p50": 5,
             "request_count_samples": [
+              5,
+              5,
+              5,
+              5,
               5
             ],
             "samples_seconds": [
-              3.189593
+              1.789554,
+              1.788147,
+              1.734051,
+              1.765533,
+              1.766644
             ],
             "warm": {
               "exit_codes": [
+                0,
+                0,
+                0,
+                0,
                 0
               ],
-              "median_seconds": 3.189593,
+              "median_seconds": 1.766644,
               "memory_samples_bytes": [
-                231776256
+                130752512,
+                138956800,
+                128966656,
+                140496896,
+                142036992
               ],
-              "p50_seconds": 3.189593,
-              "p95_seconds": 3.189593,
-              "peak_memory_bytes": 231776256,
+              "p50_seconds": 1.766644,
+              "p95_seconds": 1.789554,
+              "peak_memory_bytes": 142036992,
               "request_count_p50": 5,
               "request_count_samples": [
+                5,
+                5,
+                5,
+                5,
                 5
               ],
               "samples_seconds": [
-                3.189593
+                1.789554,
+                1.788147,
+                1.734051,
+                1.765533,
+                1.766644
               ]
             }
           },
@@ -1279,55 +659,87 @@
               "exit_codes": [
                 0
               ],
-              "median_seconds": 2.131065,
+              "median_seconds": 1.641652,
               "memory_samples_bytes": [
-                83476480
+                88338432
               ],
-              "p50_seconds": 2.131065,
-              "p95_seconds": 2.131065,
-              "peak_memory_bytes": 83476480,
+              "p50_seconds": 1.641652,
+              "p95_seconds": 1.641652,
+              "peak_memory_bytes": 88338432,
               "request_count_p50": 5,
               "request_count_samples": [
                 5
               ],
               "samples_seconds": [
-                2.131065
+                1.641652
               ]
             },
             "exit_codes": [
+              0,
+              0,
+              0,
+              0,
               0
             ],
-            "median_seconds": 1.789908,
+            "median_seconds": 1.498918,
             "memory_samples_bytes": [
-              84025344
+              87232512,
+              87588864,
+              87285760,
+              87711744,
+              88170496
             ],
-            "p50_seconds": 1.789908,
-            "p95_seconds": 1.789908,
-            "peak_memory_bytes": 84025344,
+            "p50_seconds": 1.498918,
+            "p95_seconds": 2.181391,
+            "peak_memory_bytes": 88170496,
             "request_count_p50": 2,
             "request_count_samples": [
+              2,
+              2,
+              2,
+              2,
               2
             ],
             "samples_seconds": [
-              1.789908
+              1.498918,
+              2.181391,
+              1.528637,
+              1.482354,
+              1.497649
             ],
             "warm": {
               "exit_codes": [
+                0,
+                0,
+                0,
+                0,
                 0
               ],
-              "median_seconds": 1.789908,
+              "median_seconds": 1.498918,
               "memory_samples_bytes": [
-                84025344
+                87232512,
+                87588864,
+                87285760,
+                87711744,
+                88170496
               ],
-              "p50_seconds": 1.789908,
-              "p95_seconds": 1.789908,
-              "peak_memory_bytes": 84025344,
+              "p50_seconds": 1.498918,
+              "p95_seconds": 2.181391,
+              "peak_memory_bytes": 88170496,
               "request_count_p50": 2,
               "request_count_samples": [
+                2,
+                2,
+                2,
+                2,
                 2
               ],
               "samples_seconds": [
-                1.789908
+                1.498918,
+                2.181391,
+                1.528637,
+                1.482354,
+                1.497649
               ]
             }
           },
@@ -1379,6 +791,11 @@
             "PYSEC-2024-26"
           ],
           [
+            "CVE-2026-54275",
+            "GHSA-4M7W-QMGQ-4WJ5",
+            "PYSEC-2026-237"
+          ],
+          [
             "CVE-2026-54279",
             "GHSA-2FQR-MR3J-6WP8"
           ],
@@ -1393,10 +810,6 @@
           [
             "CVE-2026-54273",
             "GHSA-4FVR-RGM6-GQMC"
-          ],
-          [
-            "CVE-2026-54275",
-            "GHSA-4M7W-QMGQ-4WJ5"
           ],
           [
             "CVE-2025-69226",
@@ -2003,11 +1416,6 @@
         "version": "1.2.2"
       },
       {
-        "advisories": [],
-        "project": "fastapi",
-        "version": "0.112.0"
-      },
-      {
         "advisories": [
           [
             "CVE-2021-32677",
@@ -2023,6 +1431,11 @@
         ],
         "project": "fastapi",
         "version": "0.65.1"
+      },
+      {
+        "advisories": [],
+        "project": "fastapi",
+        "version": "0.112.0"
       },
       {
         "advisories": [
@@ -2096,7 +1509,8 @@
         "advisories": [
           [
             "CVE-2025-43859",
-            "GHSA-VQFR-H8MV-GHFJ"
+            "GHSA-VQFR-H8MV-GHFJ",
+            "PYSEC-2026-348"
           ]
         ],
         "project": "h11",
@@ -2244,6 +1658,11 @@
             "PYSEC-2024-165"
           ],
           [
+            "CVE-2026-44727",
+            "GHSA-FCW5-X6J4-CCMP",
+            "PYSEC-2026-366"
+          ],
+          [
             "CVE-2025-61669",
             "GHSA-QH7Q-6QM3-653W",
             "PYSEC-2026-67"
@@ -2261,10 +1680,6 @@
           [
             "CVE-2026-40110",
             "GHSA-24QX-W28J-9M6P"
-          ],
-          [
-            "CVE-2026-44727",
-            "GHSA-FCW5-X6J4-CCMP"
           ]
         ],
         "project": "jupyter-server",
@@ -2556,7 +1971,8 @@
           [
             "BIT-PILLOW-2023-50447",
             "CVE-2023-50447",
-            "GHSA-3F63-HFP8-52JQ"
+            "GHSA-3F63-HFP8-52JQ",
+            "PYSEC-2026-457"
           ],
           [
             "BIT-PILLOW-2024-28219",
@@ -2881,20 +2297,22 @@
             "X41-2026-002"
           ],
           [
+            "CVE-2026-54282",
+            "GHSA-JP82-JPQV-5VV3",
+            "PYSEC-2026-248"
+          ],
+          [
+            "CVE-2026-54283",
+            "GHSA-82W8-QH3P-5JFQ",
+            "PYSEC-2026-249"
+          ],
+          [
             "CVE-2025-54121",
             "GHSA-2C2J-9GV5-CJ73"
           ],
           [
-            "CVE-2026-54283",
-            "GHSA-82W8-QH3P-5JFQ"
-          ],
-          [
             "CVE-2024-47874",
             "GHSA-F96H-PMFR-66VW"
-          ],
-          [
-            "CVE-2026-54282",
-            "GHSA-JP82-JPQV-5VV3"
           ],
           [
             "CVE-2026-48818",
@@ -3207,7 +2625,8 @@
           ],
           [
             "CVE-2026-54275",
-            "GHSA-4M7W-QMGQ-4WJ5"
+            "GHSA-4M7W-QMGQ-4WJ5",
+            "PYSEC-2026-237"
           ],
           [
             "CVE-2025-69226",
@@ -3839,11 +3258,6 @@
         "version": "1.2.2"
       },
       {
-        "advisories": [],
-        "project": "fastapi",
-        "version": "0.112.0"
-      },
-      {
         "advisories": [
           [
             "CVE-2021-32677",
@@ -3859,6 +3273,11 @@
         ],
         "project": "fastapi",
         "version": "0.65.1"
+      },
+      {
+        "advisories": [],
+        "project": "fastapi",
+        "version": "0.112.0"
       },
       {
         "advisories": [
@@ -3932,7 +3351,8 @@
         "advisories": [
           [
             "CVE-2025-43859",
-            "GHSA-VQFR-H8MV-GHFJ"
+            "GHSA-VQFR-H8MV-GHFJ",
+            "PYSEC-2026-348"
           ]
         ],
         "project": "h11",
@@ -3981,7 +3401,7 @@
       },
       {
         "advisories": [],
-        "project": "jaraco.classes",
+        "project": "jaraco-classes",
         "version": "3.4.0"
       },
       {
@@ -3991,12 +3411,12 @@
             "GHSA-58PV-8J8X-9VJ2"
           ]
         ],
-        "project": "jaraco.context",
+        "project": "jaraco-context",
         "version": "5.3.0"
       },
       {
         "advisories": [],
-        "project": "jaraco.functools",
+        "project": "jaraco-functools",
         "version": "4.0.1"
       },
       {
@@ -4070,7 +3490,8 @@
           ],
           [
             "CVE-2026-44727",
-            "GHSA-FCW5-X6J4-CCMP"
+            "GHSA-FCW5-X6J4-CCMP",
+            "PYSEC-2026-366"
           ],
           [
             "CVE-2023-49080",
@@ -4244,7 +3665,8 @@
           [
             "BIT-PILLOW-2023-50447",
             "CVE-2023-50447",
-            "GHSA-3F63-HFP8-52JQ"
+            "GHSA-3F63-HFP8-52JQ",
+            "PYSEC-2026-457"
           ],
           [
             "BIT-PILLOW-2024-28219",
@@ -4718,7 +4140,8 @@
           ],
           [
             "CVE-2026-54283",
-            "GHSA-82W8-QH3P-5JFQ"
+            "GHSA-82W8-QH3P-5JFQ",
+            "PYSEC-2026-249"
           ],
           [
             "CVE-2024-47874",
@@ -4726,7 +4149,8 @@
           ],
           [
             "CVE-2026-54282",
-            "GHSA-JP82-JPQV-5VV3"
+            "GHSA-JP82-JPQV-5VV3",
+            "PYSEC-2026-248"
           ],
           [
             "CVE-2026-48818",
@@ -5020,56 +4444,80 @@
       }
     ]
   },
-  "generated_at": "2026-06-21T08:43:40.047949+00:00",
+  "generated_at": "2026-07-04T12:38:12.871592+00:00",
   "performance": {
     "pip_audit": {
       "cold": {
         "exit_codes": [
           1
         ],
-        "median_seconds": 38.711623,
+        "median_seconds": 36.686508,
         "memory_samples_bytes": [
-          78233600
+          79032320
         ],
-        "p50_seconds": 38.711623,
-        "p95_seconds": 38.711623,
-        "peak_memory_bytes": 78233600,
+        "p50_seconds": 36.686508,
+        "p95_seconds": 36.686508,
+        "peak_memory_bytes": 79032320,
         "request_count_p50": null,
         "request_count_samples": [],
         "samples_seconds": [
-          38.711623
+          36.686508
         ]
       },
       "exit_codes": [
+        1,
+        1,
+        1,
+        1,
         1
       ],
-      "median_seconds": 39.964781,
+      "median_seconds": 38.512865,
       "memory_samples_bytes": [
-        78049280
+        79278080,
+        78991360,
+        79147008,
+        79040512,
+        79003648
       ],
-      "p50_seconds": 39.964781,
-      "p95_seconds": 39.964781,
-      "peak_memory_bytes": 78049280,
+      "p50_seconds": 38.512865,
+      "p95_seconds": 39.821235,
+      "peak_memory_bytes": 79278080,
       "request_count_p50": null,
       "request_count_samples": [],
       "samples_seconds": [
-        39.964781
+        38.512865,
+        37.01427,
+        39.821235,
+        37.075603,
+        39.784664
       ],
       "warm": {
         "exit_codes": [
+          1,
+          1,
+          1,
+          1,
           1
         ],
-        "median_seconds": 39.964781,
+        "median_seconds": 38.512865,
         "memory_samples_bytes": [
-          78049280
+          79278080,
+          78991360,
+          79147008,
+          79040512,
+          79003648
         ],
-        "p50_seconds": 39.964781,
-        "p95_seconds": 39.964781,
-        "peak_memory_bytes": 78049280,
+        "p50_seconds": 38.512865,
+        "p95_seconds": 39.821235,
+        "peak_memory_bytes": 79278080,
         "request_count_p50": null,
         "request_count_samples": [],
         "samples_seconds": [
-          39.964781
+          38.512865,
+          37.01427,
+          39.821235,
+          37.075603,
+          39.784664
         ]
       }
     },
@@ -5078,49 +4526,73 @@
         "exit_codes": [
           0
         ],
-        "median_seconds": 17.078388,
+        "median_seconds": 15.996341,
         "memory_samples_bytes": [
-          100581376
+          89595904
         ],
-        "p50_seconds": 17.078388,
-        "p95_seconds": 17.078388,
-        "peak_memory_bytes": 100581376,
+        "p50_seconds": 15.996341,
+        "p95_seconds": 15.996341,
+        "peak_memory_bytes": 89595904,
         "request_count_p50": null,
         "request_count_samples": [],
         "samples_seconds": [
-          17.078388
+          15.996341
         ]
       },
       "exit_codes": [
+        0,
+        0,
+        0,
+        0,
         0
       ],
-      "median_seconds": 15.70012,
+      "median_seconds": 14.200191,
       "memory_samples_bytes": [
-        92610560
+        81010688,
+        81272832,
+        81805312,
+        81379328,
+        81539072
       ],
-      "p50_seconds": 15.70012,
-      "p95_seconds": 15.70012,
-      "peak_memory_bytes": 92610560,
+      "p50_seconds": 14.200191,
+      "p95_seconds": 14.442911,
+      "peak_memory_bytes": 81805312,
       "request_count_p50": null,
       "request_count_samples": [],
       "samples_seconds": [
-        15.70012
+        13.989282,
+        14.442911,
+        14.242832,
+        13.812089,
+        14.200191
       ],
       "warm": {
         "exit_codes": [
+          0,
+          0,
+          0,
+          0,
           0
         ],
-        "median_seconds": 15.70012,
+        "median_seconds": 14.200191,
         "memory_samples_bytes": [
-          92610560
+          81010688,
+          81272832,
+          81805312,
+          81379328,
+          81539072
         ],
-        "p50_seconds": 15.70012,
-        "p95_seconds": 15.70012,
-        "peak_memory_bytes": 92610560,
+        "p50_seconds": 14.200191,
+        "p95_seconds": 14.442911,
+        "peak_memory_bytes": 81805312,
         "request_count_p50": null,
         "request_count_samples": [],
         "samples_seconds": [
-          15.70012
+          13.989282,
+          14.442911,
+          14.242832,
+          13.812089,
+          14.200191
         ]
       }
     }
@@ -5128,6 +4600,7 @@
   "schema": "urn:trustcheck:benchmark:pip-audit:4.0.0",
   "truth_corpus": {
     "case_count": 11,
+    "complete_case_count": 7,
     "gates": {
       "max_false_positives": 0,
       "min_recall": 0.75

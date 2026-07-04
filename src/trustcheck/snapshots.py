@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import subprocess  # nosec B404
@@ -13,9 +14,6 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from packaging.utils import canonicalize_name
-from sigstore.errors import Error as SigstoreError
-from sigstore.models import Bundle
-from sigstore.verify import Verifier, policy
 
 from .models import VulnerabilityRecord, VulnerabilitySuppression
 
@@ -24,6 +22,12 @@ LEGACY_ADVISORY_SNAPSHOT_SCHEMA = "urn:trustcheck:advisory-snapshot:1.0.0"
 DEFAULT_MAX_ADVISORY_AGE_HOURS = 168
 Clock = Callable[[], datetime]
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
+_SIGSTORE_EXPORTS = {
+    "Bundle": ("sigstore.models", "Bundle"),
+    "SigstoreError": ("sigstore.errors", "Error"),
+    "Verifier": ("sigstore.verify", "Verifier"),
+    "policy": ("sigstore.verify", "policy"),
+}
 
 
 class AdvisorySnapshotError(ValueError):
@@ -238,17 +242,25 @@ class AdvisorySnapshotStore:
                 "a trusted Sigstore certificate identity is required for advisory snapshots"
             )
         try:
-            bundle = Bundle.from_json(bundle_path.read_text(encoding="utf-8"))
-            verifier = Verifier.production(offline=self.offline)
+            bundle_type = _sigstore_symbol("Bundle")
+            verifier_type = _sigstore_symbol("Verifier")
+            policy_module = _sigstore_symbol("policy")
+            sigstore_error = _sigstore_symbol("SigstoreError")
+            bundle = bundle_type.from_json(bundle_path.read_text(encoding="utf-8"))
+            verifier = verifier_type.production(offline=self.offline)
             verifier.verify_artifact(
                 contents,
                 bundle,
-                policy.Identity(
+                policy_module.Identity(
                     identity=self.sigstore_identity,
                     issuer=self.sigstore_issuer,
                 ),
             )
-        except (OSError, UnicodeError, ValueError, SigstoreError) as exc:
+        except (OSError, UnicodeError, ValueError, ImportError) as exc:
+            raise AdvisorySnapshotError(
+                f"advisory snapshot Sigstore verification failed for {path}: {exc}"
+            ) from exc
+        except sigstore_error as exc:
             raise AdvisorySnapshotError(
                 f"advisory snapshot Sigstore verification failed for {path}: {exc}"
             ) from exc
@@ -338,6 +350,22 @@ def _records_digest(records: dict[str, Any]) -> str:
 
 def _snapshot_bundle_path(path: Path) -> Path:
     return path.with_name(f"{path.name}.sigstore.json")
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _SIGSTORE_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attribute = _SIGSTORE_EXPORTS[name]
+    value = getattr(importlib.import_module(module_name), attribute)
+    globals()[name] = value
+    return value
+
+
+def _sigstore_symbol(name: str) -> Any:
+    try:
+        return globals()[name]
+    except KeyError:
+        return __getattr__(name)
 
 
 def _sign_snapshot(path: Path, *, runner: CommandRunner) -> Path:

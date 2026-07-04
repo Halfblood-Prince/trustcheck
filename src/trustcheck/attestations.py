@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import sys
 from typing import Any, Literal, cast
@@ -16,12 +17,6 @@ from packaging.utils import (
 )
 from packaging.version import Version
 from pydantic import Base64Bytes, BaseModel, ConfigDict, Field, ValidationError
-from sigstore.errors import Error as SigstoreError
-from sigstore.errors import TUFError
-from sigstore.errors import VerificationError as SigstoreVerificationError
-from sigstore.models import Bundle
-from sigstore.verify import Verifier, policy
-from sigstore.verify.policy import VerificationPolicy
 
 from .provenance import (
     SLSA_PROVENANCE_V1,
@@ -36,6 +31,14 @@ SUPPORTED_ATTESTATION_TYPES = {PYPI_PUBLISH_V1, SLSA_PROVENANCE_V1}
 _SdistName = tuple[NormalizedName, Version]
 _BdistName = tuple[NormalizedName, Version, BuildTag, frozenset[Tag]]
 _DistName = _SdistName | _BdistName
+_SIGSTORE_EXPORTS = {
+    "Bundle": ("sigstore.models", "Bundle"),
+    "SigstoreError": ("sigstore.errors", "Error"),
+    "SigstoreVerificationError": ("sigstore.errors", "VerificationError"),
+    "TUFError": ("sigstore.errors", "TUFError"),
+    "Verifier": ("sigstore.verify", "Verifier"),
+    "policy": ("sigstore.verify", "policy"),
+}
 
 
 class AttestationError(ValueError):
@@ -97,7 +100,8 @@ class Publisher(BaseModel):
     vcs_origin: str | None = None
     vcs_ref: str | None = None
 
-    def as_policy(self) -> VerificationPolicy:
+    def as_policy(self) -> Any:
+        policy_module = _sigstore_policy()
         if self.kind == "GitHub":
             return _GitHubPublisherPolicy(
                 repository=_required(self.repository, "repository", self.kind),
@@ -113,7 +117,7 @@ class Publisher(BaseModel):
                 ),
             )
         if self.kind == "Google":
-            return policy.Identity(
+            return policy_module.Identity(
                 identity=_required(self.email, "email", self.kind),
                 issuer="https://accounts.google.com",
             )
@@ -136,7 +140,7 @@ class Attestation(BaseModel):
     verification_material: VerificationMaterial
     envelope: Envelope
 
-    def to_bundle(self) -> Bundle:
+    def to_bundle(self) -> Any:
         material = self.verification_material
         bundle_payload = {
             "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
@@ -160,8 +164,14 @@ class Attestation(BaseModel):
             },
         }
         try:
-            return Bundle.from_json(json.dumps(bundle_payload))
-        except (SigstoreError, ValueError) as exc:
+            bundle_type = _sigstore_symbol("Bundle")
+            sigstore_error = _sigstore_symbol("SigstoreError")
+            return bundle_type.from_json(json.dumps(bundle_payload))
+        except ImportError as exc:
+            raise ConversionError(
+                f"invalid Sigstore bundle: {exc}"
+            ) from exc
+        except (sigstore_error, ValueError) as exc:
             raise ConversionError(f"invalid Sigstore bundle: {exc}") from exc
 
     def verify(
@@ -173,11 +183,16 @@ class Attestation(BaseModel):
     ) -> tuple[str, dict[str, Any] | None]:
         bundle = self.to_bundle()
         try:
+            sigstore_verification_error = _sigstore_symbol(
+                "SigstoreVerificationError"
+            )
             payload_type, payload = _production_verifier(offline=offline).verify_dsse(
                 bundle,
                 publisher.as_policy(),
             )
-        except SigstoreVerificationError as exc:
+        except ImportError as exc:
+            raise VerificationError(f"sigstore package is not importable: {exc}") from exc
+        except sigstore_verification_error as exc:
             raise VerificationError(str(exc)) from exc
 
         if payload_type != IN_TOTO_PAYLOAD_TYPE:
@@ -242,29 +257,35 @@ class _GitHubPublisherPolicy:
     def __init__(self, repository: str, workflow: str) -> None:
         self._repository = repository
         self._workflow = workflow
-        self._base_policy = policy.AllOf(
+        policy_module = _sigstore_policy()
+        self._base_policy = policy_module.AllOf(
             [
-                policy.OIDCIssuerV2("https://token.actions.githubusercontent.com"),
-                policy.OIDCSourceRepositoryURI(f"https://github.com/{repository}"),
+                policy_module.OIDCIssuerV2(
+                    "https://token.actions.githubusercontent.com"
+                ),
+                policy_module.OIDCSourceRepositoryURI(
+                    f"https://github.com/{repository}"
+                ),
             ]
         )
 
     def verify(self, cert: Certificate) -> None:
+        policy_module = _sigstore_policy()
         self._base_policy.verify(cert)
         suffixes = _optional_claims(
             cert,
-            policy.OIDCSourceRepositoryDigest.oid,
-            policy.OIDCSourceRepositoryRef.oid,
+            policy_module.OIDCSourceRepositoryDigest.oid,
+            policy_module.OIDCSourceRepositoryRef.oid,
         )
         if not suffixes:
-            raise SigstoreVerificationError(
+            raise _sigstore_verification_error(
                 "Certificate must contain either Source Repository Digest "
                 "or Source Repository Ref"
             )
 
-        policy.AnyOf(
+        policy_module.AnyOf(
             [
-                policy.OIDCBuildConfigURI(
+                policy_module.OIDCBuildConfigURI(
                     "https://github.com/"
                     f"{self._repository}/.github/workflows/{self._workflow}@{suffix}"
                 )
@@ -277,22 +298,26 @@ class _GitLabPublisherPolicy:
     def __init__(self, repository: str, workflow_filepath: str) -> None:
         self._repository = repository
         self._workflow_filepath = workflow_filepath
-        self._base_policy = policy.AllOf(
+        policy_module = _sigstore_policy()
+        self._base_policy = policy_module.AllOf(
             [
-                policy.OIDCIssuerV2("https://gitlab.com"),
-                policy.OIDCSourceRepositoryURI(f"https://gitlab.com/{repository}"),
+                policy_module.OIDCIssuerV2("https://gitlab.com"),
+                policy_module.OIDCSourceRepositoryURI(
+                    f"https://gitlab.com/{repository}"
+                ),
             ]
         )
 
     def verify(self, cert: Certificate) -> None:
+        policy_module = _sigstore_policy()
         self._base_policy.verify(cert)
         suffixes = [
-            _claim(cert, policy.OIDCSourceRepositoryDigest.oid),
-            _claim(cert, policy.OIDCSourceRepositoryRef.oid),
+            _claim(cert, policy_module.OIDCSourceRepositoryDigest.oid),
+            _claim(cert, policy_module.OIDCSourceRepositoryRef.oid),
         ]
-        policy.AnyOf(
+        policy_module.AnyOf(
             [
-                policy.OIDCBuildConfigURI(
+                policy_module.OIDCBuildConfigURI(
                     f"https://gitlab.com/{self._repository}//"
                     f"{self._workflow_filepath}@{suffix}"
                 )
@@ -309,18 +334,19 @@ class _CircleCIPublisherPolicy:
         vcs_origin: str | None,
         vcs_ref: str | None,
     ) -> None:
-        policies: list[VerificationPolicy] = [
-            policy.OIDCIssuerV2("https://oidc.circleci.com"),
-            policy.OIDCBuildSignerURI(
+        policy_module = _sigstore_policy()
+        policies: list[Any] = [
+            policy_module.OIDCIssuerV2("https://oidc.circleci.com"),
+            policy_module.OIDCBuildSignerURI(
                 f"https://circleci.com/api/v2/projects/{project_id}/"
                 f"pipeline-definitions/{pipeline_definition_id}"
             ),
         ]
         if vcs_origin is not None:
-            policies.append(policy.OIDCSourceRepositoryURI(vcs_origin))
+            policies.append(policy_module.OIDCSourceRepositoryURI(vcs_origin))
         if vcs_ref is not None:
-            policies.append(policy.OIDCSourceRepositoryRef(vcs_ref))
-        self._policy = policy.AllOf(policies)
+            policies.append(policy_module.OIDCSourceRepositoryRef(vcs_ref))
+        self._policy = policy_module.AllOf(policies)
 
     def verify(self, cert: Certificate) -> None:
         self._policy.verify(cert)
@@ -334,16 +360,18 @@ def _required(value: str | None, field: str, publisher_kind: str) -> str:
     return value
 
 
-def _production_verifier(*, offline: bool) -> Verifier:
+def _production_verifier(*, offline: bool) -> Any:
+    verifier_type = _sigstore_symbol("Verifier")
+    tuf_error = _sigstore_symbol("TUFError")
     try:
-        return Verifier.production(offline=offline)
-    except TUFError as exc:
+        return verifier_type.production(offline=offline)
+    except tuf_error as exc:
         if offline or sys.platform != "win32" or not _has_windows_symlink_error(exc):
             raise
 
         # TUF refresh requires Windows symlink privileges. Sigstore's offline
         # verifier uses the trusted-root snapshot embedded in its wheel.
-        return Verifier.production(offline=True)
+        return verifier_type.production(offline=True)
 
 
 def _has_windows_symlink_error(error: BaseException) -> bool:
@@ -385,13 +413,17 @@ def _claim(cert: Certificate, oid: x509.ObjectIdentifier) -> str:
 
 def _decode_der_utf8_string(encoded: bytes) -> str:
     if len(encoded) < 2 or encoded[0] != 0x0C:
-        raise SigstoreVerificationError("certificate claim is not a DER UTF8String")
+        raise _sigstore_verification_error(
+            "certificate claim is not a DER UTF8String"
+        )
 
     first_length = encoded[1]
     if first_length & 0x80:
         length_bytes = first_length & 0x7F
         if length_bytes == 0 or length_bytes > 4 or len(encoded) < 2 + length_bytes:
-            raise SigstoreVerificationError("certificate claim has invalid DER length")
+            raise _sigstore_verification_error(
+                "certificate claim has invalid DER length"
+            )
         length = int.from_bytes(encoded[2 : 2 + length_bytes], "big")
         value_offset = 2 + length_bytes
     else:
@@ -399,10 +431,43 @@ def _decode_der_utf8_string(encoded: bytes) -> str:
         value_offset = 2
 
     if value_offset + length != len(encoded):
-        raise SigstoreVerificationError("certificate claim has invalid DER length")
+        raise _sigstore_verification_error(
+            "certificate claim has invalid DER length"
+        )
     try:
         return encoded[value_offset:].decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise SigstoreVerificationError(
+        raise _sigstore_verification_error(
             "certificate claim is not valid UTF-8"
         ) from exc
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _SIGSTORE_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attribute = _SIGSTORE_EXPORTS[name]
+    value = getattr(importlib.import_module(module_name), attribute)
+    globals()[name] = value
+    return value
+
+
+def _sigstore_symbol(name: str) -> Any:
+    try:
+        return globals()[name]
+    except KeyError:
+        return __getattr__(name)
+
+
+def _sigstore_policy() -> Any:
+    try:
+        return _sigstore_symbol("policy")
+    except ImportError as exc:
+        raise VerificationError(f"sigstore package is not importable: {exc}") from exc
+
+
+def _sigstore_verification_error(message: str) -> Exception:
+    try:
+        error_type = _sigstore_symbol("SigstoreVerificationError")
+    except ImportError:
+        return VerificationError(message)
+    return error_type(message)

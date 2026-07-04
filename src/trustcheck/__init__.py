@@ -1,121 +1,8 @@
-from importlib.metadata import PackageNotFoundError, version
+from __future__ import annotations
 
-from .advisories import (
-    CisaKevClient,
-    EpssClient,
-    OsvClient,
-    OsvProvider,
-    VulnerabilityIntelligenceClient,
-)
-from .cache import CacheIntegrityError, ContentAddressedCache
-from .contract import JSON_SCHEMA_ID, JSON_SCHEMA_VERSION, get_json_schema
-from .doctor import (
-    DoctorCheck,
-    DoctorReport,
-    collect_doctor_report,
-    render_doctor_json,
-    render_doctor_text,
-)
-from .exports import (
-    INDUSTRY_OUTPUT_FORMATS,
-    OUTPUT_FORMATS,
-    ExportPackage,
-    SourceLocation,
-    package_purl,
-    render_export,
-)
-from .indexes import (
-    DependencyConfusionFinding,
-    IndexConfiguration,
-    IndexFile,
-    IndexProject,
-    SimpleRepositoryClient,
-)
-from .lockfiles import LockedPackage, LockfileResolution, load_lockfile
-from .malicious import (
-    DEFAULT_TRUSTED_PROJECTS,
-    RULE_METADATA,
-    HeuristicRuleMetadata,
-    analyze_python_source,
-    heuristic_score,
-    inspect_native_binary,
-    normalize_rule_thresholds,
-    normalize_score_thresholds,
-)
-from .manifest import (
-    DEFAULT_TRUST_MANIFEST_PATH,
-    TRUST_MANIFEST_SCHEMA,
-    ManifestIssue,
-    ManifestVerificationResult,
-    build_manifest,
-    load_manifest,
-    render_manifest_verification_text,
-    verify_manifest,
-    write_manifest,
-)
-from .models import (
-    DynamicAnalysisResult,
-    HeuristicFinding,
-    MaliciousPackageAssessment,
-    NativeBinaryInspection,
-    ProvenanceIssue,
-    ProvenanceMaterial,
-    RemediationSummary,
-    SlsaProvenance,
-    TrustReport,
-    VulnerabilitySuppression,
-)
-from .plugins import (
-    PLUGIN_API_VERSION,
-    PLUGIN_GROUPS,
-    AdvisorySourcePlugin,
-    ArtifactAnalyzerPlugin,
-    IndexPlugin,
-    PluginDescriptor,
-    PluginError,
-    PluginManager,
-    PolicyRulePlugin,
-    RendererPlugin,
-)
-from .provenance import (
-    SLSA_PROVENANCE_V1,
-    SlsaValidationError,
-    analyze_slsa_provenance,
-    evaluate_source_release_provenance,
-    publisher_matches_organization_allowlist,
-    validate_publisher_organization_allowlist,
-)
-from .remediation import (
-    REMEDIATION_SCHEMA_ID,
-    REMEDIATION_SCHEMA_VERSION,
-    BlockedFix,
-    FilePatch,
-    PullRequestResult,
-    RemediationError,
-    RemediationPlan,
-    RemediationUpgrade,
-    RemediationValidation,
-    SemanticEdit,
-    apply_prepared_remediation,
-    create_pull_request,
-    plan_remediation,
-    prepare_remediation,
-)
-from .resolver import (
-    ArtifactReference,
-    PipResolver,
-    Resolution,
-    ResolutionError,
-    ResolvedDistribution,
-    TargetEnvironment,
-    discover_installed_distributions,
-)
-from .service import inspect_package
-from .snapshots import (
-    ADVISORY_SNAPSHOT_SCHEMA,
-    AdvisorySnapshotError,
-    AdvisorySnapshotStore,
-)
+from importlib import import_module
+from importlib.metadata import PackageNotFoundError, version
+from typing import Any
 
 try:
     from ._version import version as __version__
@@ -225,3 +112,167 @@ __all__ = [
     "verify_manifest",
     "write_manifest",
 ]
+
+_EXPORTS = {
+    "ADVISORY_SNAPSHOT_SCHEMA": ("trustcheck.snapshots", "ADVISORY_SNAPSHOT_SCHEMA"),
+    "AdvisorySnapshotError": ("trustcheck.snapshots", "AdvisorySnapshotError"),
+    "AdvisorySnapshotStore": ("trustcheck.snapshots", "AdvisorySnapshotStore"),
+    "AdvisorySourcePlugin": ("trustcheck.plugins", "AdvisorySourcePlugin"),
+    "ArtifactAnalyzerPlugin": ("trustcheck.plugins", "ArtifactAnalyzerPlugin"),
+    "ArtifactReference": ("trustcheck.resolver", "ArtifactReference"),
+    "BlockedFix": ("trustcheck.remediation", "BlockedFix"),
+    "CacheIntegrityError": ("trustcheck.cache", "CacheIntegrityError"),
+    "CisaKevClient": ("trustcheck.advisories", "CisaKevClient"),
+    "ContentAddressedCache": ("trustcheck.cache", "ContentAddressedCache"),
+    "DEFAULT_TRUST_MANIFEST_PATH": (
+        "trustcheck.manifest",
+        "DEFAULT_TRUST_MANIFEST_PATH",
+    ),
+    "DEFAULT_TRUSTED_PROJECTS": ("trustcheck.malicious", "DEFAULT_TRUSTED_PROJECTS"),
+    "DependencyConfusionFinding": (
+        "trustcheck.indexes",
+        "DependencyConfusionFinding",
+    ),
+    "DoctorCheck": ("trustcheck.doctor", "DoctorCheck"),
+    "DoctorReport": ("trustcheck.doctor", "DoctorReport"),
+    "DynamicAnalysisResult": ("trustcheck.models", "DynamicAnalysisResult"),
+    "EpssClient": ("trustcheck.advisories", "EpssClient"),
+    "ExportPackage": ("trustcheck.exports", "ExportPackage"),
+    "FilePatch": ("trustcheck.remediation", "FilePatch"),
+    "HeuristicFinding": ("trustcheck.models", "HeuristicFinding"),
+    "HeuristicRuleMetadata": ("trustcheck.malicious", "HeuristicRuleMetadata"),
+    "INDUSTRY_OUTPUT_FORMATS": ("trustcheck.exports", "INDUSTRY_OUTPUT_FORMATS"),
+    "IndexConfiguration": ("trustcheck.indexes", "IndexConfiguration"),
+    "IndexFile": ("trustcheck.indexes", "IndexFile"),
+    "IndexPlugin": ("trustcheck.plugins", "IndexPlugin"),
+    "IndexProject": ("trustcheck.indexes", "IndexProject"),
+    "JSON_SCHEMA_ID": ("trustcheck.contract", "JSON_SCHEMA_ID"),
+    "JSON_SCHEMA_VERSION": ("trustcheck.contract", "JSON_SCHEMA_VERSION"),
+    "LockfileResolution": ("trustcheck.lockfiles", "LockfileResolution"),
+    "LockedPackage": ("trustcheck.lockfiles", "LockedPackage"),
+    "MaliciousPackageAssessment": (
+        "trustcheck.models",
+        "MaliciousPackageAssessment",
+    ),
+    "ManifestIssue": ("trustcheck.manifest", "ManifestIssue"),
+    "ManifestVerificationResult": (
+        "trustcheck.manifest",
+        "ManifestVerificationResult",
+    ),
+    "NativeBinaryInspection": ("trustcheck.models", "NativeBinaryInspection"),
+    "OUTPUT_FORMATS": ("trustcheck.exports", "OUTPUT_FORMATS"),
+    "OsvClient": ("trustcheck.advisories", "OsvClient"),
+    "OsvProvider": ("trustcheck.advisories", "OsvProvider"),
+    "PLUGIN_API_VERSION": ("trustcheck.plugins", "PLUGIN_API_VERSION"),
+    "PLUGIN_GROUPS": ("trustcheck.plugins", "PLUGIN_GROUPS"),
+    "PipResolver": ("trustcheck.resolver", "PipResolver"),
+    "PluginDescriptor": ("trustcheck.plugins", "PluginDescriptor"),
+    "PluginError": ("trustcheck.plugins", "PluginError"),
+    "PluginManager": ("trustcheck.plugins", "PluginManager"),
+    "PolicyRulePlugin": ("trustcheck.plugins", "PolicyRulePlugin"),
+    "ProvenanceIssue": ("trustcheck.models", "ProvenanceIssue"),
+    "ProvenanceMaterial": ("trustcheck.models", "ProvenanceMaterial"),
+    "PullRequestResult": ("trustcheck.remediation", "PullRequestResult"),
+    "REMEDIATION_SCHEMA_ID": ("trustcheck.remediation", "REMEDIATION_SCHEMA_ID"),
+    "REMEDIATION_SCHEMA_VERSION": (
+        "trustcheck.remediation",
+        "REMEDIATION_SCHEMA_VERSION",
+    ),
+    "RULE_METADATA": ("trustcheck.malicious", "RULE_METADATA"),
+    "RemediationError": ("trustcheck.remediation", "RemediationError"),
+    "RemediationPlan": ("trustcheck.remediation", "RemediationPlan"),
+    "RemediationSummary": ("trustcheck.models", "RemediationSummary"),
+    "RemediationUpgrade": ("trustcheck.remediation", "RemediationUpgrade"),
+    "RemediationValidation": ("trustcheck.remediation", "RemediationValidation"),
+    "RendererPlugin": ("trustcheck.plugins", "RendererPlugin"),
+    "Resolution": ("trustcheck.resolver", "Resolution"),
+    "ResolutionError": ("trustcheck.resolver", "ResolutionError"),
+    "ResolvedDistribution": ("trustcheck.resolver", "ResolvedDistribution"),
+    "SLSA_PROVENANCE_V1": ("trustcheck.provenance", "SLSA_PROVENANCE_V1"),
+    "SemanticEdit": ("trustcheck.remediation", "SemanticEdit"),
+    "SimpleRepositoryClient": ("trustcheck.indexes", "SimpleRepositoryClient"),
+    "SlsaProvenance": ("trustcheck.models", "SlsaProvenance"),
+    "SlsaValidationError": ("trustcheck.provenance", "SlsaValidationError"),
+    "SourceLocation": ("trustcheck.exports", "SourceLocation"),
+    "TRUST_MANIFEST_SCHEMA": ("trustcheck.manifest", "TRUST_MANIFEST_SCHEMA"),
+    "TargetEnvironment": ("trustcheck.resolver", "TargetEnvironment"),
+    "TrustReport": ("trustcheck.models", "TrustReport"),
+    "VulnerabilityIntelligenceClient": (
+        "trustcheck.advisories",
+        "VulnerabilityIntelligenceClient",
+    ),
+    "VulnerabilitySuppression": (
+        "trustcheck.models",
+        "VulnerabilitySuppression",
+    ),
+    "analyze_python_source": ("trustcheck.malicious", "analyze_python_source"),
+    "analyze_slsa_provenance": (
+        "trustcheck.provenance",
+        "analyze_slsa_provenance",
+    ),
+    "apply_prepared_remediation": (
+        "trustcheck.remediation",
+        "apply_prepared_remediation",
+    ),
+    "build_manifest": ("trustcheck.manifest", "build_manifest"),
+    "collect_doctor_report": ("trustcheck.doctor", "collect_doctor_report"),
+    "create_pull_request": ("trustcheck.remediation", "create_pull_request"),
+    "discover_installed_distributions": (
+        "trustcheck.resolver",
+        "discover_installed_distributions",
+    ),
+    "evaluate_source_release_provenance": (
+        "trustcheck.provenance",
+        "evaluate_source_release_provenance",
+    ),
+    "get_json_schema": ("trustcheck.contract", "get_json_schema"),
+    "heuristic_score": ("trustcheck.malicious", "heuristic_score"),
+    "inspect_native_binary": ("trustcheck.malicious", "inspect_native_binary"),
+    "inspect_package": ("trustcheck.service", "inspect_package"),
+    "load_lockfile": ("trustcheck.lockfiles", "load_lockfile"),
+    "load_manifest": ("trustcheck.manifest", "load_manifest"),
+    "normalize_rule_thresholds": (
+        "trustcheck.malicious",
+        "normalize_rule_thresholds",
+    ),
+    "normalize_score_thresholds": (
+        "trustcheck.malicious",
+        "normalize_score_thresholds",
+    ),
+    "package_purl": ("trustcheck.exports", "package_purl"),
+    "plan_remediation": ("trustcheck.remediation", "plan_remediation"),
+    "prepare_remediation": ("trustcheck.remediation", "prepare_remediation"),
+    "publisher_matches_organization_allowlist": (
+        "trustcheck.provenance",
+        "publisher_matches_organization_allowlist",
+    ),
+    "render_doctor_json": ("trustcheck.doctor", "render_doctor_json"),
+    "render_doctor_text": ("trustcheck.doctor", "render_doctor_text"),
+    "render_export": ("trustcheck.exports", "render_export"),
+    "render_manifest_verification_text": (
+        "trustcheck.manifest",
+        "render_manifest_verification_text",
+    ),
+    "validate_publisher_organization_allowlist": (
+        "trustcheck.provenance",
+        "validate_publisher_organization_allowlist",
+    ),
+    "verify_manifest": ("trustcheck.manifest", "verify_manifest"),
+    "write_manifest": ("trustcheck.manifest", "write_manifest"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name == "__version__":
+        return __version__
+    try:
+        module_name, attribute = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+    value = getattr(import_module(module_name), attribute)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *__all__})
