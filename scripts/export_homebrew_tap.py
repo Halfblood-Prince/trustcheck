@@ -8,9 +8,9 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from urllib.error import URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+
+import urllib3
 
 PACKAGE_LINE = re.compile(
     r"^(?P<name>[A-Za-z0-9_.-]+)==(?P<version>[^\\\s;]+)(?:\s*;[^\\]+)?(?:\s*\\)?$"
@@ -104,22 +104,29 @@ def read_pypi_json(project: str, version: str) -> Mapping[str, object]:
     encoded_project = quote(project, safe="")
     encoded_version = quote(version, safe="")
     url = f"https://pypi.org/pypi/{encoded_project}/{encoded_version}/json"
-    request = Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "trustcheck-homebrew-tap-exporter",
-        },
-    )
+    pool = urllib3.PoolManager()
     last_error: Exception | None = None
     for attempt in range(1, 7):
         try:
-            with urlopen(request, timeout=30) as response:
-                payload = json.load(response)
+            response = pool.request(
+                "GET",
+                url,
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "trustcheck-homebrew-tap-exporter",
+                },
+                retries=False,
+                timeout=urllib3.Timeout(total=30),
+            )
+            if response.status >= 400:
+                raise ValueError(
+                    f"{project}=={version}: PyPI returned HTTP {response.status}"
+                )
+            payload = json.loads(response.data)
             if not isinstance(payload, dict):
                 raise ValueError(f"{project}=={version}: PyPI returned non-object JSON")
             return payload
-        except (OSError, URLError, json.JSONDecodeError) as exc:
+        except (urllib3.exceptions.HTTPError, ValueError) as exc:
             last_error = exc
             if attempt < 6:
                 time.sleep(10)
