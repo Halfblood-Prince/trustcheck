@@ -137,6 +137,11 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("github.event_name == 'push'", workflow)
         self.assertIn("group: coverage-badge", workflow)
         self.assertIn("cancel-in-progress: true", workflow)
+        self.assertIn("git -C \"$publish_root\" fetch --depth=1 origin coverage-badge", workflow)
+        self.assertIn("show FETCH_HEAD:PyPI.png", workflow)
+        self.assertIn("refusing to replace the asset branch", workflow)
+        self.assertIn("\"without it.\"", workflow)
+        self.assertIn("git -C \"$publish_root\" add PyPI.png coverage.svg", workflow)
         self.assertIn("git -C \"$publish_root\" push --force origin coverage-badge", workflow)
         self.assertNotIn("git diff --exit-code -- docs/assets/images/coverage.svg", workflow)
 

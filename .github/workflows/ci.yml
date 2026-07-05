@@ -379,13 +379,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           publish_root="$(mktemp -d)"
-          cp coverage-artifacts/coverage-badge/coverage.svg "$publish_root/coverage.svg"
           git -C "$publish_root" init
           git -C "$publish_root" config user.name "github-actions[bot]"
           git -C "$publish_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$publish_root" add coverage.svg
-          git -C "$publish_root" commit -m "Update coverage badge for ${GITHUB_SHA}"
-          git -C "$publish_root" branch -M coverage-badge
           git -C "$publish_root" remote add origin \
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$publish_root" fetch --depth=1 origin coverage-badge
+          if ! git -C "$publish_root" show FETCH_HEAD:PyPI.png > "$publish_root/PyPI.png"; then
+            printf '%s\n' \
+              "PyPI.png is missing from coverage-badge; refusing to replace the asset branch" \
+              "without it." >&2
+            exit 1
+          fi
+          cp coverage-artifacts/coverage-badge/coverage.svg "$publish_root/coverage.svg"
+          git -C "$publish_root" add PyPI.png coverage.svg
+          git -C "$publish_root" commit -m "Update coverage badge for ${GITHUB_SHA}"
+          git -C "$publish_root" branch -M coverage-badge
           git -C "$publish_root" push --force origin coverage-badge
