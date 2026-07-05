@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import re
 import shutil
@@ -9,8 +10,6 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import quote
-
-import urllib3
 
 PACKAGE_LINE = re.compile(
     r"^(?P<name>[A-Za-z0-9_.-]+)==(?P<version>[^\\\s;]+)(?:\s*;[^\\]+)?(?:\s*\\)?$"
@@ -103,33 +102,39 @@ def parse_checksums(path: Path) -> dict[str, str]:
 def read_pypi_json(project: str, version: str) -> Mapping[str, object]:
     encoded_project = quote(project, safe="")
     encoded_version = quote(version, safe="")
-    url = f"https://pypi.org/pypi/{encoded_project}/{encoded_version}/json"
-    pool = urllib3.PoolManager()
+    path = f"/pypi/{encoded_project}/{encoded_version}/json"
     last_error: Exception | None = None
     for attempt in range(1, 7):
+        connection: http.client.HTTPSConnection | None = None
         try:
-            response = pool.request(
+            # PyPI host is fixed, and Python 3.12+ verifies TLS certificates by default.
+            # nosemgrep
+            connection = http.client.HTTPSConnection("pypi.org", timeout=30)
+            connection.request(
                 "GET",
-                url,
+                path,
                 headers={
                     "Accept": "application/json",
                     "User-Agent": "trustcheck-homebrew-tap-exporter",
                 },
-                retries=False,
-                timeout=urllib3.Timeout(total=30),
             )
+            response = connection.getresponse()
+            response_data = response.read()
             if response.status >= 400:
                 raise ValueError(
                     f"{project}=={version}: PyPI returned HTTP {response.status}"
                 )
-            payload = json.loads(response.data)
+            payload = json.loads(response_data.decode("utf-8"))
             if not isinstance(payload, dict):
                 raise ValueError(f"{project}=={version}: PyPI returned non-object JSON")
             return payload
-        except (urllib3.exceptions.HTTPError, ValueError) as exc:
+        except (OSError, http.client.HTTPException, ValueError) as exc:
             last_error = exc
             if attempt < 6:
                 time.sleep(10)
+        finally:
+            if connection is not None:
+                connection.close()
     raise ValueError(f"Unable to read PyPI metadata for {project}=={version}") from last_error
 
 

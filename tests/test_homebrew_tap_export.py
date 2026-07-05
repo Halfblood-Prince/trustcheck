@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from collections.abc import Mapping
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts import export_homebrew_tap
 
@@ -34,6 +35,55 @@ def _pypi_payload(name: str, version: str, sha256: str) -> dict[str, object]:
 
 
 class HomebrewTapExportTests(unittest.TestCase):
+    def test_read_pypi_json_uses_stdlib_https_connection(self) -> None:
+        class FakeResponse:
+            status = 200
+
+            def read(self) -> bytes:
+                return json.dumps({"urls": []}).encode("utf-8")
+
+        class FakeConnection:
+            instances: list[FakeConnection] = []
+
+            def __init__(self, host: str, *, timeout: int) -> None:
+                self.host = host
+                self.timeout = timeout
+                self.request_args: tuple[str, str] | None = None
+                self.request_headers: dict[str, str] | None = None
+                self.closed = False
+                self.instances.append(self)
+
+            def request(
+                self,
+                method: str,
+                path: str,
+                *,
+                headers: dict[str, str],
+            ) -> None:
+                self.request_args = (method, path)
+                self.request_headers = headers
+
+            def getresponse(self) -> FakeResponse:
+                return FakeResponse()
+
+            def close(self) -> None:
+                self.closed = True
+
+        with patch.object(
+            export_homebrew_tap.http.client,
+            "HTTPSConnection",
+            FakeConnection,
+        ):
+            payload = export_homebrew_tap.read_pypi_json("demo-package", "1.2.3")
+
+        self.assertEqual(payload, {"urls": []})
+        [connection] = FakeConnection.instances
+        self.assertEqual(connection.host, "pypi.org")
+        self.assertEqual(connection.timeout, 30)
+        self.assertEqual(connection.request_args, ("GET", "/pypi/demo-package/1.2.3/json"))
+        self.assertEqual(connection.request_headers["Accept"], "application/json")
+        self.assertTrue(connection.closed)
+
     def test_parse_lockfile_reads_pinned_packages_and_hashes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             lockfile = Path(tmpdir) / "runtime.lock"
