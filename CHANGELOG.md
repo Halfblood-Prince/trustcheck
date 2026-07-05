@@ -6,6 +6,10 @@ The project follows Semantic Versioning for the supported public API described i
 
 ## Unreleased
 
+## [2.2.0] - 2026-07-05
+
+Package release `2.2.0` emits machine-readable report schema `1.11.0`.
+
 ### Added
 
 - Added malicious-package heuristic rule metadata, policy-configurable
@@ -38,6 +42,15 @@ The project follows Semantic Versioning for the supported public API described i
 - Removed direct public runtime dependency declarations for transitive
   Sigstore requirements `PyJWT`, `idna`, and `tuf`; the action lockfile still
   constrains the resolved transitive set.
+
+## [2.1.2] - 2026-07-01
+
+Package release `2.1.2` emits machine-readable report schema `1.11.0`.
+
+### Changed
+
+- Corrected the changelog description for the pinned GitHub Dependency Review
+  pull-request gate.
 
 ## [2.1.1] - 2026-06-28
 
@@ -259,7 +272,9 @@ Package release `1.9.0` emits machine-readable report schema `1.4.0`.
 - Aligned the README, documentation site, CLI help, changelog, and JSON contract documentation around the same supported feature set.
 - Replaced temporary Discord issue and security links with stable GitHub project pages and private vulnerability reporting.
 
-[Unreleased]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.1.2...v2.2.0
+[2.1.2]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.0.5...v2.1.0
 [1.9.0]: https://github.com/Halfblood-Prince/trustcheck/compare/v1.8.0...v1.9.0
