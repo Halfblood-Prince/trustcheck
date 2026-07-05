@@ -171,3 +171,20 @@ class ReleaseReadinessTests(unittest.TestCase):
         self.assertIn("SHA256SUMS.txt", workflow)
         for channel in ("pypi", "github", "snap", "docker", "homebrew", "winget"):
             self.assertIn(f"--required-channel {channel}", workflow)
+
+    def test_release_workflow_exports_homebrew_tap_pins(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("publish-homebrew-tap:", workflow)
+        self.assertIn("needs: publish-pypi", workflow)
+        self.assertIn("python scripts/export_homebrew_tap.py", workflow)
+        self.assertIn("Halfblood-Prince/homebrew-tap", workflow)
+        self.assertIn("ref: main", workflow)
+        self.assertIn("HOMEBREW_TAP_TOKEN", workflow)
+        self.assertIn("requirements/runtime.lock", workflow)
+        self.assertIn("requirements/action.lock", workflow)
+        self.assertIn("homebrew-tap/trustcheck/runtime.lock", workflow)
+        self.assertIn("homebrew-tap/trustcheck/resources.rb", workflow)
+        self.assertIn("homebrew-tap/trustcheck/release.json", workflow)

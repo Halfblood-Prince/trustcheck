@@ -837,6 +837,84 @@ jobs:
           packages-dir: dist/packages
           verbose: true
 
+  publish-homebrew-tap:
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: dist-${{ github.sha }}
+          path: dist
+
+      - name: Export Homebrew tap pins
+        run: |
+          python scripts/export_homebrew_tap.py \
+            --runtime-lock requirements/runtime.lock \
+            --build-lock requirements/action.lock \
+            --checksums dist/SHA256SUMS.txt \
+            --output-dir homebrew-tap-export/trustcheck \
+            --tag "$GITHUB_REF_NAME" \
+            --source-repository "$GITHUB_REPOSITORY" \
+            --source-commit "$GITHUB_SHA" \
+            --extra-package setuptools-scm \
+            --extra-package wheel
+
+      - name: Require Homebrew tap token
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "Set HOMEBREW_TAP_TOKEN or RELEASE_TOKEN with contents:write access to Halfblood-Prince/homebrew-tap." >&2
+            exit 1
+          fi
+
+      - name: Check out Homebrew tap
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Halfblood-Prince/homebrew-tap
+          ref: main
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.RELEASE_TOKEN }}
+          path: homebrew-tap
+          persist-credentials: true
+
+      - name: Commit Homebrew tap pins
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p homebrew-tap/trustcheck
+          cp homebrew-tap-export/trustcheck/runtime.lock homebrew-tap/trustcheck/runtime.lock
+          cp homebrew-tap-export/trustcheck/resources.rb homebrew-tap/trustcheck/resources.rb
+          cp homebrew-tap-export/trustcheck/release.json homebrew-tap/trustcheck/release.json
+
+          git -C homebrew-tap config user.name "github-actions[bot]"
+          git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C homebrew-tap add trustcheck
+          if git -C homebrew-tap diff --cached --quiet; then
+            echo "No Homebrew tap pin changes to commit."
+            exit 0
+          fi
+          git -C homebrew-tap commit -m "Update trustcheck Homebrew pins for ${RELEASE_TAG}"
+          git -C homebrew-tap push
+          {
+            echo "## Homebrew tap"
+            echo
+            echo "- Updated \`Halfblood-Prince/homebrew-tap\` trustcheck pin export for \`${RELEASE_TAG}\`."
+            echo "- Wrote \`trustcheck/runtime.lock\`, \`trustcheck/resources.rb\`, and \`trustcheck/release.json\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   publish-docker:
     needs:
       - coverage-build
@@ -935,9 +1013,9 @@ jobs:
           append_body: true
           body: |
             Published from immutable commit `${{ github.sha }}`.
-            The release workflow publishes PyPI, GitHub Action, Snap Store, and
-            GHCR Docker distributions after shared tag verification, QA, matrix,
-            and coverage builds.
+            The release workflow publishes PyPI, GitHub Action, Snap Store,
+            Homebrew tap pins, and GHCR Docker distributions after shared tag
+            verification, QA, matrix, and coverage builds.
 
             Release artifacts:
             - `dist/*`
