@@ -37,8 +37,9 @@ SARIF includes results for:
 - artifact verification diagnostics
 - artifacts without fully verified provenance
 - package scan failures
-- malicious-package heuristic findings with estimated confidence, score,
-  evidence, rule metadata, and artifact-internal source locations
+- malicious-package heuristic findings with estimated confidence, estimated
+  false-positive priors, score, evidence, rule metadata, and artifact-internal
+  source locations
 
 Every result has a SHA-256 `trustcheck/v1` partial fingerprint derived from
 the finding category, package purl, stable finding identity, manifest name,
@@ -108,9 +109,12 @@ SARIF, CycloneDX, SPDX, and Markdown preserve that evidence.
 ## Heuristic labeling
 
 Every exported malicious-package indicator is labeled as heuristic and carries
-the disclaimer that it is not proof of malware. SARIF emits dedicated
-`TC-HEURISTIC-*` rules and stable fingerprints. Artifact source findings use
-locations such as `package.whl!/module.py` with a best-effort line number.
+the disclaimer that it is not proof of malware. False-positive values are
+exported as estimated priors, not measured rates; SARIF and SBOM property
+payloads include a calibration-status marker for that value. SARIF emits
+dedicated `TC-HEURISTIC-*` rules and stable fingerprints. Artifact source
+findings use locations such as `package.whl!/module.py` with a best-effort line
+number.
 
 ## Stability
 

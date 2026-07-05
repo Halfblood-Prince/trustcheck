@@ -212,6 +212,43 @@ class BenchmarkPublicationTests(unittest.TestCase):
         )
         self.assertNotIn("--no-deps", resolution_command)
 
+    def test_malicious_calibration_manifest_is_versioned_and_unmeasured(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        manifest = json.loads(
+            (root / "benchmarks" / "corpus" / "malicious-calibration.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        case_sets = {case["id"]: case for case in manifest["case_sets"]}
+
+        self.assertEqual(
+            manifest["schema"],
+            "urn:trustcheck:malicious-calibration-corpus:0.1.0",
+        )
+        self.assertEqual(manifest["status"], "seed-unmeasured")
+        self.assertFalse(manifest["measurement_state"]["published_metrics"])
+        self.assertIsNone(manifest["results"])
+        self.assertEqual(
+            set(case_sets),
+            {
+                "known-malicious-pypi-releases",
+                "typosquats",
+                "benign-native-extensions",
+                "benign-powerful-capabilities",
+                "weird-harmless-academic-dev",
+            },
+        )
+        self.assertIn("false_positive_rate", manifest["metric_contract"]["per_rule"])
+        self.assertIn(
+            "confidence_interval_95",
+            manifest["metric_contract"]["score_band_metrics"],
+        )
+        self.assertTrue(
+            manifest["publication_gate"][
+                "forbids_measured_metric_claims_while_unmeasured"
+            ]
+        )
+
     def test_benchmark_reports_memory_requests_recall_and_resolver_correctness(self) -> None:
         root = Path(__file__).resolve().parents[1]
         namespace = runpy.run_path(

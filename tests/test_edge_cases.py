@@ -480,6 +480,14 @@ class PolicyCoverageTests(unittest.TestCase):
             "malicious_package_heuristics",
             {violation.code for violation in relaxed.violations},
         )
+        self.assertTrue(
+            any(
+                "estimated false-positive prior" in reason
+                for flag in report.risk_flags
+                if flag.code == "malicious_package_heuristics"
+                for reason in flag.why
+            )
+        )
 
     def test_vulnerability_modes_and_expiring_suppressions(self) -> None:
         vulnerability = VulnerabilityRecord(

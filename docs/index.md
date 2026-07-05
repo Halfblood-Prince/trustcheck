@@ -193,5 +193,6 @@ and report schema are versioned independently.
 - Use [Compatibility](reference/compatibility.md) for API and JSON stability guarantees
 - Use [Performance and extensibility](reference/performance-extensibility.md) for batching, caching, snapshots, resume state, and plugins
 - Use [Benchmarks](reference/benchmarks.md) for the reproducible `pip-audit` comparison
+- Use [Malicious-package detection](reference/malicious-package-detection.md) for heuristic scoring and calibration status
 - Use [Trust model and repository matching](reference/trust-model.md) for verification semantics and diagnostics
 - Use [CI integration](guides/ci-integration.md) to wire `trustcheck` into GitHub Actions

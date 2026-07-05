@@ -84,9 +84,11 @@ Its default Docker image is digest-pinned, and mutable image tags are rejected.
 ## Scoring
 
 Findings have their own severity, estimated confidence, rule version, estimated
-false-positive rate, and score. These values are rule metadata and estimates,
-not statistically validated measurements. Confidence-weighted scores are
-combined with diminishing weight and capped at 100:
+false-positive prior, and score. These values are rule metadata and estimates,
+not statistically validated measurements. The native JSON field is still named
+`false_positive_rate` for schema compatibility, but it is presented as an
+estimate until a measured calibration benchmark is published.
+Confidence-weighted scores are combined with diminishing weight and capped at 100:
 
 | Score | Level |
 | --- | --- |
@@ -109,12 +111,25 @@ from contributing to the aggregate score.
 
 ## Evaluation status
 
-Trustcheck does not yet publish the evaluation corpus needed to call these
-rates measured. The next benchmark milestone is a versioned malicious-package
-evaluation corpus containing known malicious PyPI releases, representative
-benign packages including packages with native code, per-rule precision, recall,
-false-positive rate, and confidence intervals, plus a published benchmark
-workflow that regenerates those metrics.
+Trustcheck does not yet publish the reviewed artifacts or benchmark results
+needed to call these rates measured. The seed manifest at
+`benchmarks/corpus/malicious-calibration.json` defines the required versioned
+corpus strata and metric contract, and is deliberately marked
+`seed-unmeasured`.
+
+The next security milestone is to populate that corpus with:
+
+- known malicious PyPI releases
+- typo-squats and dependency-confusion cases
+- benign packages with native extensions
+- legitimate packages that use subprocesses, networking, obfuscation or
+  generated code, plugins, keyrings, custom installers, or build hooks
+- deliberately weird but harmless academic and development packages
+
+Once populated, the published benchmark must report per-rule precision, recall,
+false-positive rate, 95% confidence intervals, and score-band performance.
+Until then, Trustcheck treats every confidence value and false-positive number
+as an estimated rule prior, not an empirical measurement.
 
 ## Interpretation
 

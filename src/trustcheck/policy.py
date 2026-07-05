@@ -473,7 +473,7 @@ def _apply_malicious_thresholds(
                     f"{f' at {finding.location}' if finding.location else ''}: "
                     f"{finding.message} "
                     f"(rule {finding.rule_version}, "
-                    f"false-positive rate {finding.false_positive_rate})"
+                    f"estimated false-positive prior {finding.false_positive_rate})"
                 )
                 for finding in report.malicious_package.findings[:5]
             ],

@@ -447,6 +447,10 @@ class ExportTests(unittest.TestCase):
         )
         self.assertTrue(heuristic["properties"]["heuristic"])
         self.assertEqual(
+            heuristic["properties"]["falsePositiveRateKind"],
+            "estimated-prior",
+        )
+        self.assertEqual(
             heuristic["locations"][0]["physicalLocation"]["region"]["startLine"],
             12,
         )
@@ -476,6 +480,13 @@ class ExportTests(unittest.TestCase):
                 "ast_credential_network_chain"
             ],
         )
+        self.assertIn(
+            '"false_positive_rate_kind":"estimated-prior"',
+            properties[
+                "trustcheck:malicious-package:heuristic:"
+                "ast_credential_network_chain"
+            ],
+        )
 
         spdx = json.loads(
             render_export(
@@ -490,6 +501,7 @@ class ExportTests(unittest.TestCase):
             if item["name"] == "Demo_Package"
         )
         self.assertIn("heuristic=true;not-proof-of-malware", root_package["comment"])
+        self.assertIn("estimated_fpr=", root_package["comment"])
 
         markdown = render_export(
             "markdown",
@@ -498,6 +510,7 @@ class ExportTests(unittest.TestCase):
             generated_at=GENERATED_AT,
         )
         self.assertIn("### Malicious-Package Heuristics", markdown)
+        self.assertIn("Estimated FPR", markdown)
         self.assertIn("not proof", markdown)
 
     def test_cyclonedx_xml_matches_json_semantics(self) -> None:

@@ -269,7 +269,7 @@ With `--inspect-artifacts` or `inspect_artifacts=True`, the block includes:
 - metadata mismatches between PyPI, wheel, and sdist evidence
 - `source_files_analyzed` and bounded AST parse errors
 - `heuristic_findings` with category, severity, confidence, score, evidence,
-  source location, artifact name, rule version, estimated false-positive rate,
+  source location, artifact name, rule version, estimated false-positive prior,
   and score threshold
 - `native_binaries` with PE, ELF, or Mach-O format, architecture, imports,
   embedded signature presence, entropy, embedded payloads, and parse notes
@@ -287,10 +287,12 @@ normal package inspection; `artifact_analysis` indicates whether
 
 The aggregate `score` is bounded to 0-100 and maps to `none`, `low`,
 `elevated`, `high`, or `critical`. Each finding preserves its own score,
-confidence, estimated false-positive rate, rule version, score threshold,
-evidence, artifact, and best-effort source location. The assessment records the
-aggregate `score_thresholds` and per-rule `rule_thresholds` active when the
-report was evaluated.
+confidence, estimated false-positive prior, rule version, score threshold,
+evidence, artifact, and best-effort source location. The JSON field remains
+`false_positive_rate` for schema compatibility, but consumers should display it
+as an estimate until Trustcheck publishes a populated calibration corpus and
+measured metrics. The assessment records the aggregate `score_thresholds` and
+per-rule `rule_thresholds` active when the report was evaluated.
 
 The assessment is deliberately heuristic. Neither a finding nor a high score
 is proof of malware. Consumers must preserve the `heuristic` marker and

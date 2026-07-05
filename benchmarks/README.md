@@ -40,6 +40,13 @@ equivalent `pip-audit` operation.
 Trustcheck request counts come from report diagnostics. `pip-audit` does not
 expose an equivalent count, so its request fields are explicitly `null`.
 
+Malicious-package scoring calibration is a separate security milestone. The
+seed manifest at `benchmarks/corpus/malicious-calibration.json` is versioned and
+defines the required strata and metric contract, but it is marked
+`seed-unmeasured` until reviewed entries, per-rule precision/recall,
+false-positive rates, confidence intervals, and score-band performance are
+published.
+
 Run:
 
 ```bash

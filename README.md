@@ -576,10 +576,6 @@ trustcheck inspect -f requirements.txt \
   --trusted-project internal-sdk \
   --trusted-project internal-auth
 ```
-
-Every malicious-package finding is explicitly labeled as a heuristic indicator
-for review, not proof that a package is malicious.
-
 Require a release to match an expected repository:
 
 ```bash

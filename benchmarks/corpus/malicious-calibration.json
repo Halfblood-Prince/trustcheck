@@ -1,0 +1,102 @@
+{
+  "schema": "urn:trustcheck:malicious-calibration-corpus:0.1.0",
+  "version": "2026.07-seed",
+  "status": "seed-unmeasured",
+  "description": "Versioned seed manifest for calibrating Trustcheck malicious-package heuristic scoring. This file defines the required strata and metric contract; it does not yet publish empirical precision, recall, or false-positive measurements.",
+  "measurement_state": {
+    "published_metrics": false,
+    "rule_metadata_values": "estimated-priors",
+    "score_band_performance_measured": false,
+    "confidence_intervals_measured": false
+  },
+  "case_sets": [
+    {
+      "id": "known-malicious-pypi-releases",
+      "label": "Known malicious PyPI releases",
+      "expected_label": "malicious",
+      "minimum_entries_before_measurement": 50,
+      "entries": [],
+      "selection_notes": "Include package-version-artifact tuples only after independent review records the source advisory, removal/yank evidence, artifact digest, behavior class, and whether redistributing the artifact is legally and operationally acceptable."
+    },
+    {
+      "id": "typosquats",
+      "label": "Typosquats and dependency-confusion names",
+      "expected_label": "malicious-or-suspicious",
+      "minimum_entries_before_measurement": 50,
+      "entries": [],
+      "selection_notes": "Cover near-neighbor names, separator substitutions, transpositions, dependency-confusion collisions, and benign internal-name controls."
+    },
+    {
+      "id": "benign-native-extensions",
+      "label": "Benign packages with native extensions",
+      "expected_label": "benign",
+      "minimum_entries_before_measurement": 50,
+      "entries": [],
+      "selection_notes": "Include signed and unsigned wheels across PE, ELF, and Mach-O, plus high-entropy but legitimate compression or generated code."
+    },
+    {
+      "id": "benign-powerful-capabilities",
+      "label": "Benign packages with powerful capabilities",
+      "expected_label": "benign",
+      "minimum_entries_before_measurement": 75,
+      "entries": [],
+      "selection_notes": "Include legitimate use of subprocesses, networking, obfuscation or generated code, plugin discovery, keyrings, custom installers, and build hooks."
+    },
+    {
+      "id": "weird-harmless-academic-dev",
+      "label": "Deliberately weird but harmless academic and development packages",
+      "expected_label": "benign",
+      "minimum_entries_before_measurement": 50,
+      "entries": [],
+      "selection_notes": "Include toy packages, teaching examples, intentionally unusual layouts, dynamic import experiments, encoded fixtures, and research prototypes that should not be treated as malware."
+    }
+  ],
+  "required_entry_fields": [
+    "case_id",
+    "project",
+    "version",
+    "artifact",
+    "sha256",
+    "expected_label",
+    "behavior_tags",
+    "review_source",
+    "review_notes"
+  ],
+  "metric_contract": {
+    "per_rule": [
+      "true_positive_count",
+      "false_positive_count",
+      "true_negative_count",
+      "false_negative_count",
+      "precision",
+      "recall",
+      "false_positive_rate",
+      "confidence_interval_95"
+    ],
+    "score_bands": [
+      "none",
+      "low",
+      "elevated",
+      "high",
+      "critical"
+    ],
+    "score_band_metrics": [
+      "package_count",
+      "malicious_count",
+      "benign_count",
+      "precision",
+      "recall",
+      "false_positive_rate",
+      "confidence_interval_95"
+    ]
+  },
+  "publication_gate": {
+    "requires_reviewed_entries": true,
+    "requires_artifact_digests": true,
+    "requires_reproducible_runner": true,
+    "requires_confidence_intervals": true,
+    "requires_score_band_performance": true,
+    "forbids_measured_metric_claims_while_unmeasured": true
+  },
+  "results": null
+}

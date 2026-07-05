@@ -671,6 +671,7 @@
           "type": "string"
         },
         "confidence": {
+          "description": "Rule-author-assigned confidence label. This is not yet calibrated against a published malicious-package evaluation corpus.",
           "title": "Confidence",
           "type": "string"
         },
@@ -691,6 +692,7 @@
             }
           ],
           "default": null,
+          "description": "Estimated false-positive prior from rule metadata. This field is not an empirically measured false-positive rate until a matching calibration corpus and benchmark metrics are published.",
           "title": "False Positive Rate"
         },
         "heuristic": {

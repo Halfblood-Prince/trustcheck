@@ -62,6 +62,22 @@ Wall-time results include package metadata and advisory requests plus output
 generation. The benchmark reports observed performance rather than claiming
 feature-equivalent work.
 
+## Malicious-package calibration
+
+The `pip-audit` benchmark does not calibrate malicious-package scoring because
+it runs `trustcheck scan --fast` and excludes artifact, history, AST, native
+binary, and dynamic-analysis heuristics. The seed manifest for that separate
+security milestone is
+`benchmarks/corpus/malicious-calibration.json`.
+
+That manifest is versioned and defines required strata for known malicious PyPI
+releases, typo-squats, benign native-extension packages, legitimate packages
+that use powerful capabilities, and deliberately weird but harmless academic or
+development packages. It is currently marked `seed-unmeasured`; until reviewed
+entries and a reproducible runner are published, malicious-package confidence
+and false-positive values remain estimated rule priors rather than empirical
+measurements.
+
 ## Acceptance matrix
 
 The `Acceptance Matrix` workflow is separate from fast pull-request and push

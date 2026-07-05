@@ -351,6 +351,7 @@ def _sarif_document(
                         "score": finding.score,
                         "ruleVersion": finding.rule_version,
                         "falsePositiveRate": finding.false_positive_rate,
+                        "falsePositiveRateKind": "estimated-prior",
                         "scoreThreshold": finding.score_threshold,
                         "category": finding.category,
                         "evidence": finding.evidence,
@@ -933,6 +934,7 @@ def _cyclonedx_properties(
                     "score": finding.score,
                     "rule_version": finding.rule_version,
                     "false_positive_rate": finding.false_positive_rate,
+                    "false_positive_rate_kind": "estimated-prior",
                     "score_threshold": finding.score_threshold,
                     "message": finding.message,
                     "evidence": finding.evidence,
@@ -1758,7 +1760,7 @@ def _spdx_annotations(
         (
             f"{spdx_id}:trustcheck:malicious-package-heuristic:{finding.code}:"
             f"{finding.severity}:{finding.confidence}:{finding.score}:"
-            f"rule={finding.rule_version}:fpr={finding.false_positive_rate}:"
+            f"rule={finding.rule_version}:estimated_fpr={finding.false_positive_rate}:"
             f"threshold={finding.score_threshold}:{finding.message}:not-proof-of-malware"
         )
         for finding in report.malicious_package.findings
@@ -1839,7 +1841,8 @@ def _spdx_trust_comment(package: ExportPackage) -> str:
             f"trustcheck:malicious-package-heuristic:{finding.code}="
             f"{finding.severity};confidence={finding.confidence};"
             f"score={finding.score};rule={finding.rule_version};"
-            f"fpr={finding.false_positive_rate};threshold={finding.score_threshold};"
+            f"estimated_fpr={finding.false_positive_rate};"
+            f"threshold={finding.score_threshold};"
             f"message={finding.message}"
         )
         for finding in report.malicious_package.findings
@@ -2040,7 +2043,7 @@ def _markdown_document(
                     "",
                     f"> {_markdown_escape(report.malicious_package.disclaimer)}",
                     "",
-                    "| Finding | Severity | Confidence | Score | Rule | FPR | Location |",
+                    "| Finding | Severity | Confidence | Score | Rule | Estimated FPR | Location |",
                     "| --- | --- | --- | --- | --- | --- | --- |",
                 ]
             )

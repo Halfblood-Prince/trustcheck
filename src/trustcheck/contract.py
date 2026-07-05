@@ -144,7 +144,12 @@ class HeuristicFindingPayload(BaseModel):
     code: str
     category: str
     severity: str
-    confidence: str
+    confidence: str = Field(
+        description=(
+            "Rule-author-assigned confidence label. This is not yet calibrated "
+            "against a published malicious-package evaluation corpus."
+        )
+    )
     score: int
     message: str
     evidence: list[str] = Field(default_factory=list)
@@ -152,7 +157,14 @@ class HeuristicFindingPayload(BaseModel):
     artifact: str | None = None
     heuristic: bool = True
     rule_version: str = "1.0"
-    false_positive_rate: float | None = None
+    false_positive_rate: float | None = Field(
+        default=None,
+        description=(
+            "Estimated false-positive prior from rule metadata. This field is "
+            "not an empirically measured false-positive rate until a matching "
+            "calibration corpus and benchmark metrics are published."
+        ),
+    )
     score_threshold: int = 1
 
 
