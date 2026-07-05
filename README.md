@@ -22,7 +22,7 @@
 [![TrustCheck Package Scanner](https://img.shields.io/badge/GitHub%20Action-TrustCheck%20Package%20Scanner-blue?logo=githubactions&logoColor=white)](https://github.com/marketplace/actions/trustcheck-package-scanner)
 
 [![Get it from the Snap Store](https://snapcraft.io/en/dark/install.svg)](https://snapcraft.io/trustcheck)
-<a href="https://pypi.org/project/trustcheck/"><img src="https://raw.githubusercontent.com/Halfblood-Prince/trustcheck/coverage-badge/PyPI.png" alt="Get it from PyPI" height="60"></a>
+<a href="https://pypi.org/project/trustcheck/"><img src="https://raw.githubusercontent.com/Halfblood-Prince/trustcheck/coverage-badge/PyPI.png" alt="Get it from PyPI" height="55"></a>
 
 `trustcheck` is a Python package and CLI for evaluating the trust posture of PyPI releases before they are installed, promoted, or approved.
 
