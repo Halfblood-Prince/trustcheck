@@ -41,6 +41,20 @@ Packages that publish no provenance are treated as needing review rather than as
 | `manifest` | lock approved trust evidence |
 | `impact` | prioritize by observed usage |
 
+<!-- trustcheck-benchmark:start -->
+## Latest benchmark
+
+Generated `2026-07-04T12:38:12.871592+00:00` on Python `3.14.6` with `pip-audit 2.10.1`. Corpus `2026.06` contains 133 entries; this fixed-input `--no-deps` comparison covers 112 comparable package entries.
+
+| Tool | Cold p50 | Warm p50 | Warm p95 | Peak RSS | Requests p50 | Recall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| trustcheck scan --fast | 16.00 s | 14.20 s | 14.44 s | 78.0 MiB | unknown | 1 |
+| pip-audit | 36.69 s | 38.51 s | 39.82 s | 75.6 MiB | unknown | 1 |
+
+Alias-aware agreement: `1.0` across `105` compared packages and `263` matched advisories.
+Resolver exact match: `True` (trustcheck `22`, pip-audit `22`).
+<!-- trustcheck-benchmark:end -->
+
 ## What it checks
 
 For a selected package version, `trustcheck` can:
@@ -100,20 +114,6 @@ artifact is scanned with Microsoft Defender's `MpCmdRun.exe`; the Linux
 artifact is scanned with ClamAV. Clean binaries, checksums, and scanner reports
 are retained as workflow artifacts by
 [Binary Security](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/binary-security.yml).
-
-<!-- trustcheck-benchmark:start -->
-## Latest benchmark
-
-Generated `2026-07-04T12:38:12.871592+00:00` on Python `3.14.6` with `pip-audit 2.10.1`. Corpus `2026.06` contains 133 entries; this fixed-input `--no-deps` comparison covers 112 comparable package entries.
-
-| Tool | Cold p50 | Warm p50 | Warm p95 | Peak RSS | Requests p50 | Recall |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| trustcheck scan --fast | 16.00 s | 14.20 s | 14.44 s | 78.0 MiB | unknown | 1 |
-| pip-audit | 36.69 s | 38.51 s | 39.82 s | 75.6 MiB | unknown | 1 |
-
-Alias-aware agreement: `1.0` across `105` compared packages and `263` matched advisories.
-Resolver exact match: `True` (trustcheck `22`, pip-audit `22`).
-<!-- trustcheck-benchmark:end -->
 
 ## Installation
 
