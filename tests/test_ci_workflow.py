@@ -324,7 +324,7 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
                 self.assertIn(acceptance_case, workflow)
         self.assertIn("python scripts/acceptance_matrix.py", workflow)
         self.assertIn('TRUSTCHECK_RUN_ACCEPTANCE: "1"', workflow)
-        self.assertIn("requirements/runtime.lock", workflow)
+        self.assertIn("requirements/action.lock", workflow)
         self.assertIn("acceptance-reports/", workflow)
         self.assertNotIn("acceptance_matrix.py", ci)
 

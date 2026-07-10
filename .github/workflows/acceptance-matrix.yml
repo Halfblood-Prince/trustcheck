@@ -38,7 +38,7 @@ jobs:
 
       - name: Install acceptance environment
         run: |
-          python -m pip install --disable-pip-version-check --require-hashes --requirement requirements/runtime.lock
+          python -m pip install --disable-pip-version-check --require-hashes --requirement requirements/action.lock
           python -m pip install --disable-pip-version-check --no-build-isolation --no-deps -e .
           python -m pip check
 
