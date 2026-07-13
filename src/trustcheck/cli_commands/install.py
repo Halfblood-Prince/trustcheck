@@ -322,6 +322,8 @@ def _inspect_install_plan(
                     vulnerability_only=False,
                     inspect_artifacts=True,
                     dynamic_analysis=args.dynamic_analysis,
+                    dynamic_analysis_image=getattr(args, "dynamic_image", None),
+                    dynamic_analysis_python=getattr(args, "dynamic_python", "3.12"),
                     vulnerability_client=vulnerability_client,
                     locked_versions=target.locked_versions,
                     complete_locked_versions=target.complete_locked_versions,

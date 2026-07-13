@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:trustcheck-gate:adapter-request:0.1",
+  "title": "Trustcheck Gate adapter request",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/check_package" },
+    { "$ref": "#/$defs/verify_release" },
+    { "$ref": "#/$defs/check_requirements" },
+    { "$ref": "#/$defs/scan_project" },
+    { "$ref": "#/$defs/plan_remediation" },
+    { "$ref": "#/$defs/compare_versions" },
+    { "$ref": "#/$defs/generate_report" },
+    { "$ref": "#/$defs/explain_findings" }
+  ],
+  "$defs": {
+    "common": {
+      "type": "object",
+      "required": ["operation"],
+      "properties": {
+        "operation": { "type": "string" },
+        "workspace": { "$ref": "#/$defs/path_string" },
+        "policy": { "enum": ["default", "strict"] },
+        "analysis_depth": { "enum": ["fast", "standard", "full"] },
+        "advanced_analysis": { "type": "boolean" },
+        "artifact_scope": { "enum": ["target", "sdist", "all"] },
+        "offline": { "type": "boolean" },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 600 },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 10000,
+          "maximum": 5000000
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "analysis_depth": { "const": "full" } },
+            "required": ["analysis_depth"]
+          },
+          "then": {
+            "properties": { "advanced_analysis": { "const": true } },
+            "required": ["advanced_analysis"]
+          }
+        }
+      ]
+    },
+    "check_package": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object",
+          "required": ["package"],
+          "properties": {
+            "operation": { "const": "check_package" },
+            "package": { "$ref": "#/$defs/package" },
+            "version": { "$ref": "#/$defs/version" },
+            "with_osv": { "type": "boolean" },
+            "source_release_provenance": { "type": "boolean" },
+            "release_tag": { "$ref": "#/$defs/token" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "verify_release": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object",
+          "required": ["package"],
+          "properties": {
+            "operation": { "const": "verify_release" },
+            "package": { "$ref": "#/$defs/package" },
+            "version": { "$ref": "#/$defs/version" },
+            "expected_repository": { "$ref": "#/$defs/https_repository_url" },
+            "release_tag": { "$ref": "#/$defs/token" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "check_requirements": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object",
+          "required": ["path"],
+          "properties": {
+            "operation": { "const": "check_requirements" },
+            "path": { "$ref": "#/$defs/path_string" },
+            "with_osv": { "type": "boolean" },
+            "no_deps": { "type": "boolean" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "scan_project": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object",
+          "properties": {
+            "operation": { "const": "scan_project" },
+            "path": { "$ref": "#/$defs/path_string" },
+            "max_files": { "type": "integer", "minimum": 1, "maximum": 5 },
+            "with_osv": { "type": "boolean" },
+            "no_deps": { "type": "boolean" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "plan_remediation": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object",
+          "required": ["path"],
+          "properties": {
+            "operation": { "const": "plan_remediation" },
+            "path": { "$ref": "#/$defs/path_string" },
+            "max_fix_attempts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2048
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "compare_versions": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object",
+          "required": ["package", "current_version", "proposed_version"],
+          "properties": {
+            "operation": { "const": "compare_versions" },
+            "package": { "$ref": "#/$defs/package" },
+            "current_version": { "$ref": "#/$defs/version" },
+            "proposed_version": { "$ref": "#/$defs/version" },
+            "with_osv": { "type": "boolean" },
+            "source_release_provenance": { "type": "boolean" },
+            "release_tag": { "$ref": "#/$defs/token" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "generate_report": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object",
+          "required": ["target_type", "format"],
+          "properties": {
+            "operation": { "const": "generate_report" },
+            "target_type": { "enum": ["package", "requirements"] },
+            "format": {
+              "enum": [
+                "json",
+                "markdown",
+                "sarif",
+                "cyclonedx-json",
+                "cyclonedx-1.7-json",
+                "spdx-json",
+                "spdx-3-json",
+                "openvex"
+              ]
+            },
+            "package": { "$ref": "#/$defs/package" },
+            "version": { "$ref": "#/$defs/version" },
+            "path": { "$ref": "#/$defs/path_string" },
+            "with_osv": { "type": "boolean" }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "target_type": { "const": "package" } },
+                "required": ["target_type"]
+              },
+              "then": { "required": ["package"] }
+            },
+            {
+              "if": {
+                "properties": { "target_type": { "const": "requirements" } },
+                "required": ["target_type"]
+              },
+              "then": { "required": ["path"] }
+            }
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "explain_findings": {
+      "allOf": [
+        { "$ref": "#/$defs/common" },
+        {
+          "type": "object",
+          "properties": {
+            "operation": { "const": "explain_findings" },
+            "report": { "type": "object" },
+            "report_path": { "$ref": "#/$defs/path_string" }
+          },
+          "oneOf": [
+            { "required": ["report"] },
+            { "required": ["report_path"] }
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "package": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,213}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9!+._~-]{0,127}$"
+    },
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~/-]{0,127}$"
+    },
+    "path_string": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000-\\u001f]+$"
+    },
+    "https_repository_url": {
+      "type": "string",
+      "maxLength": 2048,
+      "allOf": [
+        {
+          "pattern": "^https://[A-Za-z0-9.-]+(?::443)?(?:/[^?#\\\\]*)?$"
+        },
+        { "not": { "pattern": "@" } },
+        { "not": { "pattern": "%2[fF]|%5[cC]" } }
+      ]
+    }
+  }
+}

@@ -12,6 +12,8 @@ from .models import (
     CoverageSummary,
     DependencyInspection,
     DependencySummary,
+    DynamicAnalysisEvidence,
+    DynamicAnalysisPhase,
     DynamicAnalysisResult,
     FileProvenance,
     HeuristicFinding,
@@ -218,15 +220,25 @@ class DynamicAnalysisResultPayload(BaseModel):
 
     enabled: bool = False
     executed: bool = False
+    mode: str = "bounded-install-analysis"
+    mode_label: str = "sandboxed installation probe"
+    classification: str = "not-run"
+    failure_type: str | None = None
     sandbox: str = "docker"
     warning: str = (
-        "Dynamic analysis executes untrusted package code in a disposable "
-        "container; it is never enabled by default."
+        "Bounded install analysis executes untrusted package build and install "
+        "hooks in a disposable container. It is never enabled by default and "
+        "does not prove that unobserved behavior is safe."
     )
+    python_version: str = "3.12"
     network: str = "none"
     user: str = "non-root"
     cpu_limit: str = "1 CPU, 10 CPU seconds"
     memory_limit: str = "512 MiB"
+    pids_limit: int = 128
+    root_filesystem: str = "read-only"
+    artifact_mount: str = "read-only"
+    temp_filesystem: str = "private tmpfs"
     timeout_seconds: float = 30.0
     image: str | None = None
     command: list[str] = Field(default_factory=list)
@@ -234,6 +246,38 @@ class DynamicAnalysisResultPayload(BaseModel):
     stdout: list[str] = Field(default_factory=list)
     stderr: list[str] = Field(default_factory=list)
     error: str | None = None
+    phases: list["DynamicAnalysisPhasePayload"] = Field(default_factory=list)
+    evidence: "DynamicAnalysisEvidencePayload" = Field(
+        default_factory=lambda: DynamicAnalysisEvidencePayload()
+    )
+
+
+class DynamicAnalysisPhasePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    status: str = "pending"
+    classification: str = "inconclusive"
+    failure_type: str | None = None
+    exit_code: int | None = None
+    stdout: list[str] = Field(default_factory=list)
+    stderr: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class DynamicAnalysisEvidencePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    child_processes: list[str] = Field(default_factory=list)
+    executable_paths: list[str] = Field(default_factory=list)
+    files_created: list[str] = Field(default_factory=list)
+    files_modified: list[str] = Field(default_factory=list)
+    writes_outside_expected_locations: list[str] = Field(default_factory=list)
+    attempted_network_connections: list[str] = Field(default_factory=list)
+    credential_path_accesses: list[str] = Field(default_factory=list)
+    persistence_attempts: list[str] = Field(default_factory=list)
+    environment_accesses: list[str] = Field(default_factory=list)
+    subprocess_arguments: list[list[str]] = Field(default_factory=list)
 
 
 class FileProvenancePayload(BaseModel):
@@ -555,7 +599,16 @@ def deserialize_report(payload: Mapping[str, object]) -> TrustReport:
                     }
                 ),
                 "dynamic_analysis": DynamicAnalysisResult(
-                    **item["dynamic_analysis"]
+                    **{
+                        **item["dynamic_analysis"],
+                        "phases": [
+                            DynamicAnalysisPhase(**phase)
+                            for phase in item["dynamic_analysis"].get("phases", [])
+                        ],
+                        "evidence": DynamicAnalysisEvidence(
+                            **item["dynamic_analysis"].get("evidence", {})
+                        ),
+                    }
                 ),
             }
         )

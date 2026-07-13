@@ -41,7 +41,7 @@ For a selected package version, `trustcheck` can:
 - batch advisory queries, bound concurrent scans, checkpoint interrupted work,
   and use SHA-256 content-addressed offline caches
 - extend advisory, index, artifact, policy, and rendering behavior through
-  explicitly enabled entry-point plugins
+  explicitly enabled experimental entry-point plugins
 - emit a concise human-readable report or structured JSON
 
 ## Install
@@ -196,3 +196,9 @@ and report schema are versioned independently.
 - Use [Malicious-package detection](reference/malicious-package-detection.md) for heuristic scoring and calibration status
 - Use [Trust model and repository matching](reference/trust-model.md) for verification semantics and diagnostics
 - Use [CI integration](guides/ci-integration.md) to wire `trustcheck` into GitHub Actions
+
+## Project support
+
+- Bugs and feature requests: [GitHub Issues](https://github.com/Halfblood-Prince/trustcheck/issues)
+- Sensitive security reports: [GitHub private vulnerability reporting](https://github.com/Halfblood-Prince/trustcheck/security/advisories/new)
+- Security policy: [SECURITY.md](https://github.com/Halfblood-Prince/trustcheck/security/policy)

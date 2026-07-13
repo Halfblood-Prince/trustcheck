@@ -140,6 +140,8 @@ def run(args: argparse.Namespace, context: CommandContext) -> int:
         include_osv=False,
         inspect_artifacts=args.inspect_artifacts,
         dynamic_analysis=args.dynamic_analysis,
+        dynamic_analysis_image=getattr(args, "dynamic_image", None),
+        dynamic_analysis_python=getattr(args, "dynamic_python", "3.12"),
         vulnerability_client=None,
         resolver=resolver,
         target_environment=cli._target_environment_from_args(args),

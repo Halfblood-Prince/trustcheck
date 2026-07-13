@@ -38,6 +38,12 @@ Show the installed package and report schema versions:
 trustcheck --version
 ```
 
+Check local resolver, index, and provenance-verification prerequisites:
+
+```bash
+trustcheck doctor
+```
+
 ## Core flags
 
 - `--version`: inspect a specific release instead of the latest project version
@@ -55,8 +61,13 @@ trustcheck --version
 - `--with-deps`: inspect direct runtime dependencies and summarize the highest-risk dependency
 - `--with-transitive-deps`: inspect direct and transitive runtime dependencies recursively
 - `--inspect-artifacts`: statically inspect downloaded wheels and sdists
-- `--dynamic-analysis`: execute downloaded artifacts in a disposable Docker
-  container with no network, a non-root user, and strict CPU/RAM/time limits
+- `--dynamic-analysis`: experimental; run bounded install analysis for
+  downloaded artifacts in a disposable Docker container with no network, a
+  non-root user, digest-pinned image policy, and strict CPU/RAM/PID/time limits
+- `--dynamic-python 3.11|3.12|3.13|3.14`: select the bounded-analysis Python
+  profile
+- `--dynamic-image IMAGE@sha256:DIGEST`: override the analyzer image with an
+  explicit digest-pinned image
 - `scan --fast`: resolve dependencies and query advisories only (default)
 - `scan --standard`: add provenance for artifacts in the selected scope
 - `scan --full`: add static, native-binary, release-history, and heuristic analysis
@@ -457,12 +468,15 @@ architecture, signature-record presence, entropy, and embedded payload
 signatures. When combined with dependency inspection, the same static checks
 are applied to inspected dependency artifacts.
 
-`--dynamic-analysis` is the explicit exception: it executes the downloaded
-artifact inside a disposable Docker container using `--network none`, a
-non-root user, a read-only root filesystem, dropped capabilities, and bounded
-CPU, memory, process, and wall-clock limits. It defaults to
-`python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf`
-and rejects mutable image tags. It is never enabled by default.
+`--dynamic-analysis` is the explicit exception: it may execute downloaded
+artifact build and install hooks inside a disposable Docker container using
+`--network none`, a non-root user, a read-only root filesystem, dropped
+capabilities, and bounded CPU, memory, process, and wall-clock limits. It is a
+bounded install analysis, not comprehensive behavioral analysis. The result is
+phased into archive validation, metadata preparation, wheel build, wheel
+installation, and skipped optional probes, with best-effort behavioral evidence.
+It rejects mutable image tags and is never enabled by default. An inconclusive
+or unsupported analysis is not a clean pass.
 
 Typosquatting, dependency-confusion, ownership, repository, and release-cadence
 heuristics run without `--inspect-artifacts`. Add local reference names with

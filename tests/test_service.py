@@ -678,6 +678,7 @@ class ServiceBranchTests(unittest.TestCase):
         self.assertFalse(report.files[0].artifact.inspected)
         self.assertTrue(report.files[0].dynamic_analysis.executed)
         dynamic.assert_called_once()
+        self.assertEqual(dynamic.call_args.kwargs["python_version"], "3.12")
 
     def test_dynamic_analysis_failure_records_diagnostic(self) -> None:
         dynamic_result = DynamicAnalysisResult(

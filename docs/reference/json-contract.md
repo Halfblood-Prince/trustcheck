@@ -275,9 +275,23 @@ With `--inspect-artifacts` or `inspect_artifacts=True`, the block includes:
   embedded signature presence, entropy, embedded payloads, and parse notes
 
 Every item in `report.files` also contains a `dynamic_analysis` object. It is
-disabled by default. When `--dynamic-analysis` is set, the object records the
-Docker sandbox, no-network and non-root execution settings, resource limits,
-exit code, bounded output excerpts, and any sandbox error.
+disabled by default. When `--dynamic-analysis` is set, the object records
+bounded install analysis, also described in text output as a sandboxed
+installation probe. The object includes:
+
+- `mode`, `mode_label`, `classification`, and optional `failure_type`
+- selected `python_version` and digest-pinned analyzer `image`
+- Docker sandbox controls, no-network and non-root execution settings, resource
+  limits, read-only root, read-only artifact mount, and private temp filesystem
+- top-level exit code, bounded output excerpts, and any sandbox error
+- phase results for archive validation, metadata preparation, wheel build,
+  wheel installation, optional import probe, and optional entry-point probe
+- behavioral evidence including child processes, executable paths, file writes,
+  outside-location writes, attempted network connections, credential-path
+  access, persistence-like paths, environment changes, and subprocess arguments
+
+`classification: inconclusive` or a phase failure must not be interpreted as a
+clean package. Audit-hook evidence is useful signal, not a sandbox boundary.
 
 ## Malicious-package heuristic fields
 

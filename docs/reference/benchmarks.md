@@ -8,6 +8,21 @@ samples. The Trustcheck command explicitly uses `--fast`, limiting it to
 advisory lookup and lockfile/requirements parsing for an apples-to-apples
 comparison.
 
+## Latest snapshot
+
+Generated `2026-07-04T12:38:12.871592+00:00` on Python `3.14.6` with
+`pip-audit 2.10.1`. Corpus `2026.06` contained 133 entries in that run; this
+fixed-input `--no-deps` comparison covered 112 comparable package entries.
+
+| Tool | Cold p50 | Warm p50 | Warm p95 | Peak RSS | Requests p50 | Recall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| trustcheck scan --fast | 16.00 s | 14.20 s | 14.44 s | 78.0 MiB | unknown | 1 |
+| pip-audit | 36.69 s | 38.51 s | 39.82 s | 75.6 MiB | unknown | 1 |
+
+Alias-aware agreement was `1.0` across `105` compared packages and `263`
+matched advisories. Resolver exact match was `true`: trustcheck and pip-audit
+both resolved `22` packages in the dependency-resolution evidence suite.
+
 The corpus is `benchmarks/corpus/corpus.json`. Version `2026.06` contains 135
 package entries: 100 mixed clean and historically vulnerable PyPI pins, marker
 and extra cases, private-index inputs, pip-tools, PEP 751, uv, Poetry, and PDM
@@ -18,8 +33,8 @@ and correctness use only cases marked `compare_with_pip_audit`.
 Comparable requirements cases audit their declared pins directly. Trustcheck
 and pip-audit both use `--no-deps`, and pip-audit also uses `--disable-pip`, so
 historical releases do not execute build backends or need to resolve into one
-compatible environment. The README table reports direct timing and correctness
-for the marked comparable cases.
+compatible environment. The latest snapshot reports direct timing and
+correctness for the marked comparable cases.
 
 Correctness is alias-aware: advisories match when any normalized `CVE`, `GHSA`,
 `PYSEC`, or provider ID overlaps. The raw unmatched records remain in the JSON
@@ -43,7 +58,7 @@ counts are `null` because the tool does not expose that measurement.
 
 The benchmark workflow runs manually, after the release workflow completes, and
 on a weekly schedule. It publishes the raw JSON as a retained workflow artifact
-and prints the generated README evidence table into the workflow summary for
+and prints the generated benchmark evidence table into the workflow summary for
 maintainer review. Publication requires at least five warm samples per tool, a
 signed truth corpus with declared correctness gates, no truth-corpus
 regressions, and no one-sided advisory findings.

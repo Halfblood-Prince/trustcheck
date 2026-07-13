@@ -666,9 +666,9 @@ def _verify_dynamic_execution(
             package=name,
             code="dynamic_execution_introduced",
             severity="high",
-            message="Dynamic artifact execution occurred but is not allowed.",
-            expected="dynamic execution disabled",
-            observed="dynamic analysis executed package code",
+            message="Bounded install analysis executed artifact build or install hooks.",
+            expected="bounded install execution disabled",
+            observed="sandboxed installation probe executed package-controlled code",
         )
     ]
 

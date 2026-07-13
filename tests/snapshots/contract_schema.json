@@ -443,9 +443,173 @@
       "title": "DependencySummaryPayload",
       "type": "object"
     },
+    "DynamicAnalysisEvidencePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "attempted_network_connections": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Attempted Network Connections",
+          "type": "array"
+        },
+        "child_processes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Child Processes",
+          "type": "array"
+        },
+        "credential_path_accesses": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Credential Path Accesses",
+          "type": "array"
+        },
+        "environment_accesses": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Environment Accesses",
+          "type": "array"
+        },
+        "executable_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Executable Paths",
+          "type": "array"
+        },
+        "files_created": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Files Created",
+          "type": "array"
+        },
+        "files_modified": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Files Modified",
+          "type": "array"
+        },
+        "persistence_attempts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Persistence Attempts",
+          "type": "array"
+        },
+        "subprocess_arguments": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Subprocess Arguments",
+          "type": "array"
+        },
+        "writes_outside_expected_locations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Writes Outside Expected Locations",
+          "type": "array"
+        }
+      },
+      "title": "DynamicAnalysisEvidencePayload",
+      "type": "object"
+    },
+    "DynamicAnalysisPhasePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "default": "inconclusive",
+          "title": "Classification",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exit Code"
+        },
+        "failure_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Type"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "status": {
+          "default": "pending",
+          "title": "Status",
+          "type": "string"
+        },
+        "stderr": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stderr",
+          "type": "array"
+        },
+        "stdout": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stdout",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "DynamicAnalysisPhasePayload",
+      "type": "object"
+    },
     "DynamicAnalysisResultPayload": {
       "additionalProperties": false,
       "properties": {
+        "artifact_mount": {
+          "default": "read-only",
+          "title": "Artifact Mount",
+          "type": "string"
+        },
+        "classification": {
+          "default": "not-run",
+          "title": "Classification",
+          "type": "string"
+        },
         "command": {
           "items": {
             "type": "string"
@@ -475,6 +639,9 @@
           "default": null,
           "title": "Error"
         },
+        "evidence": {
+          "$ref": "#/$defs/DynamicAnalysisEvidencePayload"
+        },
         "executed": {
           "default": false,
           "title": "Executed",
@@ -491,6 +658,18 @@
           ],
           "default": null,
           "title": "Exit Code"
+        },
+        "failure_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Type"
         },
         "image": {
           "anyOf": [
@@ -509,9 +688,41 @@
           "title": "Memory Limit",
           "type": "string"
         },
+        "mode": {
+          "default": "bounded-install-analysis",
+          "title": "Mode",
+          "type": "string"
+        },
+        "mode_label": {
+          "default": "sandboxed installation probe",
+          "title": "Mode Label",
+          "type": "string"
+        },
         "network": {
           "default": "none",
           "title": "Network",
+          "type": "string"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/DynamicAnalysisPhasePayload"
+          },
+          "title": "Phases",
+          "type": "array"
+        },
+        "pids_limit": {
+          "default": 128,
+          "title": "Pids Limit",
+          "type": "integer"
+        },
+        "python_version": {
+          "default": "3.12",
+          "title": "Python Version",
+          "type": "string"
+        },
+        "root_filesystem": {
+          "default": "read-only",
+          "title": "Root Filesystem",
           "type": "string"
         },
         "sandbox": {
@@ -533,6 +744,11 @@
           "title": "Stdout",
           "type": "array"
         },
+        "temp_filesystem": {
+          "default": "private tmpfs",
+          "title": "Temp Filesystem",
+          "type": "string"
+        },
         "timeout_seconds": {
           "default": 30.0,
           "title": "Timeout Seconds",
@@ -544,7 +760,7 @@
           "type": "string"
         },
         "warning": {
-          "default": "Dynamic analysis executes untrusted package code in a disposable container; it is never enabled by default.",
+          "default": "Bounded install analysis executes untrusted package build and install hooks in a disposable container. It is never enabled by default and does not prove that unobserved behavior is safe.",
           "title": "Warning",
           "type": "string"
         }

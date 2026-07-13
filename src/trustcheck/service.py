@@ -31,7 +31,7 @@ from .advisories import (
 from .artifacts import compare_artifact_metadata, inspect_artifact_isolated
 from .attestations import Distribution as AttestedDistribution
 from .attestations import Provenance, VerificationError
-from .dynamic import DEFAULT_DYNAMIC_IMAGE, analyze_artifact_dynamic
+from .dynamic import DEFAULT_DYNAMIC_PYTHON, analyze_artifact_dynamic, default_dynamic_image
 from .malicious import assess_package, finding_for_artifact
 from .models import (
     ArtifactDiagnostic,
@@ -130,7 +130,8 @@ def inspect_package(
     vulnerability_only: bool = False,
     inspect_artifacts: bool = False,
     dynamic_analysis: bool = False,
-    dynamic_analysis_image: str = DEFAULT_DYNAMIC_IMAGE,
+    dynamic_analysis_image: str | None = None,
+    dynamic_analysis_python: str = DEFAULT_DYNAMIC_PYTHON,
     osv_client: OsvClient | None = None,
     vulnerability_client: VulnerabilityIntelligenceClient | None = None,
     locked_versions: Mapping[str, str] | None = None,
@@ -262,6 +263,7 @@ def inspect_package(
             inspect_artifacts=inspect_artifacts,
             dynamic_analysis=dynamic_analysis,
             dynamic_analysis_image=dynamic_analysis_image,
+            dynamic_analysis_python=dynamic_analysis_python,
             expected_requires_dist=declared_dependencies,
             expected_artifacts=expected_artifacts,
             plugin_manager=plugin_manager,
@@ -341,6 +343,7 @@ def inspect_package(
                 inspect_artifacts=inspect_artifacts,
                 dynamic_analysis=dynamic_analysis,
                 dynamic_analysis_image=dynamic_analysis_image,
+                dynamic_analysis_python=dynamic_analysis_python,
                 osv_client=osv_client,
                 vulnerability_client=vulnerability_client,
                 locked_versions=normalized_locked_versions,
@@ -372,7 +375,8 @@ def _collect_files(
     diagnostics: DiagnosticsCollector | None = None,
     inspect_artifacts: bool = False,
     dynamic_analysis: bool = False,
-    dynamic_analysis_image: str = DEFAULT_DYNAMIC_IMAGE,
+    dynamic_analysis_image: str | None = None,
+    dynamic_analysis_python: str = DEFAULT_DYNAMIC_PYTHON,
     expected_requires_dist: list[str] | None = None,
     expected_artifacts: Sequence[ArtifactReference] = (),
     plugin_manager: PluginManager | None = None,
@@ -408,6 +412,7 @@ def _collect_files(
                 inspect_artifacts=inspect_artifacts,
                 dynamic_analysis=dynamic_analysis,
                 dynamic_analysis_image=dynamic_analysis_image,
+                dynamic_analysis_python=dynamic_analysis_python,
                 expected_requires_dist=expected_requires_dist,
                 plugin_manager=plugin_manager,
                 artifact_cache=cache,
@@ -430,6 +435,7 @@ def _collect_files(
                 inspect_artifacts=inspect_artifacts,
                 dynamic_analysis=dynamic_analysis,
                 dynamic_analysis_image=dynamic_analysis_image,
+                dynamic_analysis_python=dynamic_analysis_python,
                 expected_requires_dist=expected_requires_dist,
                 plugin_manager=plugin_manager,
                 artifact_cache=cache,
@@ -453,7 +459,8 @@ def _collect_file(
     diagnostics: DiagnosticsCollector | None,
     inspect_artifacts: bool,
     dynamic_analysis: bool,
-    dynamic_analysis_image: str,
+    dynamic_analysis_image: str | None,
+    dynamic_analysis_python: str,
     expected_requires_dist: list[str] | None,
     plugin_manager: PluginManager | None,
     artifact_cache: ArtifactDigestCache,
@@ -562,6 +569,7 @@ def _collect_file(
                     filename,
                     artifact_bytes,
                     image=dynamic_analysis_image,
+                    python_version=dynamic_analysis_python,
                 )
                 if provenance.dynamic_analysis.error and diagnostics is not None:
                     diagnostics.add_artifact_failure(
@@ -573,7 +581,10 @@ def _collect_file(
                     )
             except PypiClientError as exc:
                 provenance.dynamic_analysis.enabled = True
-                provenance.dynamic_analysis.image = dynamic_analysis_image
+                provenance.dynamic_analysis.image = dynamic_analysis_image or default_dynamic_image(
+                    dynamic_analysis_python
+                )
+                provenance.dynamic_analysis.python_version = dynamic_analysis_python
                 provenance.dynamic_analysis.error = str(exc)
                 if diagnostics is not None:
                     diagnostics.add_artifact_failure(
@@ -945,7 +956,8 @@ def _inspect_dependencies(
     include_osv: bool,
     inspect_artifacts: bool,
     dynamic_analysis: bool,
-    dynamic_analysis_image: str,
+    dynamic_analysis_image: str | None,
+    dynamic_analysis_python: str,
     osv_client: OsvClient | None,
     vulnerability_client: VulnerabilityIntelligenceClient | None,
     locked_versions: Mapping[str, str],
@@ -981,6 +993,7 @@ def _inspect_dependencies(
             inspect_artifacts=inspect_artifacts,
             dynamic_analysis=dynamic_analysis,
             dynamic_analysis_image=dynamic_analysis_image,
+            dynamic_analysis_python=dynamic_analysis_python,
             osv_client=osv_client,
             vulnerability_client=vulnerability_client,
             locked_versions=locked_versions,
@@ -1019,7 +1032,8 @@ def _inspect_dependency_requirement(
     include_osv: bool,
     inspect_artifacts: bool,
     dynamic_analysis: bool,
-    dynamic_analysis_image: str,
+    dynamic_analysis_image: str | None,
+    dynamic_analysis_python: str,
     osv_client: OsvClient | None,
     vulnerability_client: VulnerabilityIntelligenceClient | None,
     locked_versions: Mapping[str, str],
@@ -1099,6 +1113,7 @@ def _inspect_dependency_requirement(
             inspect_artifacts=inspect_artifacts,
             dynamic_analysis=dynamic_analysis,
             dynamic_analysis_image=dynamic_analysis_image,
+            dynamic_analysis_python=dynamic_analysis_python,
             osv_client=osv_client,
             vulnerability_client=vulnerability_client,
             _dependency_context=dependency_context,

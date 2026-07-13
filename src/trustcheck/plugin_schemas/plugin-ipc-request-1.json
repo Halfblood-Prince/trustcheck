@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:trustcheck:plugin-ipc-request:1",
+  "title": "Trustcheck plugin IPC request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "plugin_protocol_version",
+    "request_id",
+    "entry_value",
+    "operation",
+    "kwargs"
+  ],
+  "properties": {
+    "plugin_protocol_version": {
+      "const": "1"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "entry_value": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "operation": {
+      "type": "string",
+      "enum": [
+        "query",
+        "analyze",
+        "evaluate",
+        "render",
+        "supports",
+        "client.get_project",
+        "client.download",
+        "client.find_dependency_confusion",
+        "client.locate_artifact_index"
+      ]
+    },
+    "kwargs": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/jsonValue"
+        },
+        {
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "jsonValue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "maxLength": 201326592
+        },
+        {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "maxProperties": 10000,
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 201326592
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        }
+      ]
+    }
+  }
+}

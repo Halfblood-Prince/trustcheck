@@ -373,8 +373,14 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
                     lines.append(f"      error: {file.artifact.error}")
             if file.dynamic_analysis.enabled:
                 dynamic = file.dynamic_analysis
-                lines.append("    dynamic analysis:")
+                lines.append("    bounded install analysis:")
                 lines.append(f"      warning: {dynamic.warning}")
+                lines.append(
+                    "      mode: "
+                    f"{dynamic.mode} ({dynamic.mode_label}) "
+                    f"python={dynamic.python_version} "
+                    f"classification={dynamic.classification}"
+                )
                 lines.append(
                     "      sandbox: "
                     f"{dynamic.sandbox} image={dynamic.image or '-'} "
@@ -383,13 +389,50 @@ def _render_text_report(report: TrustReport, *, verbose: bool = False) -> str:
                 lines.append(
                     "      limits: "
                     f"cpu={dynamic.cpu_limit} memory={dynamic.memory_limit} "
-                    f"timeout={dynamic.timeout_seconds:g}s"
+                    f"pids={dynamic.pids_limit} timeout={dynamic.timeout_seconds:g}s"
+                )
+                lines.append(
+                    "      mounts: "
+                    f"root={dynamic.root_filesystem} "
+                    f"artifact={dynamic.artifact_mount} "
+                    f"tmp={dynamic.temp_filesystem}"
                 )
                 lines.append(
                     "      result: "
                     f"executed={'yes' if dynamic.executed else 'no'} "
                     f"exit_code={dynamic.exit_code if dynamic.exit_code is not None else '-'}"
                 )
+                if dynamic.failure_type:
+                    lines.append(f"      failure type: {dynamic.failure_type}")
+                if dynamic.phases:
+                    lines.append("      phases:")
+                    for phase in dynamic.phases:
+                        detail = (
+                            f"        {phase.name}: {phase.status} "
+                            f"classification={phase.classification}"
+                        )
+                        if phase.failure_type:
+                            detail += f" failure={phase.failure_type}"
+                        if phase.exit_code is not None:
+                            detail += f" exit_code={phase.exit_code}"
+                        lines.append(detail)
+                evidence = dynamic.evidence
+                evidence_counts = {
+                    "children": len(evidence.child_processes),
+                    "writes": len(evidence.files_modified),
+                    "outside_writes": len(evidence.writes_outside_expected_locations),
+                    "network": len(evidence.attempted_network_connections),
+                    "credentials": len(evidence.credential_path_accesses),
+                    "persistence": len(evidence.persistence_attempts),
+                }
+                if any(evidence_counts.values()):
+                    lines.append(
+                        "      evidence: "
+                        + " ".join(
+                            f"{name}={count}"
+                            for name, count in evidence_counts.items()
+                        )
+                    )
                 if dynamic.error:
                     lines.append(f"      error: {dynamic.error}")
 

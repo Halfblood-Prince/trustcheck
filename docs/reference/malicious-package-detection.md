@@ -60,11 +60,17 @@ PE, ELF, and Mach-O members are structurally parsed for:
 Signature presence is not signature verification. Trustcheck does not
 disassemble, emulate, sandbox, or execute native code.
 
-## Dynamic analysis
+## Bounded install analysis
+
+!!! warning "Experimental"
+
+    Bounded install analysis executes untrusted build and install hooks in a
+    constrained container. Treat it as behavior evidence from an installation
+    probe, not as proof that a package is safe.
 
 `--dynamic-analysis` is deliberately separate from the static archive, AST, and
-native-binary checks. It executes downloaded artifacts in a disposable Docker
-container, so it is never enabled by default.
+native-binary checks. It runs a sandboxed installation probe for downloaded
+artifacts in a disposable Docker container, so it is never enabled by default.
 
 The container is started with:
 
@@ -75,11 +81,24 @@ The container is started with:
 - one CPU, a 10-second CPU ulimit, 512 MiB RAM, a 128-process limit, and a
   30-second wall-clock timeout
 
-The dynamic runner installs the artifact into an isolated temporary virtual
-environment with `pip --no-deps --no-index --no-build-isolation`. This may
-execute untrusted build hooks, especially for source distributions. Treat the
-result as behavior evidence from a constrained sandbox, not as proof of safety.
-Its default Docker image is digest-pinned, and mutable image tags are rejected.
+The runner records separate phases for archive validation, metadata
+preparation, wheel build, wheel installation, and skipped optional import or
+entry-point probes. Failures are classified as backend unavailable, metadata
+invalid, build failed, install hook failed, policy blocked, timed out,
+unsupported, inconclusive, or suspicious behavior when evidence supports it.
+
+Analyzer images are digest-pinned. Trustcheck-controlled image definitions live
+in `packaging/dynamic-analyzers/` and prebuild common backend wheels so analysis
+can run with `--no-index`. `--dynamic-python` selects Python 3.11, 3.12, 3.13,
+or 3.14; profiles without a configured digest-pinned image fail as unsupported
+instead of silently reusing another Python version. `--dynamic-image` can supply
+an explicit digest-pinned image.
+
+Behavioral evidence is best-effort. The Python audit hook records child
+processes, executable paths, subprocess arguments, writes, attempted network
+connections, credential-path access, persistence-like paths, and environment
+changes where supported. It is evidence collection, not an unbypassable security
+boundary. Inconclusive analysis never counts as a clean pass.
 
 ## Scoring
 

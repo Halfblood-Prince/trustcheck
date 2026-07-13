@@ -30,8 +30,7 @@ A policy failure still uploads its report before failing the job.
 Stable releases publish a full version tag such as `v2.1.1` and update the
 compatible major ref `v2`. Use `@v2` for compatible updates. For immutable
 release gates, pin `Halfblood-Prince/trustcheck` and supporting actions to full
-commit SHAs; GitHub treats a full commit SHA as the only immutable Action
-reference.
+commit SHAs. GitHub treats a full commit SHA as the only immutable Action reference.
 
 ```yaml
 steps:
@@ -42,6 +41,33 @@ steps:
       policy: strict
       sandbox: auto
 ```
+
+## Pre-commit and monorepos
+
+Trustcheck publishes a first-party pre-commit hook for changed dependency
+files:
+
+```yaml
+repos:
+  - repo: https://github.com/Halfblood-Prince/trustcheck
+    rev: v2
+    hooks:
+      - id: trustcheck
+```
+
+The hook runs `--fast --no-deps --with-osv`, preserves lockfile artifact
+hashes, deduplicates filenames, and merges failures across every changed
+dependency file.
+
+For monorepos, discover supported dependency files and aggregate
+repository-relative results:
+
+```bash
+trustcheck-workspace . --format sarif
+```
+
+`trustcheck-workspace` accepts `--baseline` and `--policy-overrides` for
+per-project policies.
 
 ## Trust manifest gate
 
@@ -209,6 +235,15 @@ Trustcheck's own CI also runs GitHub Dependency Review on pull requests. That
 lightweight gate blocks newly introduced vulnerable dependencies at moderate or
 higher severity and denies AGPL/GPL license introductions before merge.
 
+## Release artifact scanning
+
+Trustcheck's own release workflows build standalone Windows and Linux
+executables. Windows artifacts are scanned with Microsoft Defender's
+`MpCmdRun.exe`; Linux artifacts are scanned with ClamAV. Clean binaries,
+checksums, and scanner reports are retained as workflow artifacts by the
+[Binary Security](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/binary-security.yml)
+workflow.
+
 ## Inputs
 
 | Input | Default | Description |
@@ -241,7 +276,7 @@ higher severity and denies AGPL/GPL license introductions before merge.
 | `sign-advisory-snapshot` | `false` | Sign written snapshots using ambient Sigstore identity. |
 | `allow-unsigned-advisory-snapshot` | `false` | Explicit compatibility mode for unsigned snapshots. |
 | `resume-state` | empty | Checkpoint path for resumable dependency-file scans. |
-| `enable-plugins` | `false` | Enable installed Trustcheck entry-point plugins. |
+| `enable-plugins` | `false` | Experimental: enable installed Trustcheck entry-point plugins. |
 | `plugins` | empty | Whitespace- or newline-separated `[kind:]name` plugin allowlist. |
 | `plugin-config` | empty | JSON configuration path keyed by plugin name. |
 | `remediation` | `none` | `none`, `plan`, or `fix` for dependency-file targets. |

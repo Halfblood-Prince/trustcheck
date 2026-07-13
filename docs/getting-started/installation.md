@@ -23,6 +23,13 @@ Show the installed package version and report schema version:
 trustcheck --version
 ```
 
+Check local prerequisites before relying on resolver isolation, private
+indexes, or provenance verification:
+
+```bash
+trustcheck doctor
+```
+
 ## Upgrade
 
 ```bash

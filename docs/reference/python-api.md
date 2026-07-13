@@ -99,7 +99,14 @@ with ambient Sigstore identity; unsigned compatibility requires the explicit
 `PluginManager` discovers entry points only when explicitly enabled. It routes
 advisory sources, index clients, artifact analyzers, policy rules, and
 renderers through the public protocol types listed above. Plugin API version
-`1` requires deterministic return values and thread-safe plugin instances.
+`1` requires deterministic return values, thread-safe plugin instances, and
+declared Trustcheck model or primitive result types. When the resource-bounded
+worker is enabled, plugin IPC is versioned JSON bytes; the parent reconstructs
+trusted models and rejects unknown fields or arbitrary custom result objects.
+Trusted plugin loading also requires a signed statement bound to the installed
+distribution version, RECORD digest, canonical installed-content digest,
+dependencies, capabilities, configuration schema hash, and an external trust
+root such as a trusted key, digest allowlist, or Sigstore identity.
 
 See [Performance and extensibility](performance-extensibility.md) for entry
 point group names and registration examples.
@@ -302,10 +309,11 @@ print(json.dumps(payload, indent=2))
 Use `inspect_package(project, version=None, expected_repository=None, client=None,
 progress_callback=None, include_dependencies=False,
 include_transitive_dependencies=False, include_osv=False,
-inspect_artifacts=False, osv_client=None, vulnerability_client=None,
+inspect_artifacts=False, dynamic_analysis=False, dynamic_analysis_image=None,
+dynamic_analysis_python="3.12", osv_client=None, vulnerability_client=None,
 locked_versions=None, resolver=None, target_environment=None,
-complete_locked_versions=False, expected_artifacts=())` to collect evidence
-and build a `TrustReport`.
+complete_locked_versions=False, expected_artifacts=())` to collect evidence and
+build a `TrustReport`.
 
 In most applications, you only need to provide:
 
@@ -318,6 +326,9 @@ In most applications, you only need to provide:
 - optionally `vulnerability_client=VulnerabilityIntelligenceClient(...)` to
   merge multiple advisory and enrichment providers
 - optionally `inspect_artifacts=True` to statically inspect downloaded wheels and sdists
+- optionally `dynamic_analysis=True` to run bounded install analysis in a
+  digest-pinned analyzer image; set `dynamic_analysis_python="3.13"` or
+  `dynamic_analysis_image="image@sha256:..."` for an explicit analyzer profile
 - optionally `trusted_projects=("internal-sdk",)` to extend the typosquatting
   reference set
 - optionally `dependency_confusion_indexes=(...)` to attach a resolver-observed

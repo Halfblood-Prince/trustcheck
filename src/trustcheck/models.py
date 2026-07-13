@@ -158,15 +158,25 @@ class ArtifactInspection:
 class DynamicAnalysisResult:
     enabled: bool = False
     executed: bool = False
+    mode: str = "bounded-install-analysis"
+    mode_label: str = "sandboxed installation probe"
+    classification: str = "not-run"
+    failure_type: str | None = None
     sandbox: str = "docker"
     warning: str = (
-        "Dynamic analysis executes untrusted package code in a disposable "
-        "container; it is never enabled by default."
+        "Bounded install analysis executes untrusted package build and install "
+        "hooks in a disposable container. It is never enabled by default and "
+        "does not prove that unobserved behavior is safe."
     )
+    python_version: str = "3.12"
     network: str = "none"
     user: str = "non-root"
     cpu_limit: str = "1 CPU, 10 CPU seconds"
     memory_limit: str = "512 MiB"
+    pids_limit: int = 128
+    root_filesystem: str = "read-only"
+    artifact_mount: str = "read-only"
+    temp_filesystem: str = "private tmpfs"
     timeout_seconds: float = 30.0
     image: str | None = None
     command: list[str] = field(default_factory=list)
@@ -174,6 +184,36 @@ class DynamicAnalysisResult:
     stdout: list[str] = field(default_factory=list)
     stderr: list[str] = field(default_factory=list)
     error: str | None = None
+    phases: list["DynamicAnalysisPhase"] = field(default_factory=list)
+    evidence: "DynamicAnalysisEvidence" = field(
+        default_factory=lambda: DynamicAnalysisEvidence()
+    )
+
+
+@dataclass(slots=True)
+class DynamicAnalysisPhase:
+    name: str
+    status: str = "pending"
+    classification: str = "inconclusive"
+    failure_type: str | None = None
+    exit_code: int | None = None
+    stdout: list[str] = field(default_factory=list)
+    stderr: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass(slots=True)
+class DynamicAnalysisEvidence:
+    child_processes: list[str] = field(default_factory=list)
+    executable_paths: list[str] = field(default_factory=list)
+    files_created: list[str] = field(default_factory=list)
+    files_modified: list[str] = field(default_factory=list)
+    writes_outside_expected_locations: list[str] = field(default_factory=list)
+    attempted_network_connections: list[str] = field(default_factory=list)
+    credential_path_accesses: list[str] = field(default_factory=list)
+    persistence_attempts: list[str] = field(default_factory=list)
+    environment_accesses: list[str] = field(default_factory=list)
+    subprocess_arguments: list[list[str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)

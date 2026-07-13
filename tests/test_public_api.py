@@ -36,6 +36,8 @@ class PublicApiTests(unittest.TestCase):
                 "DependencyConfusionFinding",
                 "DoctorCheck",
                 "DoctorReport",
+                "DynamicAnalysisEvidence",
+                "DynamicAnalysisPhase",
                 "DynamicAnalysisResult",
                 "EpssClient",
                 "ExportPackage",

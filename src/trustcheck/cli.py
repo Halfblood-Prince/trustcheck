@@ -173,7 +173,11 @@ from .cli_targets import (
     _translate_poetry_version_specifier as _translate_poetry_version_specifier,
 )
 from .contract import JSON_SCHEMA_VERSION
-from .dynamic import DEFAULT_DYNAMIC_IMAGE
+from .dynamic import (
+    DEFAULT_DYNAMIC_PYTHON,
+    DIGEST_PINNED_IMAGE_PATTERN,
+    SUPPORTED_DYNAMIC_PYTHONS,
+)
 from .exports import (
     OUTPUT_FORMATS,
     ExportPackage,
@@ -1361,9 +1365,29 @@ def _add_dynamic_analysis_argument(parser: argparse.ArgumentParser) -> None:
         "--dynamic-analysis",
         action="store_true",
         help=(
-            "Opt in to executing downloaded artifacts in a disposable Docker "
-            f"container ({DEFAULT_DYNAMIC_IMAGE}) with no network, a non-root user, "
-            "and strict CPU, memory, and time limits. This executes untrusted code."
+            "Experimental: opt in to bounded install analysis of downloaded artifacts "
+            "in a disposable Docker container with no network, a non-root user, "
+            "digest-pinned image policy, and strict CPU, memory, PID, and time limits. "
+            "This executes untrusted build and install hooks and may be inconclusive."
+        ),
+    )
+    parser.add_argument(
+        "--dynamic-python",
+        choices=SUPPORTED_DYNAMIC_PYTHONS,
+        default=DEFAULT_DYNAMIC_PYTHON,
+        help=(
+            "Python version for bounded install analysis. Supported values: "
+            + ", ".join(SUPPORTED_DYNAMIC_PYTHONS)
+            + f". Default: {DEFAULT_DYNAMIC_PYTHON}."
+        ),
+    )
+    parser.add_argument(
+        "--dynamic-image",
+        default=None,
+        metavar="IMAGE@sha256:DIGEST",
+        help=(
+            "Override the bounded install analyzer image. The image must be "
+            "pinned by full sha256 digest."
         ),
     )
 
@@ -1425,7 +1449,7 @@ def _add_runtime_arguments(
     parser.add_argument(
         "--enable-plugins",
         action="store_true",
-        help="Enable installed trustcheck entry-point plugins.",
+        help="Experimental: enable installed trustcheck entry-point plugins.",
     )
     parser.add_argument(
         "--plugin",
@@ -1672,6 +1696,12 @@ def _run_scan_targets(
                 vulnerability_only=vulnerability_only,
                 inspect_artifacts=getattr(args, "inspect_artifacts", False),
                 dynamic_analysis=getattr(args, "dynamic_analysis", False),
+                dynamic_analysis_image=getattr(args, "dynamic_image", None),
+                dynamic_analysis_python=getattr(
+                    args,
+                    "dynamic_python",
+                    DEFAULT_DYNAMIC_PYTHON,
+                ),
                 vulnerability_client=vulnerability_client,
                 locked_versions=target.locked_versions,
                 complete_locked_versions=target.complete_locked_versions,
@@ -1932,6 +1962,8 @@ def _scan_project_vulnerabilities(
         include_osv=vulnerability_client is not None,
         vulnerability_only=args.scan_profile == "fast" and not args.dynamic_analysis,
         dynamic_analysis=args.dynamic_analysis,
+        dynamic_analysis_image=getattr(args, "dynamic_image", None),
+        dynamic_analysis_python=getattr(args, "dynamic_python", DEFAULT_DYNAMIC_PYTHON),
         vulnerability_client=vulnerability_client,
         resolver=resolver,
         target_environment=_target_environment_from_args(args),
@@ -2155,6 +2187,12 @@ def _post_fix_reproduction_command(
         command.append("--full")
     if getattr(args, "dynamic_analysis", False):
         command.append("--dynamic-analysis")
+        dynamic_python = getattr(args, "dynamic_python", DEFAULT_DYNAMIC_PYTHON)
+        if dynamic_python != DEFAULT_DYNAMIC_PYTHON:
+            command.extend(["--dynamic-python", dynamic_python])
+        dynamic_image = getattr(args, "dynamic_image", None)
+        if dynamic_image:
+            command.extend(["--dynamic-image", dynamic_image])
     for constraint in getattr(args, "constraint", ()):
         command.extend(["--constraint", str(Path(constraint).resolve())])
     if getattr(args, "strict", False):
@@ -2654,6 +2692,12 @@ def _scan_resolution_for_remediation(
             include_osv=vulnerability_client is not None,
             inspect_artifacts=args.inspect_artifacts,
             dynamic_analysis=getattr(args, "dynamic_analysis", False),
+            dynamic_analysis_image=getattr(args, "dynamic_image", None),
+            dynamic_analysis_python=getattr(
+                args,
+                "dynamic_python",
+                DEFAULT_DYNAMIC_PYTHON,
+            ),
             vulnerability_client=vulnerability_client,
             locked_versions=versions,
             complete_locked_versions=True,
@@ -2884,6 +2928,10 @@ def _build_scan_state(
                         "kind": item.kind,
                         "value": item.value,
                         "distribution": item.distribution,
+                        "distribution_version": item.distribution_version,
+                        "wheel_sha256": item.wheel_sha256,
+                        "record_sha256": item.record_sha256,
+                        "trust_policy_mode": item.trust_policy_mode,
                     }
                     for item in plugin_manager.descriptors()
                 ],
@@ -3408,6 +3456,8 @@ def _apply_project_config(
         "scan_profile",
         "artifact_scope",
         "dynamic_analysis",
+        "dynamic_python",
+        "dynamic_image",
         "network",
         "advisories",
         "performance",
@@ -3461,6 +3511,25 @@ def _apply_project_config(
             config_value=config.get("dynamic_analysis"),
             default=False,
         )
+    if hasattr(args, "dynamic_python"):
+        args.dynamic_python = _resolve_choice(
+            args.dynamic_python if "dynamic_python" in explicit else None,
+            env_name="TRUSTCHECK_DYNAMIC_PYTHON",
+            config_value=config.get("dynamic_python"),
+            default=DEFAULT_DYNAMIC_PYTHON,
+            choices=set(SUPPORTED_DYNAMIC_PYTHONS),
+        )
+    if hasattr(args, "dynamic_image"):
+        args.dynamic_image = _resolve_str(
+            args.dynamic_image if "dynamic_image" in explicit else None,
+            env_name="TRUSTCHECK_DYNAMIC_IMAGE",
+            config_value=config.get("dynamic_image"),
+        )
+        if (
+            args.dynamic_image is not None
+            and DIGEST_PINNED_IMAGE_PATTERN.fullmatch(args.dynamic_image) is None
+        ):
+            raise ValueError("dynamic_image must be pinned by a full sha256 digest")
     if hasattr(args, "fix"):
         args.fix_test_commands = _fix_test_commands_from_config(config)
 
@@ -3495,6 +3564,8 @@ def _explicit_config_fields(argv: Sequence[str]) -> set[str]:
         "--full": "scan_profile",
         "--artifact-scope": "artifact_scope",
         "--dynamic-analysis": "dynamic_analysis",
+        "--dynamic-python": "dynamic_python",
+        "--dynamic-image": "dynamic_image",
     }
     explicit: set[str] = set()
     for token in argv:

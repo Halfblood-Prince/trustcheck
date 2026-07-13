@@ -28,6 +28,9 @@ nav:
       - Recommendation model: reference/recommendations.md
   - Guides:
       - TrustCheck Package Scanner: guides/ci-integration.md
+  - Development:
+      - Release baseline: development/release-baseline.md
+      - Hardening tracker: development/hardening-tracker.md
   - Changelog: changelog.md
 
 theme:

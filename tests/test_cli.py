@@ -256,6 +256,10 @@ class CliBehaviorTests(unittest.TestCase):
                 "--sandbox-image",
                 "registry.example/resolver@sha256:" + "b" * 64,
                 "--dynamic-analysis",
+                "--dynamic-python",
+                "3.13",
+                "--dynamic-image",
+                "registry.example/dynamic@sha256:" + "c" * 64,
             ]
         )
         self.assertEqual(scan_args.constraint, ["constraints.txt"])
@@ -271,6 +275,11 @@ class CliBehaviorTests(unittest.TestCase):
             "registry.example/resolver@sha256:" + "b" * 64,
         )
         self.assertTrue(scan_args.dynamic_analysis)
+        self.assertEqual(scan_args.dynamic_python, "3.13")
+        self.assertEqual(
+            scan_args.dynamic_image,
+            "registry.example/dynamic@sha256:" + "c" * 64,
+        )
         self.assertEqual(
             _target_environment_from_args(scan_args),
             TargetEnvironment(
@@ -1169,11 +1178,14 @@ class CliBehaviorTests(unittest.TestCase):
 
         rendered = _render_text_report(report, verbose=True)
 
-        self.assertIn("dynamic analysis:", rendered)
+        self.assertIn("bounded install analysis:", rendered)
         self.assertIn("warning:", rendered)
+        self.assertIn("mode: bounded-install-analysis", rendered)
+        self.assertIn("classification=not-run", rendered)
         self.assertIn("sandbox: docker image=registry.example/python@sha256:", rendered)
         self.assertIn("network=none user=non-root", rendered)
         self.assertIn("limits: cpu=1 CPU, 10 CPU seconds memory=512 MiB", rendered)
+        self.assertIn("mounts: root=read-only artifact=read-only", rendered)
         self.assertIn("result: executed=no exit_code=-", rendered)
         self.assertIn("error: dynamic analysis image must be pinned", rendered)
 
@@ -1211,6 +1223,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("embedded payloads: payload.zip", rendered)
         self.assertIn("parse note: certificate table missing", rendered)
         self.assertIn("sandbox: docker image=- network=none user=non-root", rendered)
+        self.assertIn("classification=not-run", rendered)
         self.assertIn("result: executed=yes exit_code=0", rendered)
         self.assertNotIn("      error:", rendered)
 
@@ -2239,6 +2252,8 @@ class CliBehaviorTests(unittest.TestCase):
                 with_transitive_deps=True,
                 inspect_artifacts=True,
                 dynamic_analysis=True,
+                dynamic_python="3.13",
+                dynamic_image="registry.example/dynamic@sha256:" + "d" * 64,
                 extra=["security"],
                 group=["test"],
                 scan_profile="full",
@@ -2274,6 +2289,9 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertIn("--with-osv", command)
         self.assertIn("--full", command)
         self.assertIn("--dynamic-analysis", command)
+        self.assertIn("--dynamic-python", command)
+        self.assertIn("3.13", command)
+        self.assertIn("--dynamic-image", command)
         self.assertIn("--fail-on-vulnerability", command)
         self.assertIn("--python-version", command)
         self.assertIn("--max-advisory-age", command)
@@ -3237,6 +3255,8 @@ class CliBehaviorTests(unittest.TestCase):
             "scan_profile": "fast",
             "artifact_scope": "all",
             "dynamic_analysis": True,
+            "dynamic_python": "3.11",
+            "dynamic_image": "registry.example/file@sha256:" + "a" * 64,
         }
         args = parser.parse_args(["scan", "requests"])
         args._explicit_config_fields = set()
@@ -3249,6 +3269,8 @@ class CliBehaviorTests(unittest.TestCase):
                 "TRUSTCHECK_SCAN_PROFILE": "full",
                 "TRUSTCHECK_ARTIFACT_SCOPE": "sdist",
                 "TRUSTCHECK_DYNAMIC_ANALYSIS": "false",
+                "TRUSTCHECK_DYNAMIC_PYTHON": "3.13",
+                "TRUSTCHECK_DYNAMIC_IMAGE": "registry.example/env@sha256:" + "b" * 64,
             },
         ):
             _apply_project_config(args, configured)
@@ -3259,6 +3281,8 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(args.scan_profile, "full")
         self.assertEqual(args.artifact_scope, "sdist")
         self.assertFalse(args.dynamic_analysis)
+        self.assertEqual(args.dynamic_python, "3.13")
+        self.assertEqual(args.dynamic_image, "registry.example/env@sha256:" + "b" * 64)
 
         cli_args = parser.parse_args(
             [
@@ -3272,6 +3296,10 @@ class CliBehaviorTests(unittest.TestCase):
                 "--artifact-scope",
                 "target",
                 "--dynamic-analysis",
+                "--dynamic-python",
+                "3.14",
+                "--dynamic-image",
+                "registry.example/cli@sha256:" + "c" * 64,
             ]
         )
         cli_args._explicit_config_fields = {
@@ -3281,6 +3309,8 @@ class CliBehaviorTests(unittest.TestCase):
             "scan_profile",
             "artifact_scope",
             "dynamic_analysis",
+            "dynamic_python",
+            "dynamic_image",
         }
         with patch.dict(
             "os.environ",
@@ -3291,6 +3321,8 @@ class CliBehaviorTests(unittest.TestCase):
                 "TRUSTCHECK_SCAN_PROFILE": "full",
                 "TRUSTCHECK_ARTIFACT_SCOPE": "all",
                 "TRUSTCHECK_DYNAMIC_ANALYSIS": "false",
+                "TRUSTCHECK_DYNAMIC_PYTHON": "3.13",
+                "TRUSTCHECK_DYNAMIC_IMAGE": "registry.example/env@sha256:" + "b" * 64,
             },
         ):
             _apply_project_config(cli_args, configured)
@@ -3301,6 +3333,8 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(cli_args.scan_profile, "standard")
         self.assertEqual(cli_args.artifact_scope, "target")
         self.assertTrue(cli_args.dynamic_analysis)
+        self.assertEqual(cli_args.dynamic_python, "3.14")
+        self.assertEqual(cli_args.dynamic_image, "registry.example/cli@sha256:" + "c" * 64)
 
     def test_project_config_accepts_fix_test_commands(self) -> None:
         args = build_parser().parse_args(["scan", "-f", "requirements.txt"])

@@ -24,6 +24,8 @@ with_osv = true
 with_kev = true
 scan_profile = "standard"
 artifact_scope = "target"
+dynamic_analysis = false
+dynamic_python = "3.12"
 
 [tool.trustcheck.network]
 timeout = 20.0
@@ -40,6 +42,8 @@ with_osv = true
 with_kev = true
 scan_profile = "standard"
 artifact_scope = "target"
+dynamic_analysis = false
+dynamic_python = "3.12"
 
 [network]
 timeout = 20.0
@@ -48,8 +52,10 @@ cache_dir = ".trustcheck-cache"
 ```
 
 Supported project-level settings are `policy`, `with_osv`, `with_kev`,
-`scan_profile`, and `artifact_scope`. Existing provider, performance, and
-network settings use their nested tables.
+`scan_profile`, `artifact_scope`, `dynamic_analysis`, `dynamic_python`, and
+`dynamic_image`. Existing provider, performance, and network settings use their
+nested tables. `dynamic_image`, when set, must be pinned by a full sha256
+digest.
 
 JSON example:
 
@@ -104,6 +110,9 @@ The CLI also recognizes these environment variables:
 - `TRUSTCHECK_WITH_KEV`
 - `TRUSTCHECK_SCAN_PROFILE`
 - `TRUSTCHECK_ARTIFACT_SCOPE`
+- `TRUSTCHECK_DYNAMIC_ANALYSIS`
+- `TRUSTCHECK_DYNAMIC_PYTHON`
+- `TRUSTCHECK_DYNAMIC_IMAGE`
 
 ## Precedence
 

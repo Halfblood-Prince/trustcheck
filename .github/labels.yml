@@ -1,0 +1,30 @@
+- name: release-blocker
+  color: B60205
+  description: Blocks tagging, publishing, marketplace upload, or stable promotion.
+- name: security
+  color: D93F0B
+  description: Trust boundary, sandbox, verification, or fail-closed behavior.
+- name: ai-plugin
+  color: 5319E7
+  description: Claude, Codex, Cursor, or shared AI adapter work.
+- name: plugin-system
+  color: 0052CC
+  description: Trustcheck third-party plugin protocol, manifests, IPC, and identity.
+- name: dynamic-analysis
+  color: 0E8A16
+  description: Installation or runtime analysis of package artifacts.
+- name: ci-cd
+  color: 1D76DB
+  description: GitHub Actions, release workflows, permissions, and artifact binding.
+- name: packaging
+  color: C2E0C6
+  description: Wheels, sdists, standalone binaries, Snap, Homebrew, or marketplace archives.
+- name: testing
+  color: FBCA04
+  description: Unit, integration, coverage, fuzzing, mutation, and artifact smoke tests.
+- name: documentation
+  color: 0075CA
+  description: User docs, reviewer docs, changelog, privacy, terms, and marketing accuracy.
+- name: maintainability
+  color: BFDADC
+  description: Refactors, lint expansion, architecture docs, and contributor ergonomics.

@@ -109,11 +109,49 @@ advisory options, and enabled plugins. Stale or mismatched state fails closed.
 
 ## Plugins
 
-Plugins are disabled by default and require an explicit allowlist. Signed
-`trustcheck-plugin.json` manifests bind the name, kind, entry point, and API
-version. Trustcheck verifies the signature and optional signer-fingerprint
-allowlist before importing code in a spawned, resource-bounded worker.
-Execution status, timing, and isolation are included in report diagnostics.
+!!! warning "Experimental"
+
+    Third-party Trustcheck plugins remain explicitly opt-in. Keep plugin
+    loading disabled unless the plugin distribution, installed-code digest,
+    and publisher trust root are explicitly approved.
+
+Plugins are disabled by default and require an explicit allowlist. Trusted
+plugin execution requires a signed `trustcheck-plugin.json` statement that
+binds the name, kind, entry point, API version, plugin protocol version,
+distribution name and version, installed RECORD digest, canonical installed
+content digest, declared dependencies, declared capabilities, resource
+requirements, and configuration schema digest. Trustcheck verifies the
+signature, installed files against wheel `RECORD`, and a configured external
+trust root before importing code in a spawned, resource-bounded worker.
+Self-signed plugin metadata alone is rejected. Execution status, timing, and
+whether the resource-bounded worker was used are included in report
+diagnostics.
+
+Worker IPC uses plugin protocol version `1` over
+`multiprocessing.Pipe.send_bytes()` and `recv_bytes()`. The parent and worker
+exchange UTF-8 JSON bytes only; plugin-controlled Python objects are never
+received with `Pipe.recv()` or unpickled in the parent process. Responses use
+this envelope:
+
+```json
+{
+  "plugin_protocol_version": "1",
+  "request_id": "request-id",
+  "ok": true,
+  "result": {}
+}
+```
+
+The parent validates the envelope, protocol version, request id, JSON shape,
+message byte size, nested depth, list and mapping length, and string length.
+The worker returns plain data, and the parent reconstructs only trusted
+Trustcheck models: vulnerability records, artifact findings, policy
+violations, index projects and files, dependency-confusion findings, byte
+payloads, and plugin errors. Unknown fields and unsupported return types fail
+closed. The packaged schemas are
+`trustcheck/plugin_schemas/plugin-statement-1.json`,
+`trustcheck/plugin_schemas/plugin-ipc-request-1.json` and
+`trustcheck/plugin_schemas/plugin-ipc-response-1.json`.
 
 ```bash
 trustcheck scan -f requirements.txt \
@@ -141,24 +179,72 @@ company-policy = "company_trustcheck:CompanyPolicy"
 
 Plugin objects declare a stable `name`. Configuration is a JSON object keyed
 by that name. Plugin API version `1` uses the public protocols exported by
-`trustcheck`. The distribution includes `trustcheck-plugin.json`:
+`trustcheck`; resource-bounded workers reject arbitrary custom result objects.
+The distribution includes `trustcheck-plugin.json`:
 
 ```json
 {
   "schema": "urn:trustcheck:plugin-manifest:1",
   "manifest": {
+    "schema": "urn:trustcheck:plugin-statement:1",
     "name": "company-policy",
     "kind": "policy",
     "entry_point": "company_trustcheck:CompanyPolicy",
-    "api_version": "1"
+    "api_version": "1",
+    "distribution": "company-trustcheck-policy",
+    "distribution_version": "1.2.3",
+    "wheel_sha256": "64 lowercase hex characters",
+    "record_sha256": "64 lowercase hex characters",
+    "configuration_schema_sha256": "64 lowercase hex characters",
+    "protocol_version": "1",
+    "capabilities": ["evaluate"],
+    "requires_network": false,
+    "requires_filesystem": false,
+    "requires_subprocess": false,
+    "dependencies": []
   },
   "public_key": "-----BEGIN PUBLIC KEY-----...",
-  "signature": "base64-rsa-pkcs1v15-sha256"
+  "signature": "base64-rsa-pkcs1v15-sha256",
+  "configuration_schema": {
+    "type": "object",
+    "additionalProperties": false
+  }
 }
 ```
 
 The signature covers canonical compact JSON for `manifest` with sorted keys.
-Exceptions, timeouts, signature failures, and contract violations fail closed.
+The statement file itself and `RECORD` are metadata and are excluded from the
+canonical installed-content digest; every other recorded file must have a
+matching sha256 `RECORD` entry. Modifying plugin code, dependencies, `RECORD`,
+the declared configuration schema, or declared capabilities fails closed.
+
+Configure one trust-policy mode in `_trustcheck`:
+
+| Mode | Required trust root |
+| --- | --- |
+| `trusted-key` | `trusted_signers`: SHA-256 fingerprints of approved public keys |
+| `allowlisted-digest` | `trusted_wheel_sha256`: canonical installed-content digests |
+| `sigstore-identity` | `trusted_sigstore_identities`: identity and issuer pairs |
+| `organization-policy` | Any configured organization-managed trust root |
+| `disabled` | Disables signed-plugin enforcement only when `require_signed=false` |
+
+Example plugin configuration:
+
+```json
+{
+  "_trustcheck": {
+    "allowlist": ["policy:company-policy"],
+    "trust_policy_mode": "trusted-key",
+    "trusted_signers": [
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    ]
+  },
+  "company-policy": {}
+}
+```
+
+Exceptions, timeouts, signature failures, trust-root failures, and contract
+violations fail closed.
 
 The GitHub Action exposes `enable-plugins`, `plugins`, and `plugin-config`.
 The workflow must install plugin distributions before invoking the composite
