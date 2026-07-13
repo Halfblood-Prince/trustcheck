@@ -83,7 +83,15 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertIn("needs: coverage-build", _job_block(workflow, "publish-pypi"))
         self.assertIn(
             "- coverage-build",
+            _job_block(workflow, "publish-github-release"),
+        )
+        self.assertIn(
+            "- publish-github-release",
             _job_block(workflow, "publish-github-action"),
+        )
+        self.assertIn(
+            "needs: publish-github-release",
+            _job_block(workflow, "publish-agent-skills"),
         )
         self.assertIn(
             "needs: coverage-build",

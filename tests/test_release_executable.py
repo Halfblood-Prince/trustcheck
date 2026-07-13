@@ -91,6 +91,8 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
         direct = _job_block(workflow, "windows-clean-install")
         msix = _job_block(workflow, "test-msix-installation")
 
+        self.assertIn("needs: windows-defender-scan", direct)
+        self.assertIn("needs: windows-defender-scan", msix)
         self.assertIn("Get-AuthenticodeSignature", direct)
         self.assertIn("trustcheck --help", direct)
         self.assertIn("trustcheck inspect requests", direct)
@@ -110,14 +112,19 @@ class ReleaseExecutableWorkflowTests(unittest.TestCase):
         self.assertIn("-File $env:EXECUTABLE_PATH", defender)
         self.assertIn("windows-executable-${{ github.sha }}", defender)
 
-    def test_scanned_executable_is_attached_after_release_creation(self) -> None:
+    def test_scanned_executable_is_attached_after_windows_tests_and_release_creation(
+        self,
+    ) -> None:
         workflow = (
             ROOT / ".github" / "workflows" / "publish.yml"
         ).read_text(encoding="utf-8")
         upload = _job_block(workflow, "upload-windows-executable")
 
-        self.assertIn("- windows-defender-scan", upload)
-        self.assertIn("- publish-github-action", upload)
+        self.assertNotIn("- windows-defender-scan", upload)
+        self.assertIn("- windows-clean-install", upload)
+        self.assertIn("- test-msix-installation", upload)
+        self.assertIn("- publish-github-release", upload)
+        self.assertNotIn("- publish-github-action", upload)
         self.assertIn(
             "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
             upload,

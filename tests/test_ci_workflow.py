@@ -300,23 +300,21 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
             encoding="utf-8"
         )
-        job = _job_block(workflow, "publish-github-action")
+        release = _job_block(workflow, "publish-github-release")
+        action = _job_block(workflow, "publish-github-action")
+        skills = _job_block(workflow, "publish-agent-skills")
 
-        self.assertIn("name: Publish Trustcheck Gate agent skills", job)
-        self.assertIn('source = Path("plugins/trustcheck-gate")', job)
-        self.assertIn('archive="trustcheck-gate-${RELEASE_TAG}.zip"', job)
-        self.assertIn('gh release upload "$RELEASE_TAG"', job)
-        self.assertIn('"skills-release/${archive}"', job)
-        self.assertIn("trustcheck-gate-*.zip", job)
-        self.assertIn("--clobber", job)
-        self.assertLess(
-            job.index("name: Create GitHub Release with generated notes"),
-            job.index("name: Publish Trustcheck Gate agent skills"),
-        )
-        self.assertLess(
-            job.index("name: Publish Trustcheck Gate agent skills"),
-            job.index("name: Publish moving major action tag"),
-        )
+        self.assertIn("trustcheck-gate-*.zip", release)
+        self.assertIn("- publish-github-release", action)
+        self.assertNotIn("name: Publish Trustcheck Gate agent skills", action)
+        self.assertIn("needs: publish-github-release", skills)
+        self.assertIn("name: Publish Trustcheck Gate agent skills", skills)
+        self.assertIn("name: Check out agent skills plugin", skills)
+        self.assertIn('source = Path("plugins/trustcheck-gate")', skills)
+        self.assertIn('archive="trustcheck-gate-${RELEASE_TAG}.zip"', skills)
+        self.assertIn('gh release upload "$RELEASE_TAG"', skills)
+        self.assertIn('"skills-release/${archive}"', skills)
+        self.assertIn("--clobber", skills)
 
     def test_trustcheck_gate_plugin_uses_portable_direct_skill_layout(self) -> None:
         plugin_root = ROOT / "plugins" / "trustcheck-gate"
