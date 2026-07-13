@@ -72,7 +72,7 @@ class BinarySecurityWorkflowTests(unittest.TestCase):
 
         self.assertIn('"sigstore>=4.3,<5"', project)
         self.assertIn('"urllib3>=2.7,<3"', project)
-        self.assertIn('"cryptography>=48.0.1,<49"', project)
+        self.assertIn('"cryptography>=49.0.0,<50"', project)
         self.assertNotIn('"tuf>=7,<8"', project)
         self.assertNotIn('"idna>=3.15,<4"', project)
         self.assertNotIn('"PyJWT>=2.13,<3"', project)

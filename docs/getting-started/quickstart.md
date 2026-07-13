@@ -11,8 +11,8 @@ steps:
       policy: strict
 ```
 
-This produces and uploads `trustcheck-report.json`. The action fails when the
-configured policy fails.
+This produces and uploads `trustcheck-report.txt`. The action fails when the
+configured policy fails. Set `format: json` for a JSON artifact.
 
 ## Inspect the latest release
 

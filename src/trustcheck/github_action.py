@@ -11,10 +11,12 @@ from typing import Callable, Mapping, Sequence
 
 from .cli import EXIT_DATA_ERROR, EXIT_OK, EXIT_USAGE
 from .cli import main as cli_main
+from .cli_render import _render_scan_text, _render_text_report
 from .contract import JSON_SCHEMA_VERSION
 from .exports import (
     INDUSTRY_OUTPUT_FORMATS,
     OUTPUT_FORMATS,
+    export_packages_from_payload,
     recommended_extension,
     render_payload_export,
 )
@@ -88,7 +90,7 @@ class ActionSettings:
     pr_title: str = ""
     pr_ready: bool = False
     output_format: str = "text"
-    report_path: str = "trustcheck-report.json"
+    report_path: str = "trustcheck-report.txt"
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> ActionSettings:
@@ -618,10 +620,10 @@ def run_action(
         )
 
     try:
-        rendered_report = (
-            render_payload_export(settings.output_format, payload)
-            if settings.output_format in INDUSTRY_OUTPUT_FORMATS
-            else json.dumps(payload, indent=2, sort_keys=True)
+        rendered_report = _render_report_artifact(
+            settings.output_format,
+            payload,
+            exit_code=exit_code,
         )
     except ValueError as exc:
         return _write_error_result(
@@ -731,7 +733,7 @@ def main(
         settings = ActionSettings(target="<missing>")
         result = _write_error_result(
             settings,
-            report_path=workspace / "trustcheck-report.json",
+            report_path=workspace / settings.report_path,
             exit_code=EXIT_USAGE,
             message=str(exc),
         )
@@ -762,8 +764,12 @@ def _write_error_result(
         "schema_version": JSON_SCHEMA_VERSION,
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings.output_format == "text":
+        rendered_report = _render_text_payload(payload, exit_code=exit_code)
+    else:
+        rendered_report = json.dumps(payload, indent=2, sort_keys=True)
     report_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        rendered_report + ("" if rendered_report.endswith("\n") else "\n"),
         encoding="utf-8",
     )
     return ActionResult(
@@ -858,9 +864,139 @@ def _parse_multi_value(value: str) -> tuple[str, ...]:
     return tuple(item for line in value.splitlines() for item in line.split())
 
 
+def _render_report_artifact(
+    output_format: str,
+    payload: Mapping[str, object],
+    *,
+    exit_code: int,
+) -> str:
+    if output_format == "json":
+        return json.dumps(payload, indent=2, sort_keys=True)
+    if output_format == "text":
+        return _render_text_payload(payload, exit_code=exit_code)
+    if output_format in INDUSTRY_OUTPUT_FORMATS:
+        return render_payload_export(output_format, payload)
+    raise ValueError(f"unsupported output format: {output_format}")
+
+
+def _render_text_payload(
+    payload: Mapping[str, object],
+    *,
+    exit_code: int,
+) -> str:
+    action_error = payload.get("action_error")
+    if isinstance(action_error, Mapping):
+        return _render_action_error_text(action_error)
+
+    try:
+        packages, source_name, failures = export_packages_from_payload(payload)
+    except (TypeError, ValueError):
+        return _render_fallback_text_payload(payload, exit_code=exit_code)
+
+    reports = [package.report for package in packages]
+    if isinstance(payload.get("reports"), list):
+        rendered = _render_scan_text(
+            source_name,
+            reports,
+            failures=failures,
+            verbose=False,
+            vulnerability_only=False,
+        )
+    elif len(reports) == 1:
+        rendered = _render_text_report(reports[0], verbose=False)
+    else:
+        rendered = _render_fallback_text_payload(payload, exit_code=exit_code)
+
+    remediation = _render_remediation_payload_summary(payload.get("remediation"))
+    return rendered + ("\n\n" + remediation if remediation else "")
+
+
+def _render_action_error_text(error: Mapping[str, object]) -> str:
+    return "\n".join(
+        [
+            "trustcheck action error",
+            f"  target: {error.get('target') or '<unknown>'}",
+            f"  exit code: {error.get('exit_code') or EXIT_DATA_ERROR}",
+            f"  message: {error.get('message') or 'unknown error'}",
+        ]
+    )
+
+
+def _render_fallback_text_payload(
+    payload: Mapping[str, object],
+    *,
+    exit_code: int,
+) -> str:
+    report = payload.get("report")
+    if isinstance(report, Mapping):
+        policy = report.get("policy")
+        policy_passed = (
+            isinstance(policy, Mapping)
+            and policy.get("passed") is True
+        )
+        project = report.get("project")
+        version = report.get("version")
+        heading = "trustcheck report"
+        if project:
+            heading += f" for {project}"
+            if version:
+                heading += f" {version}"
+        return "\n".join(
+            [
+                heading,
+                f"  recommendation: {report.get('recommendation') or 'error'}",
+                f"  policy: {'passed' if policy_passed else 'failed'}",
+                f"  exit code: {exit_code}",
+            ]
+        )
+
+    vulnerabilities = payload.get("vulnerabilities")
+    if isinstance(vulnerabilities, list):
+        project = str(payload.get("project") or "unknown")
+        version = str(payload.get("version") or "unknown")
+        lines = [
+            f"known vulnerabilities for {project} {version}",
+            f"package: {payload.get('package_url') or '-'}",
+            "",
+            f"count: {len(vulnerabilities)}",
+        ]
+        for vulnerability in vulnerabilities:
+            if isinstance(vulnerability, Mapping):
+                lines.append(
+                    f"- {vulnerability.get('id') or 'unknown'}: "
+                    f"{vulnerability.get('summary') or 'no summary'}"
+                )
+        return "\n".join(lines)
+
+    recommendation, policy_passed = summarize_payload(payload, exit_code=exit_code)
+    return "\n".join(
+        [
+            "trustcheck report",
+            f"  recommendation: {recommendation}",
+            f"  policy: {'passed' if policy_passed else 'failed'}",
+            f"  exit code: {exit_code}",
+        ]
+    )
+
+
+def _render_remediation_payload_summary(value: object) -> str:
+    if not isinstance(value, Mapping):
+        return ""
+    status = value.get("status")
+    upgrades = value.get("upgrades")
+    patch_files = value.get("patch_files")
+    lines = ["remediation:"]
+    lines.append(f"  status: {status if isinstance(status, str) else 'unknown'}")
+    if isinstance(upgrades, list):
+        lines.append(f"  upgrades: {len(upgrades)}")
+    if isinstance(patch_files, list) and patch_files:
+        lines.append("  patch files:")
+        lines.extend(f"    - {path}" for path in patch_files if isinstance(path, str))
+    return "\n".join(lines)
+
+
 def _default_report_path(output_format: str) -> str:
-    format_for_file = "json" if output_format == "text" else output_format
-    return "trustcheck-report" + recommended_extension(format_for_file)
+    return "trustcheck-report" + recommended_extension(output_format)
 
 
 def _parse_bool(value: str, *, name: str) -> bool:

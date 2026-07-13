@@ -13,8 +13,22 @@ from scripts.verify_release_version import _expected_version, verify_artifact_ve
 class ReleaseVersionTests(unittest.TestCase):
     def test_sdist_includes_release_version_verifier(self) -> None:
         manifest = Path("MANIFEST.in").read_text(encoding="utf-8")
+        lines = manifest.splitlines()
 
-        self.assertIn("include scripts/verify_release_version.py", manifest.splitlines())
+        self.assertIn("include scripts/verify_release_version.py", lines)
+        for directive in (
+            "include README.md",
+            "include pyproject.toml",
+            "recursive-include tests *",
+            "recursive-include docs *",
+            "recursive-include scripts *.py",
+            "recursive-include snap *",
+            "recursive-include requirements *.in *.lock",
+            "recursive-include benchmarks *",
+            "recursive-include .github *",
+        ):
+            with self.subTest(directive=directive):
+                self.assertIn(directive, lines)
 
     def test_artifact_metadata_must_exactly_match_release_version(self) -> None:
         metadata = b"Metadata-Version: 2.4\nName: trustcheck\nVersion: 1.10.0\n\n"

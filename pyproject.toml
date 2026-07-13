@@ -31,7 +31,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "cryptography>=48.0.1,<49",
+  "cryptography>=49.0.0,<50",
   "packaging>=24,<27",
   "pydantic>=2.12,<3",
   "sigstore>=4.3,<5",

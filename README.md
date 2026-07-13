@@ -237,9 +237,10 @@ steps:
       policy: strict
 ```
 
-The action installs and runs `trustcheck`, uploads `trustcheck-report.json` as
-a workflow artifact, and fails the job with the CLI's exit code when policy
-evaluation fails. `target` also accepts a PyPI package name, `pyproject.toml`,
+The action installs and runs `trustcheck`, uploads `trustcheck-report.txt` as
+a workflow artifact by default, and fails the job with the CLI's exit code when
+policy evaluation fails. Set `format: json` to upload `trustcheck-report.json`.
+`target` also accepts a PyPI package name, `pyproject.toml`,
 `pylock.toml`, `Pipfile.lock`, `uv.lock`, `poetry.lock`, or `pdm.lock`.
 Each stable release publishes an immutable full version tag and updates the
 compatible major action tag used above.

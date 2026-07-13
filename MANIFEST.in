@@ -1,3 +1,13 @@
-include scripts/verify_release_version.py
-include scripts/verify_release_channels.py
-include scripts/export_homebrew_tap.py
+include README.md
+include CHANGELOG.md
+include LICENSE
+include MANIFEST.in
+include action.yml
+include pyproject.toml
+recursive-include tests *
+recursive-include docs *
+recursive-include scripts *.py
+recursive-include snap *
+recursive-include requirements *.in *.lock
+recursive-include benchmarks *
+recursive-include .github *

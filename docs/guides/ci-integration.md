@@ -22,10 +22,10 @@ steps:
 `actions/checkout` is required for file targets. It is optional when `target`
 is only a PyPI package name.
 
-The action always asks the CLI for JSON, writes the result to
-`trustcheck-report.json`, uploads it as a workflow artifact, and then exits
-with the original CLI exit code. A policy failure therefore still uploads its
-report before failing the job.
+The action asks the CLI for JSON internally so it can set outputs, then writes
+the requested report format to a workflow artifact. By default that artifact is
+`trustcheck-report.txt`; set `format: json` to upload `trustcheck-report.json`.
+A policy failure still uploads its report before failing the job.
 
 Stable releases publish a full version tag such as `v2.1.1` and update the
 compatible major ref `v2`. Use `@v2` for compatible updates. For immutable

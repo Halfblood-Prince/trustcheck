@@ -144,6 +144,11 @@ class ReleaseReadinessTests(unittest.TestCase):
         self.assertEqual(project["license-files"], ["LICENSE"])
         self.assertTrue(license_text.startswith("Trustcheck Personal Use License\n"))
 
+    def test_python_sources_do_not_start_with_utf8_bom(self) -> None:
+        for path in (ROOT / "src").rglob("*.py"):
+            with self.subTest(path=path.relative_to(ROOT)):
+                self.assertFalse(path.read_bytes().startswith(b"\xef\xbb\xbf"))
+
     def test_lockfile_documentation_does_not_repeat_the_old_limitation(self) -> None:
         documentation = "\n".join(
             path.read_text(encoding="utf-8")

@@ -284,12 +284,14 @@ class GitHubActionTests(unittest.TestCase):
                 workspace=workspace,
             )
 
-            payload = json.loads(result.report_path.read_text(encoding="utf-8"))
+            rendered = result.report_path.read_text(encoding="utf-8")
 
         self.assertEqual(result.exit_code, EXIT_USAGE)
         self.assertEqual(result.recommendation, "error")
         self.assertFalse(result.policy_passed)
-        self.assertIn("mutually exclusive", payload["action_error"]["message"])
+        self.assertEqual(result.report_path.name, "trustcheck-report.txt")
+        self.assertIn("trustcheck action error", rendered)
+        self.assertIn("mutually exclusive", rendered)
 
     def test_build_cli_arguments_rejects_invalid_target_combinations(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -398,7 +400,12 @@ class GitHubActionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
             result = run_action(
-                ActionSettings(target="blocked-package", policy="strict"),
+                ActionSettings(
+                    target="blocked-package",
+                    policy="strict",
+                    output_format="json",
+                    report_path="trustcheck-report.json",
+                ),
                 workspace=workspace,
                 runner=failing_runner,
             )
@@ -500,17 +507,22 @@ class GitHubActionTests(unittest.TestCase):
 
             outputs = output_path.read_text(encoding="utf-8")
             summary = summary_path.read_text(encoding="utf-8")
+            report = (workspace / "trustcheck-report.txt").read_text(
+                encoding="utf-8"
+            )
 
         self.assertEqual(exit_code, EXIT_OK)
         self.assertIn("recommendation=verified", outputs)
         self.assertIn("policy-passed=true", outputs)
         self.assertIn("report-path=", outputs)
+        self.assertIn("trustcheck-report.txt", outputs)
         self.assertIn("exit-code=0", outputs)
         self.assertIn("remediation-status=not-requested", outputs)
         self.assertIn("applied-fixes=0", outputs)
         self.assertIn("patch-path=", outputs)
         self.assertIn("pr-url=", outputs)
         self.assertIn("Policy: **passed**", summary)
+        self.assertIn("trustcheck report", report)
         self.assertIn("recommendation: verified", stdout.getvalue())
 
     def test_main_uses_process_environment_and_json_rendering(self) -> None:
@@ -866,6 +878,13 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("Pull request:", rendered_summary)
 
     def test_environment_derives_report_extension_from_format(self) -> None:
+        text = ActionSettings.from_environment(
+            {
+                "TRUSTCHECK_ACTION_TARGET": "sampleproject",
+            }
+        )
+        self.assertEqual(text.report_path, "trustcheck-report.txt")
+
         settings = ActionSettings.from_environment(
             {
                 "TRUSTCHECK_ACTION_TARGET": "sampleproject",

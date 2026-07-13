@@ -339,7 +339,7 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/validate_sarif.py", workflow)
         self.assertIn("--compare trustcheck-second.sarif", workflow)
         self.assertIn(
-            "github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a",
+            "github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9",
             workflow,
         )
         self.assertIn("category: trustcheck-sarif-integration", workflow)
