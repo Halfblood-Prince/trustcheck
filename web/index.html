@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TrustCheck | PyPI release trust before install</title>
+    <meta
+      name="description"
+      content="TrustCheck is a PyPI supply-chain assurance gate for provenance, vulnerabilities, repository identity, artifact inspection, policy, and audit evidence."
+    >
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header" data-header>
+      <a class="brand" href="./" aria-label="TrustCheck home">
+        <img src="assets/trustcheck-logo.png" alt="" width="40" height="40">
+        <span>TrustCheck</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary navigation" data-nav>
+        <a href="#assurance">Assurance</a>
+        <a href="#comparison">Compare</a>
+        <a href="#benchmarks">Benchmarks</a>
+        <a href="#workflow">Adopt</a>
+        <a href="./docs/">Docs</a>
+        <a class="nav-action" href="https://github.com/Halfblood-Prince/trustcheck">GitHub</a>
+      </nav>
+      <div class="header-actions">
+        <button
+          class="theme-toggle"
+          type="button"
+          role="switch"
+          aria-checked="false"
+          aria-label="Switch to dark mode"
+          title="Switch theme"
+          data-theme-toggle
+        >
+          <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2.5M12 19.5V22M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M2 12h2.5M19.5 12H22M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77"></path>
+          </svg>
+          <span class="toggle-track" aria-hidden="true">
+            <span class="toggle-thumb"></span>
+          </span>
+          <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M21 14.4A7.5 7.5 0 0 1 9.6 3a8.5 8.5 0 1 0 11.4 11.4Z"></path>
+          </svg>
+        </button>
+        <button class="nav-toggle" type="button" aria-label="Toggle navigation" data-nav-toggle>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-inner">
+          <p class="eyebrow">PyPI supply-chain assurance</p>
+          <h1 id="hero-title">TrustCheck</h1>
+          <p class="hero-copy">
+            Choose Python packages with release evidence, not advisory counts alone.
+            TrustCheck verifies provenance, repository identity, artifact posture,
+            vulnerability intelligence, and policy evidence before a package reaches production.
+          </p>
+          <div class="hero-actions" aria-label="Primary actions">
+            <a class="button button-primary" href="./docs/getting-started/quickstart/">Start using TrustCheck <span aria-hidden="true">-></span></a>
+            <a class="button button-secondary" href="#comparison">See why teams switch</a>
+          </div>
+          <div class="proof-strip" aria-label="TrustCheck assurance coverage">
+            <span>Sigstore provenance</span>
+            <span>Trusted Publisher context</span>
+            <span>OSV and PyPI advisories</span>
+            <span>SARIF, SBOM, VEX</span>
+          </div>
+
+          <div class="hero-evidence" aria-label="TrustCheck verified release evidence">
+            <div class="evidence-command">
+              <span>trustcheck inspect sampleproject --version 4.0.0 --strict</span>
+              <strong>Policy outcome: approved for promotion</strong>
+            </div>
+            <div class="evidence-grid">
+              <article>
+                <span>01</span>
+                <strong>Verified provenance</strong>
+                <p>Attestation envelope, builder claims, source materials, and artifact digests align.</p>
+              </article>
+              <article>
+                <span>02</span>
+                <strong>Repository match</strong>
+                <p>Declared, expected, and attested source repositories point to the same upstream.</p>
+              </article>
+              <article>
+                <span>03</span>
+                <strong>Advisory clean</strong>
+                <p>PyPI and OSV vulnerability signals are normalized, aliased, and policy scored.</p>
+              </article>
+              <article>
+                <span>04</span>
+                <strong>Audit package</strong>
+                <p>JSON, Markdown, SARIF, SBOM, and VEX outputs keep the decision traceable.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section thesis">
+        <div class="section-lead">
+          <p class="eyebrow">Why it exists</p>
+          <h2>Vulnerability scanning is necessary. It is not enough.</h2>
+          <p>
+            A clean advisory result does not tell you who built the release, which source repository
+            it came from, whether provenance covers every artifact, or whether the package matches
+            your organization's approval policy. TrustCheck turns those missing signals into a
+            single release decision with evidence you can keep.
+          </p>
+        </div>
+        <div class="decision-flow" aria-label="TrustCheck decision flow">
+          <span>Package input</span>
+          <span>Metadata</span>
+          <span>Provenance</span>
+          <span>Repository</span>
+          <span>Artifacts</span>
+          <span>Advisories</span>
+          <strong>Trust decision</strong>
+        </div>
+      </section>
+
+      <section class="section assurance" id="assurance">
+        <div class="section-lead">
+          <p class="eyebrow">Assurance surface</p>
+          <h2>Everything a release gate needs in one tool.</h2>
+          <p>
+            TrustCheck is built for maintainers, security teams, and platform engineers who need
+            a repeatable answer before dependencies are installed, promoted, or merged.
+          </p>
+        </div>
+        <div class="assurance-grid">
+          <article>
+            <span>Provenance</span>
+            <h3>Verify how the release was built</h3>
+            <p>Validate Sigstore attestations, SLSA build definitions, source materials, builders, and artifact digests.</p>
+          </article>
+          <article>
+            <span>Identity</span>
+            <h3>Connect PyPI to the real upstream</h3>
+            <p>Compare project metadata, Trusted Publisher hints, expected repositories, tags, commits, and attested source.</p>
+          </article>
+          <article>
+            <span>Advisories</span>
+            <h3>Keep vulnerability context in the decision</h3>
+            <p>Normalize PyPI and OSV advisories, aliases, fixed versions, severity, suppression, and policy impact.</p>
+          </article>
+          <article>
+            <span>Artifacts</span>
+            <h3>Inspect distributions without importing code</h3>
+            <p>Review wheels and sdists for native binaries, static findings, suspicious files, and source-release mismatch.</p>
+          </article>
+          <article>
+            <span>Policy</span>
+            <h3>Gate releases with explicit rules</h3>
+            <p>Use strict mode, expected repositories, trusted project lists, dependency policies, and CI-friendly exits.</p>
+          </article>
+          <article>
+            <span>Evidence</span>
+            <h3>Export reports auditors can follow</h3>
+            <p>Generate Markdown, JSON, SARIF, CycloneDX, SPDX, OpenVEX, and GitHub Actions summaries from the same run.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section comparison" id="comparison">
+        <div class="section-lead">
+          <p class="eyebrow">TrustCheck vs pip-audit</p>
+          <h2>Move from vulnerability-only checks to release trust.</h2>
+          <p>
+            <code>pip-audit</code> is useful when the question is "does this dependency have a known vulnerability?"
+            TrustCheck answers the larger production question: "is this package release trustworthy enough to use?"
+          </p>
+        </div>
+
+        <div class="switch-panel">
+          <div>
+            <span class="panel-tag">pip-audit-only gate</span>
+            <h3>Known advisory status</h3>
+            <p>Good for dependency vulnerability visibility, but it leaves provenance, source identity, artifact posture, and audit evidence to other processes.</p>
+          </div>
+          <div>
+            <span class="panel-tag trustcheck-tag">TrustCheck gate</span>
+            <h3>Complete release approval context</h3>
+            <p>Combines vulnerability signals with build provenance, repository matching, artifact inspection, policy decisions, and compliance exports.</p>
+          </div>
+        </div>
+
+        <div class="matrix" aria-label="Expanded TrustCheck and competitor comparison">
+          <div class="matrix-row matrix-head">
+            <span>Capability</span>
+            <span>TrustCheck</span>
+            <span>pip-audit</span>
+            <span>Typical vulnerability scanner</span>
+          </div>
+          <div class="matrix-row">
+            <span>Known vulnerability lookup</span>
+            <strong>Yes, with PyPI and OSV context</strong>
+            <strong>Yes</strong>
+            <em>Usually</em>
+          </div>
+          <div class="matrix-row">
+            <span>Alias-aware advisory agreement</span>
+            <strong>Yes, across CVE, GHSA, PYSEC, and provider IDs</strong>
+            <strong>Yes for reported advisories</strong>
+            <em>Varies</em>
+          </div>
+          <div class="matrix-row">
+            <span>PyPI provenance verification</span>
+            <strong>Built in</strong>
+            <em>No</em>
+            <em>No</em>
+          </div>
+          <div class="matrix-row">
+            <span>Trusted Publisher and signer context</span>
+            <strong>Built in</strong>
+            <em>No</em>
+            <em>Rare</em>
+          </div>
+          <div class="matrix-row">
+            <span>Expected repository enforcement</span>
+            <strong>Built in with policy support</strong>
+            <em>No</em>
+            <em>Limited</em>
+          </div>
+          <div class="matrix-row">
+            <span>Source, tag, commit, and artifact consistency</span>
+            <strong>Built in</strong>
+            <em>No</em>
+            <em>Rare</em>
+          </div>
+          <div class="matrix-row">
+            <span>Wheel and sdist inspection without importing code</span>
+            <strong>Built in</strong>
+            <em>No</em>
+            <em>Limited</em>
+          </div>
+          <div class="matrix-row">
+            <span>Requirements, lockfile, environment, and dependency scanning</span>
+            <strong>Broad Python workflow coverage</strong>
+            <strong>Strong dependency audit coverage</strong>
+            <em>Varies by ecosystem</em>
+          </div>
+          <div class="matrix-row">
+            <span>CI policy outcomes</span>
+            <strong>Pass, warn, or block from a trust policy</strong>
+            <em>Advisory-focused exit behavior</em>
+            <em>Usually severity-based</em>
+          </div>
+          <div class="matrix-row">
+            <span>Audit and compliance outputs</span>
+            <strong>SARIF, SBOM, VEX, Markdown, and JSON</strong>
+            <em>Vulnerability report formats</em>
+            <em>Varies</em>
+          </div>
+          <div class="matrix-row">
+            <span>Remediation workflow</span>
+            <strong>Risk-aware fix planning and safe automation paths</strong>
+            <em>Advisory fixes</em>
+            <em>Varies</em>
+          </div>
+          <div class="matrix-row">
+            <span>Best default role</span>
+            <strong>Release approval and supply-chain assurance</strong>
+            <em>Dedicated vulnerability audit</em>
+            <em>Advisory visibility</em>
+          </div>
+        </div>
+      </section>
+
+      <section class="section benchmarks" id="benchmarks">
+        <div class="section-lead">
+          <p class="eyebrow">Published benchmark</p>
+          <h2>TrustCheck adds evidence without giving up speed.</h2>
+          <p>
+            The latest published benchmark uses corpus <code>2026.06</code>, Python <code>3.14.6</code>,
+            workflow-pinned <code>pip-audit 2.10.1</code>, and 112 comparable direct-pin package entries.
+          </p>
+        </div>
+        <div class="benchmark-board">
+          <div class="benchmark-stats">
+            <article>
+              <span>Alias-aware agreement</span>
+              <strong>1.0</strong>
+              <p>Across 105 compared packages and 263 matched advisories.</p>
+            </article>
+            <article>
+              <span>TrustCheck warm p50</span>
+              <strong>14.20 s</strong>
+              <p>Measured for <code>trustcheck scan --fast</code> in the published run.</p>
+            </article>
+            <article>
+              <span>pip-audit warm p50</span>
+              <strong>38.51 s</strong>
+              <p>Measured against the workflow-pinned comparison command.</p>
+            </article>
+          </div>
+          <div class="benchmark-bars" aria-label="Latest benchmark timing comparison">
+            <div class="bar-row">
+              <div>
+                <h3>trustcheck scan --fast</h3>
+                <p>Cold p50 16.00 s - Warm p50 14.20 s - Warm p95 14.44 s - 78.0 MiB RSS</p>
+              </div>
+              <span class="bar-track"><span class="bar-fill trustcheck-fill"></span></span>
+            </div>
+            <div class="bar-row">
+              <div>
+                <h3>pip-audit</h3>
+                <p>Cold p50 36.69 s - Warm p50 38.51 s - Warm p95 39.82 s - 75.6 MiB RSS</p>
+              </div>
+              <span class="bar-track"><span class="bar-fill audit-fill"></span></span>
+            </div>
+          </div>
+        </div>
+        <a class="button button-secondary benchmark-link" href="./docs/reference/benchmarks/">Read benchmark methodology</a>
+      </section>
+
+      <section class="section workflow" id="workflow">
+        <div class="section-lead">
+          <p class="eyebrow">Adoption path</p>
+          <h2>Start with one command. Grow into a policy gate.</h2>
+          <p>
+            TrustCheck fits the way Python teams already work: local CLI checks, GitHub Actions,
+            lockfile scans, release reviews, and machine-readable evidence for security programs.
+          </p>
+        </div>
+        <div class="workflow-grid">
+          <div class="terminal-panel" aria-label="Example TrustCheck command">
+            <div class="terminal-bar">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <pre><code>python -m pip install trustcheck
+
+trustcheck inspect sampleproject \
+  --version 4.0.0 \
+  --expected-repo https://github.com/pypa/sampleproject \
+  --strict</code></pre>
+            <button class="copy-button" type="button" data-copy="trustcheck inspect sampleproject --version 4.0.0 --expected-repo https://github.com/pypa/sampleproject --strict">
+              Copy command
+            </button>
+          </div>
+          <div class="adoption-list">
+            <article>
+              <span>1</span>
+              <h3>Run it beside pip-audit</h3>
+              <p>Keep your advisory scanner, then add TrustCheck for provenance, repository, artifact, and policy evidence.</p>
+            </article>
+            <article>
+              <span>2</span>
+              <h3>Promote it into CI</h3>
+              <p>Use strict gates on important packages and produce SARIF or Markdown summaries for pull requests.</p>
+            </article>
+            <article>
+              <span>3</span>
+              <h3>Standardize release approval</h3>
+              <p>Make package trust evidence repeatable across teams, repositories, and dependency update workflows.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section teams" id="teams">
+        <div class="section-lead">
+          <p class="eyebrow">Who benefits</p>
+          <h2>A stronger default for every Python dependency decision.</h2>
+        </div>
+        <div class="team-strip">
+          <a href="./docs/getting-started/quickstart/">Maintainers: verify a release</a>
+          <a href="./docs/guides/ci-integration/">Platform teams: enforce CI gates</a>
+          <a href="./docs/reference/industry-formats/">Security teams: export evidence</a>
+          <a href="./docs/reference/remediation/">Operators: plan safer fixes</a>
+        </div>
+      </section>
+
+      <section class="cta-band">
+        <div>
+          <p class="eyebrow">Choose evidence over guesswork</p>
+          <h2>Make TrustCheck the trust layer in front of every PyPI install.</h2>
+        </div>
+        <a class="button button-primary" href="./docs/getting-started/quickstart/">Open quickstart</a>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>&copy; <span data-year></span> TrustCheck</span>
+      <a href="./docs/">Documentation</a>
+      <a href="https://github.com/Halfblood-Prince/trustcheck">GitHub</a>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>

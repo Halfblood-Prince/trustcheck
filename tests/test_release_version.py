@@ -21,6 +21,7 @@ class ReleaseVersionTests(unittest.TestCase):
             "include pyproject.toml",
             "recursive-include tests *",
             "recursive-include docs *",
+            "recursive-include web *",
             "recursive-include scripts *.py",
             "recursive-include snap *",
             "recursive-include requirements *.in *.lock",

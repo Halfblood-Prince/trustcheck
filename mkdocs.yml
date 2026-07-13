@@ -1,10 +1,10 @@
 site_name: trustcheck
 site_description: Documentation for trustcheck, a Python package and CLI for PyPI package trust and provenance verification.
-site_url: https://halfblood-prince.github.io/trustcheck/
+site_url: https://halfblood-prince.github.io/trustcheck/docs/
 repo_url: https://github.com/Halfblood-Prince/trustcheck
 repo_name: Halfblood-Prince/trustcheck
 edit_uri: edit/main/docs/
-site_dir: site
+site_dir: site/docs
 nav:
   - Home: index.md
   - Getting started:

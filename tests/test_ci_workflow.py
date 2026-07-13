@@ -192,6 +192,46 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertNotIn("python -m pip install bandit", combined)
         self.assertNotIn("python -m pip install mkdocs-material", combined)
 
+    def test_docs_workflow_publishes_marketing_home_and_docs_subpath(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "docs.yml").read_text(
+            encoding="utf-8"
+        )
+        mkdocs = (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+
+        self.assertIn("site_url: https://halfblood-prince.github.io/trustcheck/docs/", mkdocs)
+        self.assertIn("site_dir: site/docs", mkdocs)
+        self.assertIn("cp -R web/. site/", workflow)
+        self.assertIn("mkdocs build --strict", workflow)
+        self.assertIn("path: site", workflow)
+        self.assertTrue((ROOT / "web" / "index.html").exists())
+        self.assertTrue((ROOT / "web" / "styles.css").exists())
+        self.assertTrue((ROOT / "web" / "script.js").exists())
+        self.assertTrue((ROOT / "web" / "assets" / "trustcheck-logo.png").exists())
+
+        homepage = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        styles = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
+        script = (ROOT / "web" / "script.js").read_text(encoding="utf-8")
+
+        self.assertIn('role="switch"', homepage)
+        self.assertIn("data-theme-toggle", homepage)
+        self.assertIn('href="#comparison"', homepage)
+        self.assertIn('href="#benchmarks"', homepage)
+        self.assertIn('id="comparison"', homepage)
+        self.assertIn('id="benchmarks"', homepage)
+        self.assertIn('id="teams"', homepage)
+        self.assertIn("pip-audit", homepage)
+        self.assertIn("Alias-aware agreement", homepage)
+        self.assertIn("approved for promotion", homepage)
+        self.assertIn("Typical vulnerability scanner", homepage)
+        self.assertNotIn("review-required", homepage)
+        self.assertNotIn("dependency-resolution", homepage)
+        self.assertNotIn("feature-equivalent", homepage)
+        self.assertIn('html[data-theme="dark"]', styles)
+        self.assertIn(".matrix", styles)
+        self.assertIn(".bar-track", styles)
+        self.assertIn("prefers-color-scheme: dark", script)
+        self.assertIn("localStorage.setItem", script)
+
     def test_ci_generates_product_specific_sbom_from_runtime_lock(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"

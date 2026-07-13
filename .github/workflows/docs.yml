@@ -31,6 +31,12 @@ jobs:
           python -m pip install --disable-pip-version-check --require-hashes --requirement requirements/ci.lock
           python -m pip check
 
+      - name: Prepare marketing home
+        run: |
+          rm -rf site
+          mkdir -p site
+          cp -R web/. site/
+
       - name: Build docs site
         run: mkdocs build --strict
 

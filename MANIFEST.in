@@ -4,8 +4,10 @@ include LICENSE
 include MANIFEST.in
 include action.yml
 include pyproject.toml
+include scripts/verify_release_version.py
 recursive-include tests *
 recursive-include docs *
+recursive-include web *
 recursive-include scripts *.py
 recursive-include snap *
 recursive-include requirements *.in *.lock

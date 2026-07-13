@@ -132,7 +132,7 @@ pip install "trustcheck[keyring]"
 
 Project defaults can live in `.trustcheck.toml` or under `[tool.trustcheck]` in
 `pyproject.toml`. CLI flags override environment variables, which override
-project configuration. See the [configuration guide](https://halfblood-prince.github.io/trustcheck/cli/configuration/).
+project configuration. See the [configuration guide](https://halfblood-prince.github.io/trustcheck/docs/cli/configuration/).
 
 Or install the Snap Store package:
 
@@ -260,7 +260,7 @@ Produce SARIF for GitHub code scanning without repeating the audit:
     sarif_file: ${{ steps.trustcheck.outputs.report-path }}
 ```
 
-See the [CI integration guide](https://halfblood-prince.github.io/trustcheck/guides/ci-integration/)
+See the [CI integration guide](https://halfblood-prince.github.io/trustcheck/docs/guides/ci-integration/)
 for custom policies, OSV, dependency traversal, outputs, and report naming.
 
 ## Quick start
@@ -662,16 +662,16 @@ print(report.recommendation)
 
 ## Documentation
 
-Full documentation: https://halfblood-prince.github.io/trustcheck/
+Full documentation: https://halfblood-prince.github.io/trustcheck/docs/
 
-- Getting started: [Installation](https://halfblood-prince.github.io/trustcheck/getting-started/installation/) and [Quickstart](https://halfblood-prince.github.io/trustcheck/getting-started/quickstart/)
-- CLI usage: [CLI overview](https://halfblood-prince.github.io/trustcheck/cli/), [Policies](https://halfblood-prince.github.io/trustcheck/cli/policies/), and [Config and offline mode](https://halfblood-prince.github.io/trustcheck/cli/configuration/)
-- Integrations: [JSON contract](https://halfblood-prince.github.io/trustcheck/reference/json-contract/), [Python API](https://halfblood-prince.github.io/trustcheck/reference/python-api/), and [Compatibility](https://halfblood-prince.github.io/trustcheck/reference/compatibility/)
-- Trust model: [Verification model and repository matching](https://halfblood-prince.github.io/trustcheck/reference/trust-model/)
-- Automation: [CI integration](https://halfblood-prince.github.io/trustcheck/guides/ci-integration/)
-- Performance and extensibility: [Batching, caching, snapshots, resume state, and plugins](https://halfblood-prince.github.io/trustcheck/reference/performance-extensibility/)
-- Benchmarks: [Reproducible comparison with pip-audit](https://halfblood-prince.github.io/trustcheck/reference/benchmarks/)
-- Project details: [Changelog](https://halfblood-prince.github.io/trustcheck/changelog/)
+- Getting started: [Installation](https://halfblood-prince.github.io/trustcheck/docs/getting-started/installation/) and [Quickstart](https://halfblood-prince.github.io/trustcheck/docs/getting-started/quickstart/)
+- CLI usage: [CLI overview](https://halfblood-prince.github.io/trustcheck/docs/cli/), [Policies](https://halfblood-prince.github.io/trustcheck/docs/cli/policies/), and [Config and offline mode](https://halfblood-prince.github.io/trustcheck/docs/cli/configuration/)
+- Integrations: [JSON contract](https://halfblood-prince.github.io/trustcheck/docs/reference/json-contract/), [Python API](https://halfblood-prince.github.io/trustcheck/docs/reference/python-api/), and [Compatibility](https://halfblood-prince.github.io/trustcheck/docs/reference/compatibility/)
+- Trust model: [Verification model and repository matching](https://halfblood-prince.github.io/trustcheck/docs/reference/trust-model/)
+- Automation: [CI integration](https://halfblood-prince.github.io/trustcheck/docs/guides/ci-integration/)
+- Performance and extensibility: [Batching, caching, snapshots, resume state, and plugins](https://halfblood-prince.github.io/trustcheck/docs/reference/performance-extensibility/)
+- Benchmarks: [Reproducible comparison with pip-audit](https://halfblood-prince.github.io/trustcheck/docs/reference/benchmarks/)
+- Project details: [Changelog](https://halfblood-prince.github.io/trustcheck/docs/changelog/)
 
 Project support:
 

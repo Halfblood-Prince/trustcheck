@@ -496,7 +496,7 @@ class BenchmarkPublicationTests(unittest.TestCase):
             "comparison covers 123 comparable package entries.",
             updated,
         )
-        self.assertIn("not a full dependency-resolution benchmark", updated)
+        self.assertNotIn("dependency-resolution", updated)
         self.assertIn(
             "| trustcheck scan --fast | 2.00 s | 1.23 s | 2.35 s | "
             "100.0 MiB | 12 | 1 |",

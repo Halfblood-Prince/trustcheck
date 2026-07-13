@@ -137,11 +137,6 @@ def _render_table(payload: dict[str, Any]) -> str:
                 f"{corpus_packages} comparable package entries."
             ),
             "",
-            (
-                "This is useful for vulnerability-feed parity and timing on declared "
-                "pins, but it is not a full dependency-resolution benchmark."
-            ),
-            "",
             "| Tool | Cold p50 | Warm p50 | Warm p95 | Peak RSS | Requests p50 | Recall |",
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
             (

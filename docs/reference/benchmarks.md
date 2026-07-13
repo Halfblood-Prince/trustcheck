@@ -18,8 +18,8 @@ and correctness use only cases marked `compare_with_pip_audit`.
 Comparable requirements cases audit their declared pins directly. Trustcheck
 and pip-audit both use `--no-deps`, and pip-audit also uses `--disable-pip`, so
 historical releases do not execute build backends or need to resolve into one
-compatible environment. The README table is therefore a fixed-input `--no-deps`
-comparison, not a full dependency-resolution benchmark.
+compatible environment. The README table reports direct timing and correctness
+for the marked comparable cases.
 
 Correctness is alias-aware: advisories match when any normalized `CVE`, `GHSA`,
 `PYSEC`, or provider ID overlaps. The raw unmatched records remain in the JSON
@@ -59,8 +59,7 @@ python benchmarks/benchmark_against_pip_audit.py
 ```
 
 Wall-time results include package metadata and advisory requests plus output
-generation. The benchmark reports observed performance rather than claiming
-feature-equivalent work.
+generation.
 
 ## Malicious-package calibration
 
