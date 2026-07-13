@@ -106,6 +106,6 @@ branch = true
 source = ["trustcheck"]
 
 [tool.coverage.report]
-fail_under = 95
+fail_under = 96
 show_missing = true
 skip_covered = true

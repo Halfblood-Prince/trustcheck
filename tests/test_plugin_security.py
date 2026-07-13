@@ -13,7 +13,8 @@ from unittest.mock import Mock, patch
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 
-from trustcheck.export_models import ExportPackage
+import trustcheck.plugins as plugin_mod
+from trustcheck.export_models import ExportPackage, SourceLocation
 from trustcheck.indexes import DependencyConfusionFinding, IndexProject
 from trustcheck.models import (
     ArtifactInspection,
@@ -30,6 +31,7 @@ from trustcheck.plugins import (
     _run_plugin_process,
     _verified_manifest,
 )
+from trustcheck.resolver import ArtifactReference
 
 
 class Distribution:
@@ -240,6 +242,32 @@ def _process_context(*, ready: bool, received: object = b"") -> Mock:
     ]
     context.Process.return_value = process
     return context
+
+
+class ResourceModule:
+    RLIM_INFINITY = -1
+    RLIMIT_CPU = 1
+    RLIMIT_AS = 2
+
+    def __init__(self, limits: dict[int, tuple[int, int]]) -> None:
+        self.limits = limits
+        self.calls: list[tuple[int, tuple[int, int]]] = []
+        self.fail_next_set = False
+
+    def getrlimit(self, limit_name: int) -> tuple[int, int]:
+        return self.limits[limit_name]
+
+    def setrlimit(self, limit_name: int, values: tuple[int, int]) -> None:
+        if self.fail_next_set:
+            self.fail_next_set = False
+            raise ValueError("unsupported limit")
+        soft, hard = values
+        _, current_hard = self.limits[limit_name]
+        if current_hard != self.RLIM_INFINITY and hard > current_hard:
+            raise ValueError("current limit exceeds maximum limit")
+        if hard != self.RLIM_INFINITY and soft > hard:
+            raise ValueError("current limit exceeds maximum limit")
+        self.calls.append((limit_name, values))
 
 
 class PluginSecurityTests(unittest.TestCase):
@@ -531,6 +559,187 @@ class PluginSecurityTests(unittest.TestCase):
             self.assertEqual(repository.download("url"), b"bytes")
             self.assertEqual(repository.find_dependency_confusion([], []), ())
             self.assertEqual(repository.locate_artifact_index("demo", None, []), "index")
+
+    def test_plugin_resource_limits_never_raise_existing_platform_caps(self) -> None:
+        resource = ResourceModule(
+            {
+                ResourceModule.RLIMIT_CPU: (
+                    ResourceModule.RLIM_INFINITY,
+                    ResourceModule.RLIM_INFINITY,
+                ),
+                ResourceModule.RLIMIT_AS: (128 * 1024 * 1024, 128 * 1024 * 1024),
+            }
+        )
+
+        plugin_mod._set_plugin_resource_limit(resource, resource.RLIMIT_CPU, 8)
+        plugin_mod._set_plugin_resource_limit(
+            resource,
+            resource.RLIMIT_AS,
+            256 * 1024 * 1024,
+        )
+
+        self.assertEqual(resource.calls[0], (resource.RLIMIT_CPU, (8, 8)))
+        self.assertEqual(
+            resource.calls[1],
+            (resource.RLIMIT_AS, (128 * 1024 * 1024, 128 * 1024 * 1024)),
+        )
+
+        resource.fail_next_set = True
+        plugin_mod._set_plugin_resource_limit(resource, resource.RLIMIT_CPU, 4)
+        plugin_mod._set_plugin_resource_limit(resource, None, 4)
+
+    def test_plugin_ipc_result_serialization_round_trips_supported_operations(self) -> None:
+        report = TrustReport(
+            project="demo",
+            version="1",
+            summary=None,
+            package_url="pkg:pypi/demo@1",
+        )
+        inspection = ArtifactInspection(kind="wheel")
+        finding = HeuristicFinding(
+            code="plugin",
+            category="plugin",
+            severity="medium",
+            confidence="high",
+            score=10,
+            message="checked",
+        )
+        violation = PolicyViolation(code="policy", severity="high", message="blocked")
+        project = IndexProject(
+            name="demo",
+            index_url="demo+https://index/",
+            files=(),
+        )
+        confusion = DependencyConfusionFinding(project="demo", indexes=("one", "two"))
+
+        cases = [
+            ("query", [VulnerabilityRecord(id="PLUGIN-1", summary="plugin")]),
+            ("analyze", [finding]),
+            ("evaluate", [violation]),
+            ("render", "rendered"),
+            ("supports", True),
+            ("client.get_project", project),
+            ("client.download", b"payload"),
+            ("client.find_dependency_confusion", [confusion]),
+            ("client.locate_artifact_index", "demo+https://index/"),
+            ("client.locate_artifact_index", None),
+        ]
+        for operation, value in cases:
+            with self.subTest(operation=operation, value_type=type(value).__name__):
+                data = plugin_mod._plugin_result_to_data(operation, value)
+                restored = plugin_mod._plugin_result_from_data(operation, data)
+                if operation in {"query", "analyze", "evaluate"}:
+                    self.assertEqual(type(restored[0]), type(value[0]))
+                elif operation == "client.find_dependency_confusion":
+                    self.assertIsInstance(restored[0], DependencyConfusionFinding)
+                else:
+                    self.assertEqual(restored, value)
+
+        package = ExportPackage(
+            report=report,
+            source=SourceLocation(uri="file:///src/demo.py", line=7),
+            artifacts=(
+                ArtifactReference(
+                    filename="demo.whl",
+                    hashes=(("sha256", "0" * 64),),
+                    size=10,
+                    kind="wheel",
+                ),
+            ),
+        )
+        request_data = plugin_mod._request_value_to_data(
+            {
+                "payload": b"wheel",
+                "inspection": inspection,
+                "report": report,
+                "package": package,
+                "artifact": package.artifacts[0],
+            }
+        )
+        restored_request = plugin_mod._request_value_from_data(request_data)
+        self.assertEqual(restored_request["payload"], b"wheel")
+        self.assertIsInstance(restored_request["inspection"], ArtifactInspection)
+        self.assertIsInstance(restored_request["report"], TrustReport)
+        self.assertIsInstance(restored_request["package"], ExportPackage)
+        self.assertIsInstance(restored_request["artifact"], ArtifactReference)
+
+    def test_plugin_ipc_helpers_reject_malformed_envelopes(self) -> None:
+        with patch("trustcheck.plugins._new_plugin_request_id", return_value="request-1"):
+            request_id, payload = plugin_mod._plugin_request_payload(
+                "module:Plugin",
+                "render",
+                {
+                    "packages": [],
+                    "source_name": "source",
+                    "failures": [],
+                    "config": {},
+                },
+            )
+        decoded = plugin_mod._decode_plugin_message(
+            payload,
+            max_bytes=plugin_mod.PLUGIN_IPC_MAX_REQUEST_BYTES,
+            label="plugin IPC request",
+        )
+        self.assertEqual(request_id, "request-1")
+        self.assertEqual(plugin_mod._validate_request_envelope(decoded), "request-1")
+        self.assertEqual(
+            plugin_mod._plugin_result_from_response(
+                {
+                    "plugin_protocol_version": PLUGIN_IPC_PROTOCOL_VERSION,
+                    "request_id": "request-1",
+                    "ok": True,
+                    "result": "ok",
+                },
+                request_id="request-1",
+                operation="render",
+            ),
+            "ok",
+        )
+
+        bad_responses = [
+            (
+                {
+                    "plugin_protocol_version": PLUGIN_IPC_PROTOCOL_VERSION,
+                    "request_id": "other",
+                    "ok": True,
+                    "result": "ok",
+                },
+                "request id",
+            ),
+            (
+                {
+                    "plugin_protocol_version": PLUGIN_IPC_PROTOCOL_VERSION,
+                    "request_id": "request-1",
+                    "ok": "yes",
+                    "result": "ok",
+                },
+                "ok must be a boolean",
+            ),
+            (
+                {
+                    "plugin_protocol_version": PLUGIN_IPC_PROTOCOL_VERSION,
+                    "request_id": "request-1",
+                    "ok": True,
+                },
+                "missing result",
+            ),
+            (
+                {
+                    "plugin_protocol_version": PLUGIN_IPC_PROTOCOL_VERSION,
+                    "request_id": "request-1",
+                    "ok": False,
+                    "error": "boom",
+                },
+                "error object",
+            ),
+        ]
+        for response, message in bad_responses:
+            with self.subTest(message=message), self.assertRaisesRegex(PluginError, message):
+                plugin_mod._plugin_result_from_response(
+                    response,
+                    request_id="request-1",
+                    operation="render",
+                )
 
     def test_plugin_process_reports_success_failure_timeout_and_eof(self) -> None:
         kwargs = {"packages": [], "source_name": "source", "failures": [], "config": {}}

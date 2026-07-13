@@ -2012,13 +2012,48 @@ def _apply_plugin_limits() -> None:  # pragma: no cover - OS-specific worker boo
         import resource
     except ImportError:
         return
-    setrlimit = getattr(resource, "setrlimit", None)
-    cpu = getattr(resource, "RLIMIT_CPU", None)
-    memory = getattr(resource, "RLIMIT_AS", None)
-    if setrlimit is not None and cpu is not None:
-        setrlimit(cpu, (PLUGIN_CPU_SECONDS, PLUGIN_CPU_SECONDS))
-    if setrlimit is not None and memory is not None:
-        setrlimit(memory, (PLUGIN_MEMORY_BYTES, PLUGIN_MEMORY_BYTES))
+    _set_plugin_resource_limit(
+        resource,
+        getattr(resource, "RLIMIT_CPU", None),
+        PLUGIN_CPU_SECONDS,
+    )
+    _set_plugin_resource_limit(
+        resource,
+        getattr(resource, "RLIMIT_AS", None),
+        PLUGIN_MEMORY_BYTES,
+    )
+
+
+def _set_plugin_resource_limit(
+    resource_module: Any,
+    limit_name: object,
+    desired_limit: int,
+) -> None:
+    if limit_name is None:
+        return
+    getrlimit = getattr(resource_module, "getrlimit", None)
+    setrlimit = getattr(resource_module, "setrlimit", None)
+    if getrlimit is None or setrlimit is None:
+        return
+    try:
+        current_soft, current_hard = getrlimit(limit_name)
+    except (OSError, ValueError):
+        return
+    infinity = getattr(resource_module, "RLIM_INFINITY", -1)
+
+    def capped(current: int) -> int:
+        if current == infinity:
+            return desired_limit
+        return min(current, desired_limit)
+
+    soft = capped(int(current_soft))
+    hard = capped(int(current_hard))
+    if hard != infinity and soft > hard:
+        soft = hard
+    try:
+        setrlimit(limit_name, (soft, hard))
+    except (OSError, ValueError):
+        return
 
 
 @dataclass(slots=True)
