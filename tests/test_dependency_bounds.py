@@ -8,12 +8,14 @@ from scripts.dependency_bounds import lower_bound_constraints
 
 
 class DependencyBoundsTests(unittest.TestCase):
-    def test_repository_constraints_use_sigstore_compatible_pydantic_floor(self) -> None:
+    def test_repository_constraints_use_sigstore_compatible_floors(self) -> None:
         constraints = lower_bound_constraints(
             Path(__file__).parents[1] / "pyproject.toml",
             extras=["test"],
         )
 
+        self.assertIn("cryptography==49.0.0", constraints)
+        self.assertIn("sigstore==4.4", constraints)
         self.assertIn("pydantic==2.12", constraints)
 
     def test_extracts_declared_direct_lower_bounds(self) -> None:

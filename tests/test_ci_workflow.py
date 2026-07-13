@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -294,6 +295,50 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn('"${artifact}.cdx.json"', workflow)
         self.assertIn("dist/*.cdx.json", workflow)
         self.assertNotIn("dist/trustcheck-sbom.json", workflow)
+
+    def test_release_publishes_agent_skills_bundle_to_github_release(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
+            encoding="utf-8"
+        )
+        job = _job_block(workflow, "publish-github-action")
+
+        self.assertIn("name: Publish Trustcheck Gate agent skills", job)
+        self.assertIn('source = Path("plugins/trustcheck-gate")', job)
+        self.assertIn('archive="trustcheck-gate-${RELEASE_TAG}.zip"', job)
+        self.assertIn('gh release upload "$RELEASE_TAG"', job)
+        self.assertIn('"skills-release/${archive}"', job)
+        self.assertIn("trustcheck-gate-*.zip", job)
+        self.assertIn("--clobber", job)
+        self.assertLess(
+            job.index("name: Create GitHub Release with generated notes"),
+            job.index("name: Publish Trustcheck Gate agent skills"),
+        )
+        self.assertLess(
+            job.index("name: Publish Trustcheck Gate agent skills"),
+            job.index("name: Publish moving major action tag"),
+        )
+
+    def test_trustcheck_gate_plugin_uses_portable_direct_skill_layout(self) -> None:
+        plugin_root = ROOT / "plugins" / "trustcheck-gate"
+        skill = plugin_root / "skills" / "trustcheck-gate" / "SKILL.md"
+
+        self.assertTrue(skill.exists())
+        for manifest_dir in (".codex-plugin", ".claude-plugin", ".cursor-plugin"):
+            manifest = json.loads(
+                (plugin_root / manifest_dir / "plugin.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            with self.subTest(manifest=manifest_dir):
+                self.assertEqual(manifest["name"], "trustcheck-gate")
+                self.assertEqual(manifest.get("skills"), "./skills/")
+
+        nested_skill_entries = [
+            path
+            for path in (plugin_root / "skills").glob("*/*/SKILL.md")
+            if path != skill
+        ]
+        self.assertEqual(nested_skill_entries, [])
 
     def test_ci_gates_pull_requests_with_dependency_review(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(

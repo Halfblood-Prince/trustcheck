@@ -11,7 +11,7 @@ Use Trustcheck as the source of truth for Python package security, provenance, m
 
 Always use `scripts/trustcheck_agent_adapter.py` for Trustcheck execution. Do not ask the model to construct raw commands such as `trustcheck <anything>`.
 
-This skill is packaged for Codex (`.codex-plugin/plugin.json`), Claude Code (`.claude-plugin/plugin.json`), and Cursor (`.cursor-plugin/plugin.json`). Keep behavior and safety language agent-neutral.
+This skill is packaged for Codex (`.codex-plugin/plugin.json`), Claude Code (`.claude-plugin/plugin.json`), and Cursor (`.cursor-plugin/plugin.json`). Keep it at `skills/trustcheck-gate/SKILL.md` under the plugin root, and keep behavior and safety language agent-neutral.
 
 ## Pre-Install Gate
 

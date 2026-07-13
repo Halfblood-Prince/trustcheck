@@ -1023,6 +1023,7 @@ jobs:
             - `dist/*.cdx.json`
             - standalone `trustcheck-*-windows-x86_64.exe` with checksum
             - unsigned `trustcheck-*-store.msix` for Microsoft Store submission
+            - `trustcheck-gate-*.zip` agent skills plugin bundle
             - GHCR Docker images for `linux/amd64`, `linux/arm64`, and `linux/arm/v7`
 
             Verify the direct Windows executable before use:
@@ -1042,6 +1043,38 @@ jobs:
             - Compatible major: `uses: Halfblood-Prince/trustcheck@${{ needs['verify-tag'].outputs.action_major_tag }}`
           files: |
             dist/*
+
+      - name: Publish Trustcheck Gate agent skills
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          archive="trustcheck-gate-${RELEASE_TAG}.zip"
+          mkdir -p skills-release
+          python - <<'PY'
+          import os
+          import zipfile
+          from pathlib import Path
+
+          release_tag = os.environ["RELEASE_TAG"]
+          source = Path("plugins/trustcheck-gate")
+          target = Path("skills-release") / f"trustcheck-gate-{release_tag}.zip"
+          with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+              for path in sorted(source.rglob("*")):
+                  if path.is_dir() or "__pycache__" in path.parts or path.suffix == ".pyc":
+                      continue
+                  archive.write(path, Path("trustcheck-gate") / path.relative_to(source))
+          PY
+          gh release upload "$RELEASE_TAG" \
+            "skills-release/${archive}" \
+            --clobber \
+            --repo "$GITHUB_REPOSITORY"
+          {
+            echo "## Agent skills release"
+            echo
+            echo "- Uploaded \`${archive}\` with Codex, Claude Code, and Cursor manifests."
+            echo "- Included the shared \`trustcheck-gate\` skill and read-only adapter."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish moving major action tag
         env:

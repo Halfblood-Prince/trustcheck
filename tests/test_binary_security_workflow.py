@@ -70,7 +70,7 @@ class BinarySecurityWorkflowTests(unittest.TestCase):
     def test_runtime_depends_directly_on_sigstore_and_not_its_transitives(self) -> None:
         project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
-        self.assertIn('"sigstore>=4.3,<5"', project)
+        self.assertIn('"sigstore>=4.4,<5"', project)
         self.assertIn('"urllib3>=2.7,<3"', project)
         self.assertIn('"cryptography>=49.0.0,<50"', project)
         self.assertNotIn('"tuf>=7,<8"', project)

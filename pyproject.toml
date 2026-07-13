@@ -34,7 +34,7 @@ dependencies = [
   "cryptography>=49.0.0,<50",
   "packaging>=24,<27",
   "pydantic>=2.12,<3",
-  "sigstore>=4.3,<5",
+  "sigstore>=4.4,<5",
   "tomlkit>=0.13,<1",
   "urllib3>=2.7,<3",
 ]
