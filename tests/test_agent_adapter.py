@@ -434,17 +434,17 @@ class TrustcheckGateAdapterTests(unittest.TestCase):
             / "scripts"
             / "trustcheck_agent_adapter.py"
         )
-        completed = subprocess.CompletedProcess(
-            args=[sys.executable, "-m", "trustcheck", "--version"],
-            returncode=0,
-            stdout=b"trustcheck 2.2.3.post1.dev1 (report schema 1.11.0)\n",
-            stderr=b"",
-        )
+        completed = {
+            "returncode": 0,
+            "stdout": "trustcheck 2.2.3.post1.dev1 (report schema 1.11.0)\n",
+            "stderr": "",
+            "execution_status": "completed",
+        }
         with patch.object(
             adapter,
             "_discover_trustcheck_command",
             return_value=((sys.executable, "-m", "trustcheck"), "python-module"),
-        ), patch.object(adapter.subprocess, "run", return_value=completed):
+        ), patch.object(adapter, "_run_process", return_value=completed):
             runtime = adapter._resolve_trustcheck_runtime(timeout=1)
 
         self.assertEqual(runtime.command_prefix, (sys.executable, "-m", "trustcheck"))
