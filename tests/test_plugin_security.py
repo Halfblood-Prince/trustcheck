@@ -716,7 +716,8 @@ class PluginSecurityTests(unittest.TestCase):
             plugin_mod._record_rows(b"\xff", Path("RECORD"))
         with self.assertRaisesRegex(PluginError, "invalid row"):
             plugin_mod._record_rows(b"one,two\n", Path("RECORD"))
-        for value in ("", "../evil.py", "C:/absolute.py", r"pkg\..\evil.py"):
+        platform_absolute_path = str(Path(Path.cwd().anchor) / "absolute.py")
+        for value in ("", "../evil.py", platform_absolute_path, r"pkg\..\evil.py"):
             with self.subTest(path=value), self.assertRaisesRegex(
                 PluginError,
                 "unsafe path",
