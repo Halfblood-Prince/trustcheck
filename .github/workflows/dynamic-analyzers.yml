@@ -97,6 +97,7 @@ jobs:
           import os
           import re
           import zipfile
+          from dataclasses import asdict
           from pathlib import Path
 
           import trustcheck.dynamic as dynamic
@@ -156,7 +157,7 @@ jobs:
                   python_version=python_version,
                   timeout=90,
               )
-              print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+              print(json.dumps(asdict(result), indent=2, sort_keys=True))
               if result.classification != expected:
                   raise SystemExit(
                       f"{path.name} classified {result.classification}, expected {expected}"

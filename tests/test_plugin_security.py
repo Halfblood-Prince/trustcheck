@@ -1725,8 +1725,9 @@ class PluginSecurityTests(unittest.TestCase):
         }
         for filename, (schema_id, digest) in expected.items():
             path = schema_root / filename
-            payload = path.read_bytes()
-            schema = json.loads(payload.decode("utf-8"))
+            text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+            payload = text.encode("utf-8")
+            schema = json.loads(text)
             with self.subTest(filename=filename):
                 self.assertEqual(hashlib.sha256(payload).hexdigest(), digest)
                 self.assertEqual(schema["$id"], schema_id)
