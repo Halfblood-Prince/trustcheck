@@ -12,7 +12,7 @@ evaluation fails:
 ```yaml
 steps:
   - uses: actions/checkout@v7
-  - uses: Halfblood-Prince/trustcheck@v2
+  - uses: Halfblood-Prince/trustcheck@v3
     with:
       target: requirements.txt
       policy: strict
@@ -34,8 +34,8 @@ artifact file should set `format: json` or an explicit `report-path` ending in
 `report-path` remain stable and continue to be derived from the internal JSON
 result.
 
-Stable releases publish a full version tag such as `v2.1.1` and update the
-compatible major ref `v2`. Use `@v2` for compatible updates. For immutable
+Stable releases publish a full version tag such as `v3.0.0` and update the
+compatible major ref `v3`. Use `@v3` for compatible updates. For immutable
 release gates, pin `Halfblood-Prince/trustcheck` and supporting actions to full
 commit SHAs. GitHub treats a full commit SHA as the only immutable Action reference.
 
@@ -57,7 +57,7 @@ files:
 ```yaml
 repos:
   - repo: https://github.com/Halfblood-Prince/trustcheck
-    rev: v2
+    rev: v3
     hooks:
       - id: trustcheck
 ```
@@ -156,7 +156,7 @@ File targets use `trustcheck scan`. Package names use `trustcheck inspect`.
 `expected-repo` applies to package targets:
 
 ```yaml
-- uses: Halfblood-Prince/trustcheck@v2
+- uses: Halfblood-Prince/trustcheck@v3
   with:
     target: sampleproject
     expected-repo: https://github.com/pypa/sampleproject
@@ -169,7 +169,7 @@ file, so the action rejects `expected-repo` when `target` is a file.
 ## Dependencies, vulnerability intelligence, and artifacts
 
 ```yaml
-- uses: Halfblood-Prince/trustcheck@v2
+- uses: Halfblood-Prince/trustcheck@v3
   with:
     target: uv.lock
     policy: strict
@@ -192,7 +192,7 @@ CLI. Artifact inspection remains static and never imports inspected packages.
 Pass a repository-relative JSON policy path:
 
 ```yaml
-- uses: Halfblood-Prince/trustcheck@v2
+- uses: Halfblood-Prince/trustcheck@v3
   with:
     target: pyproject.toml
     policy: .github/trustcheck-policy.json
@@ -205,7 +205,7 @@ The file uses the same schema as CLI `--policy-file`.
 Plan a repair and upload the machine-readable patch bundle:
 
 ```yaml
-- uses: Halfblood-Prince/trustcheck@v2
+- uses: Halfblood-Prince/trustcheck@v3
   with:
     target: requirements.txt
     with-osv: "true"
@@ -224,7 +224,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       fetch-depth: 0
-  - uses: Halfblood-Prince/trustcheck@v2
+  - uses: Halfblood-Prince/trustcheck@v3
     with:
       target: uv.lock
       with-osv: "true"
@@ -329,7 +329,7 @@ closed unless `allow-dependency-confusion` is explicitly enabled.
 Use outputs in later workflow steps:
 
 ```yaml
-- uses: Halfblood-Prince/trustcheck@v2
+- uses: Halfblood-Prince/trustcheck@v3
   id: trustcheck
   with:
     target: requirements.txt
@@ -344,7 +344,7 @@ Use outputs in later workflow steps:
 Use distinct artifact names when invoking the action more than once in a job:
 
 ```yaml
-- uses: Halfblood-Prince/trustcheck@v2
+- uses: Halfblood-Prince/trustcheck@v3
   with:
     target: poetry.lock
     report-path: reports/trustcheck-poetry.json
@@ -357,7 +357,7 @@ The action always audits once. It derives SARIF from the same canonical JSON
 result used for the recommendation and policy outputs.
 
 ```yaml
-- uses: Halfblood-Prince/trustcheck@v2
+- uses: Halfblood-Prince/trustcheck@v3
   id: trustcheck
   with:
     target: requirements.txt

@@ -6,6 +6,10 @@ The project follows Semantic Versioning for the supported public API described i
 
 ## Unreleased
 
+## [3.0.0] - 2026-07-14
+
+Package release `3.0.0` emits machine-readable report schema `1.12.0`.
+
 ### Security
 
 - Removed the `sigstore-identity` plugin trust mode because plugin manifests
@@ -301,7 +305,8 @@ Package release `1.9.0` emits machine-readable report schema `1.4.0`.
 - Aligned the README, documentation site, CLI help, changelog, and JSON contract documentation around the same supported feature set.
 - Replaced temporary Discord issue and security links with stable GitHub project pages and private vulnerability reporting.
 
-[Unreleased]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/Halfblood-Prince/trustcheck/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.2.3...v3.0.0
 [2.2.0]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.1.2...v2.2.0
 [2.1.2]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/Halfblood-Prince/trustcheck/compare/v2.1.0...v2.1.1

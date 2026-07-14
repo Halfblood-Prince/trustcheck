@@ -116,13 +116,13 @@ experimental.
 ```yaml
 steps:
   - uses: actions/checkout@v7
-  - uses: Halfblood-Prince/trustcheck@v2
+  - uses: Halfblood-Prince/trustcheck@v3
     with:
       target: requirements.txt
       policy: strict
 ```
 
-Use `@v2` for compatible updates. For immutable release gates, pin the Action
+Use `@v3` for compatible updates. For immutable release gates, pin the Action
 and supporting actions to a full commit SHA such as
 `Halfblood-Prince/trustcheck@<full-release-commit-sha>`.
 

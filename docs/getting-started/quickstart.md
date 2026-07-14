@@ -5,7 +5,7 @@
 ```yaml
 steps:
   - uses: actions/checkout@v7
-  - uses: Halfblood-Prince/trustcheck@v2
+  - uses: Halfblood-Prince/trustcheck@v3
     with:
       target: requirements.txt
       policy: strict
