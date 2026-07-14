@@ -25,8 +25,8 @@ MAX_DYNAMIC_CPU_SECONDS = 10
 MAX_DYNAMIC_MEMORY = "512m"
 MAX_DYNAMIC_OUTPUT_LINES = 25
 RESULT_PREFIX = "TRUSTCHECK_DYNAMIC_RESULT="
-# This path is a private tmpfs mount inside the disposable analysis container.
-CONTAINER_TEMPFS = "/tmp:rw,nosuid,nodev,size=256m"  # nosec B108
+# This private tmpfs must be executable because the disposable venv lives there.
+CONTAINER_TEMPFS = "/tmp:rw,exec,nosuid,nodev,size=256m"  # nosec B108
 
 
 def analyze_artifact_dynamic(

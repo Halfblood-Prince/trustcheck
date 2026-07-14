@@ -155,6 +155,8 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertIn("cpu=10", command[command.index("--ulimit") + 1])
         self.assertIn("no-new-privileges", command)
         self.assertIn("ALL", command[command.index("--cap-drop") + 1])
+        self.assertEqual(dynamic_mod.CONTAINER_TEMPFS, command[command.index("--tmpfs") + 1])
+        self.assertIn("exec", command[command.index("--tmpfs") + 1].split(":")[1].split(","))
         self.assertEqual(command[command.index(PINNED_IMAGE)], PINNED_IMAGE)
 
     @unittest.skipIf(os.name == "nt", "POSIX mode bits are not meaningful on Windows")
