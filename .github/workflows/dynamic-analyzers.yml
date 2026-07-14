@@ -1,0 +1,214 @@
+name: Dynamic Analyzer Images
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/dynamic-analyzers.yml"
+      - "packaging/dynamic-analyzers/**"
+      - "src/trustcheck/dynamic.py"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/dynamic-analyzers.yml"
+      - "packaging/dynamic-analyzers/**"
+      - "src/trustcheck/dynamic.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ANALYZER_IMAGE: ghcr.io/halfblood-prince/trustcheck-bounded-install-analyzer
+
+jobs:
+  analyzer-image:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install analyzer test tooling
+        run: |
+          python -m pip install --disable-pip-version-check --require-hashes --requirement requirements/ci.lock
+          python -m pip install --disable-pip-version-check --no-build-isolation --no-deps -e .
+          python -m pip check
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build local analyzer image
+        env:
+          PYTHON_VERSION: ${{ matrix.python-version }}
+        run: |
+          docker build \
+            --build-arg "PYTHON_VERSION=${PYTHON_VERSION}" \
+            --tag "${ANALYZER_IMAGE}:python-${PYTHON_VERSION}-ci" \
+            packaging/dynamic-analyzers
+
+      - name: Test included build backends offline
+        env:
+          PYTHON_VERSION: ${{ matrix.python-version }}
+        run: |
+          docker run --rm --network none -i "${ANALYZER_IMAGE}:python-${PYTHON_VERSION}-ci" python - <<'PY'
+          import importlib
+
+          modules = [
+              "setuptools",
+              "wheel",
+              "hatchling",
+              "flit_core",
+              "poetry.core",
+              "mesonpy",
+              "scikit_build_core",
+          ]
+          for name in modules:
+              importlib.import_module(name)
+          PY
+
+      - name: Run benign and malicious dynamic fixtures
+        env:
+          DYNAMIC_IMAGE: ${{ env.ANALYZER_IMAGE }}
+          PYTHON_VERSION: ${{ matrix.python-version }}
+        run: |
+          python - <<'PY'
+          import base64
+          import csv
+          import hashlib
+          import io
+          import json
+          import os
+          import re
+          import zipfile
+          from pathlib import Path
+
+          import trustcheck.dynamic as dynamic
+
+          root = Path("dynamic-analyzer-fixtures")
+          root.mkdir(exist_ok=True)
+          python_version = os.environ["PYTHON_VERSION"]
+          image = f"{os.environ['DYNAMIC_IMAGE']}:python-{python_version}-ci"
+
+          def record_digest(payload):
+              return base64.urlsafe_b64encode(
+                  hashlib.sha256(payload).digest()
+              ).rstrip(b"=").decode("ascii")
+
+          def write_wheel(name, files):
+              dist_info = f"{name}-0.1.dist-info"
+              wheel = root / f"{name}-0.1-py3-none-any.whl"
+              entries = {
+                  **files,
+                  f"{dist_info}/METADATA": (
+                      "Metadata-Version: 2.1\n"
+                      f"Name: {name}\n"
+                      "Version: 0.1\n"
+                  ).encode(),
+                  f"{dist_info}/WHEEL": (
+                      "Wheel-Version: 1.0\n"
+                      "Generator: trustcheck fixture\n"
+                      "Root-Is-Purelib: true\n"
+                      "Tag: py3-none-any\n"
+                  ).encode(),
+              }
+              rows = []
+              for path, payload in sorted(entries.items()):
+                  rows.append((path, f"sha256={record_digest(payload)}", str(len(payload))))
+              rows.append((f"{dist_info}/RECORD", "", ""))
+              rendered = io.StringIO(newline="")
+              csv.writer(rendered, lineterminator="\n").writerows(rows)
+              entries[f"{dist_info}/RECORD"] = rendered.getvalue().encode()
+              with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                  for path, payload in sorted(entries.items()):
+                      archive.writestr(path, payload)
+              return wheel
+
+          benign = write_wheel("benign_fixture", {"benign_fixture.py": b"VALUE = 1\n"})
+          malicious = write_wheel(
+              "malicious_fixture",
+              {"malicious_fixture.pth": b"import os\n"},
+          )
+
+          dynamic.DIGEST_PINNED_IMAGE_PATTERN = re.compile(r"^.+$")
+          expectations = [(benign, "passed"), (malicious, "suspicious")]
+          for path, expected in expectations:
+              result = dynamic.analyze_artifact_dynamic(
+                  path.name,
+                  path.read_bytes(),
+                  image=image,
+                  python_version=python_version,
+                  timeout=90,
+              )
+              print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+              if result.classification != expected:
+                  raise SystemExit(
+                      f"{path.name} classified {result.classification}, expected {expected}"
+                  )
+          PY
+
+      - name: Scan Python packages in analyzer image
+        env:
+          PYTHON_VERSION: ${{ matrix.python-version }}
+        run: |
+          docker run --rm --network none "${ANALYZER_IMAGE}:python-${PYTHON_VERSION}-ci" python -m pip freeze > analyzer-pip-freeze.txt
+          python -m pip_audit --requirement analyzer-pip-freeze.txt
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish analyzer image with SBOM and provenance
+        if: github.event_name != 'pull_request'
+        id: publish
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: packaging/dynamic-analyzers
+          push: true
+          tags: ${{ env.ANALYZER_IMAGE }}:python-${{ matrix.python-version }}
+          build-args: PYTHON_VERSION=${{ matrix.python-version }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Record immutable digest
+        if: github.event_name != 'pull_request'
+        env:
+          PYTHON_VERSION: ${{ matrix.python-version }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          mkdir -p dynamic-analyzer-digests
+          image="${ANALYZER_IMAGE}:python-${PYTHON_VERSION}@${DIGEST}"
+          printf '"%s": "%s",\n' "${PYTHON_VERSION}" "${image}" \
+            > "dynamic-analyzer-digests/python-${PYTHON_VERSION}.txt"
+          {
+            echo "### Dynamic analyzer image"
+            echo
+            echo "\`${image}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload digest record
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dynamic-analyzer-digest-python-${{ matrix.python-version }}
+          path: dynamic-analyzer-digests/*.txt

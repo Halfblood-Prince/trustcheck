@@ -464,7 +464,8 @@ class PluginSecurityTests(unittest.TestCase):
             entry = EntryPoint(root)
             record = root / "demo-distribution-1.0.0.dist-info" / "RECORD"
             lines = record.read_text(encoding="utf-8").splitlines()
-            record.write_text("\n".join(reversed(lines)) + "\n", encoding="utf-8")
+            lines[-1] = "demo-distribution-1.0.0.dist-info/RECORD,,0"
+            record.write_text("\n".join(lines) + "\n", encoding="utf-8")
             with self.assertRaisesRegex(PluginError, "record_sha256"):
                 _verified_manifest(entry, kind="advisory", trusted_signers=(signer,))
 

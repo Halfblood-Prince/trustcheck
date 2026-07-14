@@ -35,6 +35,26 @@ class DynamicAnalysisTests(unittest.TestCase):
         ):
             self.assertIn(package, requirements)
 
+    def test_analyzer_image_publication_workflow_is_pinned_and_complete(self) -> None:
+        workflow = (
+            ROOT / ".github" / "workflows" / "dynamic-analyzers.yml"
+        ).read_text(encoding="utf-8")
+        readme = (ROOT / "packaging" / "dynamic-analyzers" / "README.md").read_text(
+            encoding="utf-8"
+        )
+        image = "ghcr.io/halfblood-prince/trustcheck-bounded-install-analyzer"
+
+        self.assertIn(image, workflow)
+        self.assertIn(image, readme)
+        self.assertNotIn("ghcr.io/trustcheck/bounded-install-analyzer", readme)
+        self.assertIn('python-version: ["3.11", "3.12", "3.13", "3.14"]', workflow)
+        self.assertIn("docker run --rm --network none", workflow)
+        self.assertIn("Run benign and malicious dynamic fixtures", workflow)
+        self.assertIn("python -m pip_audit", workflow)
+        self.assertIn("provenance: mode=max", workflow)
+        self.assertIn("sbom: true", workflow)
+        self.assertIn("dynamic-analyzer-digests/*.txt", workflow)
+
     def test_rejects_mutable_container_images_without_executing(self) -> None:
         with patch("trustcheck.dynamic.shutil.which") as which:
             result = analyze_artifact_dynamic(

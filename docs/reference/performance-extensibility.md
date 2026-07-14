@@ -118,7 +118,7 @@ advisory options, and enabled plugins. Stale or mismatched state fails closed.
 Plugins are disabled by default and require an explicit allowlist. Trusted
 plugin execution requires a signed `trustcheck-plugin.json` statement that
 binds the name, kind, entry point, API version, plugin protocol version,
-distribution name and version, installed RECORD digest, canonical installed
+distribution name and version, canonical RECORD digest, canonical installed
 content digest, declared dependencies, declared capabilities, and
 configuration schema digest. Trustcheck verifies the
 signature, installed files against wheel `RECORD`, and a configured external
@@ -211,19 +211,40 @@ The distribution includes `trustcheck-plugin.json`:
 
 The signature covers canonical compact JSON for `manifest` with sorted keys.
 The statement file itself and `RECORD` are metadata and are excluded from the
-canonical installed-content digest; every other recorded file must have a
-matching sha256 `RECORD` entry. Modifying plugin code, dependencies, `RECORD`,
-the declared configuration schema, or declared capabilities fails closed.
+canonical installed-content digest; every other signed file must have a
+matching sha256 `RECORD` entry. Trustcheck canonicalizes `RECORD` before
+digesting it so row order, pip-generated `__pycache__` bytecode rows, and
+installer metadata such as `INSTALLER`, `REQUESTED`, and `direct_url.json` do
+not make a correctly signed wheel unverifiable after a real pip install.
+Modifying plugin code, dependencies, the canonical `RECORD` rows, the declared
+configuration schema, or declared capabilities fails closed.
 The earlier `requires_network`, `requires_filesystem`, and
 `requires_subprocess` statement fields are rejected until Trustcheck has
 enforcement that can turn those declarations into real sandbox policy.
+
+Use the plugin-manifest helper to create and validate v2 metadata instead of
+hand-building the digests:
+
+```bash
+trustcheck plugin-manifest init dist/company_policy-1.2.3-py3-none-any.whl
+trustcheck plugin-manifest sign dist/company_policy-1.2.3-py3-none-any.whl \
+  --key plugin-signing-key.pem
+trustcheck plugin-manifest verify dist/company_policy-1.2.3-py3-none-any.whl
+trustcheck plugin-manifest fingerprint plugin-signing-key.pub.pem
+```
+
+`sign` rewrites the wheel `RECORD` so the `trustcheck-plugin.json` entry is
+unhashed, computes the final installed-content and `RECORD` digests, signs the
+canonical statement with RSA-PKCS1v15-SHA256, inserts the envelope, and
+revalidates the resulting wheel with the same verifier used at plugin load
+time.
 
 ### Plugin Manifest Migration
 
 Plugin API version `1` remains the runtime method contract for plugin objects.
 The signed manifest and statement formats are version `2` because they bind
 additional security-critical data: distribution identity, distribution version,
-installed RECORD digest, canonical installed-content digest, configuration
+canonical RECORD digest, canonical installed-content digest, configuration
 schema digest, IPC protocol version, capabilities, and dependencies.
 
 Legacy manifest v1 files that only identify the name, kind, entry point, and

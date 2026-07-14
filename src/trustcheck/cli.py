@@ -41,6 +41,7 @@ from .cli_commands import impact as impact_command
 from .cli_commands import inspect as inspect_command
 from .cli_commands import install as install_command
 from .cli_commands import manifest as manifest_command
+from .cli_commands import plugin_manifest as plugin_manifest_command
 from .cli_commands import scan as scan_command
 from .cli_commands.context import CommandContext
 from .cli_models import (
@@ -974,6 +975,80 @@ def build_parser() -> argparse.ArgumentParser:
         help="Trust manifest path to update.",
     )
 
+    plugin_manifest_parser = subparsers.add_parser(
+        "plugin-manifest",
+        help="Generate, sign, and verify Trustcheck plugin manifests.",
+    )
+    plugin_manifest_subparsers = plugin_manifest_parser.add_subparsers(
+        dest="plugin_manifest_action",
+        required=True,
+    )
+
+    plugin_manifest_init_parser = plugin_manifest_subparsers.add_parser(
+        "init",
+        help="Render an unsigned v2 plugin manifest draft for a wheel.",
+    )
+    _add_plugin_manifest_common_arguments(plugin_manifest_init_parser)
+    plugin_manifest_init_parser.add_argument(
+        "distribution",
+        metavar="DIST_OR_WHEEL",
+        help="Plugin wheel to inspect.",
+    )
+    plugin_manifest_init_parser.add_argument(
+        "--configuration-schema",
+        metavar="PATH",
+        help="JSON configuration schema to bind into the manifest statement.",
+    )
+
+    plugin_manifest_sign_parser = plugin_manifest_subparsers.add_parser(
+        "sign",
+        help="Sign a plugin wheel and insert the v2 manifest.",
+    )
+    _add_plugin_manifest_common_arguments(plugin_manifest_sign_parser)
+    plugin_manifest_sign_parser.add_argument(
+        "distribution",
+        metavar="DIST_OR_WHEEL",
+        help="Plugin wheel to rewrite.",
+    )
+    plugin_manifest_sign_parser.add_argument(
+        "--key",
+        required=True,
+        metavar="PRIVATE_KEY",
+        help="RSA private key PEM used to sign the canonical statement.",
+    )
+    plugin_manifest_sign_parser.add_argument(
+        "--output",
+        metavar="WHEEL",
+        help="Write the signed wheel here; defaults to rewriting the input wheel.",
+    )
+    plugin_manifest_sign_parser.add_argument(
+        "--configuration-schema",
+        metavar="PATH",
+        help="JSON configuration schema to bind into the manifest statement.",
+    )
+
+    plugin_manifest_verify_parser = plugin_manifest_subparsers.add_parser(
+        "verify",
+        help="Verify a signed plugin wheel or extracted distribution.",
+    )
+    _add_plugin_manifest_common_arguments(plugin_manifest_verify_parser)
+    plugin_manifest_verify_parser.add_argument(
+        "distribution",
+        metavar="DIST_OR_WHEEL",
+        help="Signed plugin wheel or extracted distribution to verify.",
+    )
+
+    plugin_manifest_fingerprint_parser = plugin_manifest_subparsers.add_parser(
+        "fingerprint",
+        help="Print the Trustcheck signer fingerprint for an RSA public key.",
+    )
+    _add_plugin_manifest_common_arguments(plugin_manifest_fingerprint_parser)
+    plugin_manifest_fingerprint_parser.add_argument(
+        "public_key",
+        metavar="PUBLIC_KEY",
+        help="RSA public key PEM.",
+    )
+
     environment_parser = subparsers.add_parser(
         "environment",
         help="Inspect installed distributions in the active environment or site-packages paths.",
@@ -1225,6 +1300,24 @@ def _add_manifest_common_arguments(parser: argparse.ArgumentParser) -> None:
     _add_target_environment_arguments(parser)
     _add_index_arguments(parser)
     _add_malicious_arguments(parser)
+    _add_runtime_arguments(parser)
+
+
+def _add_plugin_manifest_common_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--config-file",
+        help="Path to a JSON, TOML, or pyproject.toml configuration file.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format.",
+    )
+    parser.add_argument(
+        "--output-file",
+        help="Write command output to this path instead of standard output.",
+    )
     _add_runtime_arguments(parser)
 
 
@@ -1507,6 +1600,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         impact_command.validate_args(args, parser)
     if args.command == "manifest":
         manifest_command.validate_args(args, parser)
+    if args.command == "plugin-manifest":
+        plugin_manifest_command.validate_args(args, parser)
 
     try:
         plugin_manager = PluginManager.from_options(
@@ -1540,6 +1635,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return diff_command.run(args, context)
         if args.command == "manifest":
             return manifest_command.run(args, context)
+        if args.command == "plugin-manifest":
+            return plugin_manifest_command.run(args, context)
         if args.command == "environment":
             return environment_command.run(args, context)
         if args.command == "doctor":

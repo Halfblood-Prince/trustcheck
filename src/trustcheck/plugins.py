@@ -4,6 +4,7 @@ import base64
 import csv
 import hashlib
 import importlib
+import io
 import json
 import math
 import multiprocessing
@@ -808,8 +809,8 @@ def _verify_distribution_record(
     if not rows:
         raise PluginError(f"plugin RECORD {record_path} is empty")
 
-    record_sha256 = hashlib.sha256(record_bytes).hexdigest()
     recorded_paths: set[str] = set()
+    canonical_record_rows: list[tuple[str, str, str]] = []
     canonical_entries: list[str] = []
     manifest_recorded = False
     record_recorded = False
@@ -818,6 +819,9 @@ def _verify_distribution_record(
         if normalized in recorded_paths:
             raise PluginError(f"plugin RECORD contains duplicate entry {normalized}")
         recorded_paths.add(normalized)
+        if _is_installer_generated_record_entry(normalized, hash_spec, size_text):
+            continue
+        canonical_record_rows.append((normalized, hash_spec, size_text))
         file_path = _locate_distribution_file(distribution, normalized)
         if not file_path.is_file():
             raise PluginError(f"plugin RECORD references missing file {normalized}")
@@ -846,6 +850,9 @@ def _verify_distribution_record(
         raise PluginError("plugin RECORD does not list itself")
     _reject_unrecorded_distribution_files(distribution, recorded_paths)
     dependencies = _distribution_dependencies(distribution)
+    record_sha256 = hashlib.sha256(
+        _canonical_record_bytes(canonical_record_rows)
+    ).hexdigest()
     wheel_sha256 = hashlib.sha256(
         "\n".join(sorted(canonical_entries)).encode("utf-8")
     ).hexdigest()
@@ -887,6 +894,48 @@ def _record_rows(record_bytes: bytes, record_path: Path) -> list[tuple[str, str,
             raise PluginError(f"plugin RECORD {record_path} has an invalid row")
         rows.append((row[0], row[1], row[2]))
     return rows
+
+
+def _canonical_record_bytes(rows: Sequence[tuple[str, str, str]]) -> bytes:
+    regular_rows: list[tuple[str, str, str]] = []
+    manifest_rows: list[tuple[str, str, str]] = []
+    record_rows: list[tuple[str, str, str]] = []
+    for row in rows:
+        if row[0] == PLUGIN_MANIFEST_NAME:
+            manifest_rows.append(row)
+        elif row[0].endswith(".dist-info/RECORD"):
+            record_rows.append(row)
+        else:
+            regular_rows.append(row)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerows([*sorted(regular_rows), *manifest_rows, *record_rows])
+    return output.getvalue().encode("utf-8")
+
+
+def _is_installer_generated_record_entry(
+    relative_path: str,
+    hash_spec: str,
+    size_text: str,
+) -> bool:
+    if _is_installer_generated_metadata(relative_path):
+        return True
+    parts = Path(relative_path).parts
+    return (
+        not hash_spec
+        and not size_text
+        and "__pycache__" in parts
+        and relative_path.endswith(".pyc")
+    )
+
+
+def _is_installer_generated_metadata(relative_path: str) -> bool:
+    parts = Path(relative_path).parts
+    return (
+        len(parts) == 2
+        and parts[0].endswith(".dist-info")
+        and parts[1] in {"INSTALLER", "REQUESTED", "direct_url.json"}
+    )
 
 
 def _normalized_record_path(value: str) -> str:
