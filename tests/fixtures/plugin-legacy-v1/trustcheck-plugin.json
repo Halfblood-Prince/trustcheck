@@ -1,0 +1,11 @@
+{
+  "schema": "urn:trustcheck:plugin-manifest:1",
+  "manifest": {
+    "name": "demo",
+    "kind": "policy",
+    "entry_point": "demo_plugin:Plugin",
+    "api_version": "1"
+  },
+  "public_key": "legacy-v1-did-not-bind-current-installed-content",
+  "signature": "legacy-signature"
+}

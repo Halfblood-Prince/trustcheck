@@ -155,7 +155,7 @@ def write_manifest(
         ),
     }
     manifest = {
-        "schema": "urn:trustcheck:plugin-statement:1",
+        "schema": "urn:trustcheck:plugin-statement:2",
         "name": "demo",
         "kind": kind,
         "entry_point": entry_point,
@@ -187,7 +187,7 @@ def write_manifest(
         )
     ).hexdigest()
     envelope = {
-        "schema": "urn:trustcheck:plugin-manifest:1",
+        "schema": "urn:trustcheck:plugin-manifest:2",
         "manifest": manifest,
         "public_key": public,
         "signature": base64.b64encode(
@@ -428,6 +428,26 @@ class PluginSecurityTests(unittest.TestCase):
             write_manifest(root, statement_overrides={"schema": "unsupported"})
             with self.assertRaisesRegex(PluginError, "signed statement"):
                 _verified_manifest(entry, kind="advisory", trusted_signers=(signer,))
+
+    def test_legacy_manifest_v1_fixture_is_rejected_with_migration_error(self) -> None:
+        fixture = (
+            Path(__file__).resolve().parent
+            / "fixtures"
+            / "plugin-legacy-v1"
+            / "trustcheck-plugin.json"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "trustcheck-plugin.json").write_text(
+                fixture.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            entry = EntryPoint(root)
+            with self.assertRaisesRegex(
+                PluginError,
+                "legacy manifest v1 security model",
+            ):
+                _verified_manifest(entry, kind="policy", trusted_signers=())
 
     def test_signed_statement_binds_installed_record_and_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1682,16 +1702,37 @@ class PluginSecurityTests(unittest.TestCase):
             )
 
     def test_plugin_ipc_schema_files_are_versioned_json(self) -> None:
-        schema_root = Path(__file__).resolve().parents[1] / "src" / "trustcheck" / "plugin_schemas"
-        for filename, schema_id in (
-            ("plugin-statement-1.json", "urn:trustcheck:plugin-statement:1"),
-            ("plugin-ipc-request-1.json", "urn:trustcheck:plugin-ipc-request:1"),
-            ("plugin-ipc-response-1.json", "urn:trustcheck:plugin-ipc-response:1"),
-        ):
+        schema_root = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "trustcheck"
+            / "plugin_schemas"
+        )
+        expected = {
+            "plugin-statement-2.json": (
+                "urn:trustcheck:plugin-statement:2",
+                "16b4d80108a950cbe9f210e3e871fb37c083bf8cdddaa22d328b7d12576f9742",
+            ),
+            "plugin-ipc-request-1.json": (
+                "urn:trustcheck:plugin-ipc-request:1",
+                "78c0a8b2e2bbf50623979e4b1ffeda9aa082f208ef79c542b7a633262469b86d",
+            ),
+            "plugin-ipc-response-1.json": (
+                "urn:trustcheck:plugin-ipc-response:1",
+                "9b3c06148b76202dbfd4d5ec950def4e0b2104449acf0155e8a7c08d616092fd",
+            ),
+        }
+        for filename, (schema_id, digest) in expected.items():
+            path = schema_root / filename
+            payload = path.read_bytes()
+            schema = json.loads(payload.decode("utf-8"))
             with self.subTest(filename=filename):
-                schema = json.loads((schema_root / filename).read_text(encoding="utf-8"))
+                self.assertEqual(hashlib.sha256(payload).hexdigest(), digest)
                 self.assertEqual(schema["$id"], schema_id)
-                self.assertEqual(schema["$schema"], "https://json-schema.org/draft/2020-12/schema")
+                self.assertEqual(
+                    schema["$schema"],
+                    "https://json-schema.org/draft/2020-12/schema",
+                )
 
     def test_plugin_ipc_reconstructs_trusted_worker_models(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import inspect
 import unittest
+from dataclasses import asdict, fields
 
 import trustcheck
 from trustcheck.contract import JSON_SCHEMA_ID, JSON_SCHEMA_VERSION
@@ -125,3 +127,36 @@ class PublicApiTests(unittest.TestCase):
         self.assertIn("TrustReport", trustcheck.__dir__())
         with self.assertRaisesRegex(AttributeError, "definitely_missing"):
             trustcheck.__getattr__("definitely_missing")
+
+    def test_plugin_descriptor_accepts_deprecated_isolated_constructor_alias(self) -> None:
+        signature = inspect.signature(trustcheck.PluginDescriptor)
+        self.assertIn("resource_bounded", signature.parameters)
+        self.assertIn("isolated", signature.parameters)
+
+        with self.assertWarns(DeprecationWarning):
+            descriptor = trustcheck.PluginDescriptor(
+                name="demo",
+                kind="policy",
+                group="trustcheck.policy_rules",
+                value="demo:Plugin",
+                isolated=False,
+            )
+
+        self.assertFalse(descriptor.resource_bounded)
+        self.assertFalse(descriptor.isolated)
+        field_names = {field.name for field in fields(descriptor)}
+        self.assertIn("resource_bounded", field_names)
+        self.assertNotIn("isolated", field_names)
+        payload = asdict(descriptor)
+        self.assertFalse(payload["resource_bounded"])
+        self.assertNotIn("isolated", payload)
+
+        with self.assertRaisesRegex(TypeError, "conflicting values"):
+            trustcheck.PluginDescriptor(
+                name="demo",
+                kind="policy",
+                group="trustcheck.policy_rules",
+                value="demo:Plugin",
+                resource_bounded=True,
+                isolated=False,
+            )

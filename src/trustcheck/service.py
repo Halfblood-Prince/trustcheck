@@ -2205,7 +2205,7 @@ def _build_provenance_consistency(files: list[FileProvenance]) -> ProvenanceCons
         wheel_build_types,
     )
     identity_consistent = bool(repository_overlap) and (
-        not sdist_workflows and not wheel_workflows or bool(workflow_overlap)
+        (not sdist_workflows and not wheel_workflows) or bool(workflow_overlap)
     )
     consistent = identity_consistent and all(
         value is not False

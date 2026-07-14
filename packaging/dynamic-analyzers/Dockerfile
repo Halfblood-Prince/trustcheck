@@ -3,7 +3,7 @@ FROM python:${PYTHON_VERSION}-slim
 
 LABEL org.opencontainers.image.title="Trustcheck bounded install analyzer"
 LABEL org.opencontainers.image.description="Offline backend image for Trustcheck bounded install analysis"
-LABEL org.opencontainers.image.source="https://github.com/HalCh1/trustcheck"
+LABEL org.opencontainers.image.source="https://github.com/Halfblood-Prince/trustcheck"
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

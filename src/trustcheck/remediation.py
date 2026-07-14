@@ -1880,12 +1880,12 @@ def _updated_poetry_specifier(
         specifier = stripped
     try:
         requirement = Requirement(f"placeholder{specifier}")
-    except InvalidRequirement:
+    except InvalidRequirement as exc:
         if allow_constraint_changes:
             return f">={target}"
         raise RemediationError(
             f"unsupported Poetry version constraint {value!r}"
-        )
+        ) from exc
     return _updated_requirement(
         requirement,
         target,

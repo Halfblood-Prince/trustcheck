@@ -19,15 +19,21 @@ The project follows Semantic Versioning for the supported public API described i
 - Removed unenforced plugin `requires_network`, `requires_filesystem`, and
   `requires_subprocess` statement fields until they can be backed by real
   sandbox policy.
+- Advanced signed plugin manifests to `urn:trustcheck:plugin-manifest:2` and
+  plugin statements to `urn:trustcheck:plugin-statement:2`. Existing plugin
+  manifests must be regenerated and re-signed; legacy v1 manifests are
+  rejected instead of accepted under the stronger security model.
 
 ### Changed
 
-- Restored the minimum branch-coverage requirement to 98%.
+- Restored the minimum combined line-and-branch coverage requirement to 98%.
 - Expanded plugin IPC, trust-policy, dynamic-analysis, and GitHub Action tests.
 - Updated build-tool pins.
 - Advanced the machine-readable report schema to `1.12.0`.
 - Dynamic analysis no longer falls back to a generic Python base image when no
-  Trustcheck analyzer image digest is configured.
+  Trustcheck analyzer image digest is configured. Until published analyzer
+  digests are recorded, `--dynamic-analysis` requires
+  `--dynamic-image IMAGE@sha256:DIGEST`.
 
 ## [2.2.0] - 2026-07-05
 

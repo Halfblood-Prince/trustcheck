@@ -22,6 +22,11 @@ Trustcheck analyzer digest is recorded for a Python profile, bounded install
 analysis must fail as unsupported unless the caller supplies
 `--dynamic-image IMAGE@sha256:DIGEST`.
 
+Publication automation must pin each Python base image by digest, build and
+test the dedicated analyzer for every supported Python profile, scan the
+image, generate an SBOM and provenance attestation, publish to GHCR, and record
+the resulting immutable digest in `DYNAMIC_ANALYZER_IMAGES`.
+
 The analyzer runner uses `--no-index` during analysis and only reads backend
 wheels from `/opt/trustcheck/wheelhouse`. Do not add network fetches to runtime
 analysis phases.

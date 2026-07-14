@@ -149,7 +149,7 @@ Trustcheck models: vulnerability records, artifact findings, policy
 violations, index projects and files, dependency-confusion findings, byte
 payloads, and plugin errors. Unknown fields and unsupported return types fail
 closed. The packaged schemas are
-`trustcheck/plugin_schemas/plugin-statement-1.json`,
+`trustcheck/plugin_schemas/plugin-statement-2.json`,
 `trustcheck/plugin_schemas/plugin-ipc-request-1.json` and
 `trustcheck/plugin_schemas/plugin-ipc-response-1.json`.
 
@@ -184,9 +184,9 @@ The distribution includes `trustcheck-plugin.json`:
 
 ```json
 {
-  "schema": "urn:trustcheck:plugin-manifest:1",
+  "schema": "urn:trustcheck:plugin-manifest:2",
   "manifest": {
-    "schema": "urn:trustcheck:plugin-statement:1",
+    "schema": "urn:trustcheck:plugin-statement:2",
     "name": "company-policy",
     "kind": "policy",
     "entry_point": "company_trustcheck:CompanyPolicy",
@@ -217,6 +217,19 @@ the declared configuration schema, or declared capabilities fails closed.
 The earlier `requires_network`, `requires_filesystem`, and
 `requires_subprocess` statement fields are rejected until Trustcheck has
 enforcement that can turn those declarations into real sandbox policy.
+
+### Plugin Manifest Migration
+
+Plugin API version `1` remains the runtime method contract for plugin objects.
+The signed manifest and statement formats are version `2` because they bind
+additional security-critical data: distribution identity, distribution version,
+installed RECORD digest, canonical installed-content digest, configuration
+schema digest, IPC protocol version, capabilities, and dependencies.
+
+Legacy manifest v1 files that only identify the name, kind, entry point, and
+API version are rejected with a migration error. Regenerate
+`trustcheck-plugin.json` with the v2 statement fields and re-sign it with an
+approved key before enabling the plugin.
 
 Configure one trust-policy mode in `_trustcheck`:
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:trustcheck:plugin-statement:1",
-  "title": "Trustcheck signed plugin statement v1",
+  "$id": "urn:trustcheck:plugin-statement:2",
+  "title": "Trustcheck signed plugin statement v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -21,7 +21,7 @@
   ],
   "properties": {
     "schema": {
-      "const": "urn:trustcheck:plugin-statement:1"
+      "const": "urn:trustcheck:plugin-statement:2"
     },
     "name": {
       "type": "string",

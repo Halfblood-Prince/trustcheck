@@ -8,6 +8,7 @@ import json
 import math
 import multiprocessing
 import time
+import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields
 from importlib.metadata import EntryPoint, entry_points
@@ -51,15 +52,21 @@ PLUGIN_API_VERSION = "1"
 PLUGIN_IPC_PROTOCOL_VERSION = "1"
 PLUGIN_IPC_REQUEST_SCHEMA = "urn:trustcheck:plugin-ipc-request:1"
 PLUGIN_IPC_RESPONSE_SCHEMA = "urn:trustcheck:plugin-ipc-response:1"
-PLUGIN_SIGNED_STATEMENT_SCHEMA = "urn:trustcheck:plugin-statement:1"
+PLUGIN_SIGNED_STATEMENT_SCHEMA = "urn:trustcheck:plugin-statement:2"
+PLUGIN_LEGACY_SIGNED_STATEMENT_SCHEMA = "urn:trustcheck:plugin-statement:1"
 PLUGIN_IPC_MAX_REQUEST_BYTES = 192 * 1024 * 1024
 PLUGIN_IPC_MAX_RESPONSE_BYTES = 192 * 1024 * 1024
 PLUGIN_IPC_MAX_DEPTH = 32
 PLUGIN_IPC_MAX_LIST_LENGTH = 10_000
 PLUGIN_IPC_MAX_MAPPING_LENGTH = 10_000
 PLUGIN_IPC_MAX_STRING_LENGTH = 192 * 1024 * 1024
-PLUGIN_MANIFEST_SCHEMA = "urn:trustcheck:plugin-manifest:1"
+PLUGIN_MANIFEST_SCHEMA = "urn:trustcheck:plugin-manifest:2"
+PLUGIN_LEGACY_MANIFEST_SCHEMA = "urn:trustcheck:plugin-manifest:1"
 PLUGIN_MANIFEST_NAME = "trustcheck-plugin.json"
+PLUGIN_LEGACY_MANIFEST_ERROR = (
+    "This plugin uses the legacy manifest v1 security model. Regenerate and "
+    "re-sign the manifest using plugin statement v2."
+)
 PLUGIN_EMPTY_CONFIGURATION_SCHEMA_SHA256 = hashlib.sha256(b"").hexdigest()
 DEFAULT_PLUGIN_TIMEOUT = 10.0
 PLUGIN_CPU_SECONDS = 8
@@ -179,7 +186,7 @@ class RepositoryClient(Protocol):
     ) -> str | None: ...
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class PluginDescriptor:
     name: str
     kind: str
@@ -194,6 +201,56 @@ class PluginDescriptor:
     trust_policy_mode: str | None = None
     manifest_path: str | None = None
     resource_bounded: bool = True
+
+    def __init__(
+        self,
+        name: str,
+        kind: str,
+        group: str,
+        value: str,
+        distribution: str | None = None,
+        distribution_version: str | None = None,
+        api_version: str = PLUGIN_API_VERSION,
+        signer_sha256: str | None = None,
+        wheel_sha256: str | None = None,
+        record_sha256: str | None = None,
+        trust_policy_mode: str | None = None,
+        manifest_path: str | None = None,
+        resource_bounded: bool | None = None,
+        isolated: bool | None = None,
+    ) -> None:
+        if isolated is not None:
+            if resource_bounded is not None and resource_bounded != isolated:
+                raise TypeError(
+                    "PluginDescriptor() got conflicting values for "
+                    "'resource_bounded' and deprecated 'isolated'"
+                )
+            warnings.warn(
+                "PluginDescriptor(isolated=...) is deprecated; use "
+                "resource_bounded=... instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            resource_bounded = isolated
+        if resource_bounded is None:
+            resource_bounded = True
+        values = {
+            "name": name,
+            "kind": kind,
+            "group": group,
+            "value": value,
+            "distribution": distribution,
+            "distribution_version": distribution_version,
+            "api_version": api_version,
+            "signer_sha256": signer_sha256,
+            "wheel_sha256": wheel_sha256,
+            "record_sha256": record_sha256,
+            "trust_policy_mode": trust_policy_mode,
+            "manifest_path": manifest_path,
+            "resource_bounded": resource_bounded,
+        }
+        for field_name, field_value in values.items():
+            object.__setattr__(self, field_name, field_value)
 
     @property
     def isolated(self) -> bool:
@@ -573,9 +630,16 @@ def _verified_manifest(
         envelope = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise PluginError(f"unable to read signed plugin manifest {path}: {exc}") from exc
+    if _uses_legacy_manifest_security_model(envelope):
+        raise PluginError(PLUGIN_LEGACY_MANIFEST_ERROR)
     if not isinstance(envelope, dict) or envelope.get("schema") != PLUGIN_MANIFEST_SCHEMA:
         raise PluginError(f"plugin manifest {path} has an unsupported schema")
     manifest = envelope.get("manifest")
+    if (
+        isinstance(manifest, dict)
+        and manifest.get("schema") == PLUGIN_LEGACY_SIGNED_STATEMENT_SCHEMA
+    ):
+        raise PluginError(PLUGIN_LEGACY_MANIFEST_ERROR)
     if isinstance(manifest, dict):
         _reject_claimed_sigstore_fields(manifest, path)
     public_key_pem = envelope.get("public_key")
@@ -654,6 +718,21 @@ def _verified_manifest(
         str(content["wheel_sha256"]),
         str(content["record_sha256"]),
     )
+
+
+def _uses_legacy_manifest_security_model(envelope: object) -> bool:
+    if not isinstance(envelope, Mapping):
+        return False
+    if envelope.get("schema") == PLUGIN_LEGACY_MANIFEST_SCHEMA:
+        return True
+    manifest = envelope.get("manifest")
+    if (
+        isinstance(manifest, Mapping)
+        and manifest.get("schema") == PLUGIN_LEGACY_SIGNED_STATEMENT_SCHEMA
+    ):
+        return True
+    legacy_fields = {"name", "kind", "entry_point", "api_version"}
+    return legacy_fields <= set(envelope) and "manifest" not in envelope
 
 
 def _default_plugin_trust_policy_mode(

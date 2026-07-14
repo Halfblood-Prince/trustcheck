@@ -107,6 +107,8 @@ Trusted plugin loading also requires a signed statement bound to the installed
 distribution version, RECORD digest, canonical installed-content digest,
 dependencies, capabilities, configuration schema hash, and an external trust
 root: either a trusted key fingerprint or an installed-content digest allowlist.
+The runtime API remains version `1`; signed plugin manifests and statements use
+format version `2`.
 
 See [Performance and extensibility](performance-extensibility.md) for entry
 point group names and registration examples.

@@ -1364,8 +1364,10 @@ def _cvss_candidates(
         severity_type = _optional_string(item.get("type"))
         if isinstance(raw_score, str) and (
             raw_score.upper().startswith("CVSS:")
-            or "/" in raw_score
-            and (severity_type or "").upper().startswith("CVSS")
+            or (
+                "/" in raw_score
+                and (severity_type or "").upper().startswith("CVSS")
+            )
         ):
             vector = _normalize_cvss_vector(raw_score, severity_type)
             candidates.append(
