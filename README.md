@@ -31,7 +31,7 @@ merge, or promote.
 It combines vulnerability intelligence, PyPI provenance, Sigstore
 attestations, Trusted Publisher identity, repository matching, artifact hashes,
 private-index origin checks, static artifact inspection, and policy evaluation
-into one report. JSON reports currently use JSON schema `1.11.0`; package and
+into one report. JSON reports currently use JSON schema `1.12.0`; package and
 report schema versions are independent.
 
 Standalone Windows and Linux executables are scanned by

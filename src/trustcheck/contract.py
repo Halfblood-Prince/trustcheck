@@ -37,10 +37,10 @@ from .models import (
     VulnerabilitySuppression,
 )
 
-JSON_SCHEMA_VERSION: Final = "1.11.0"
+JSON_SCHEMA_VERSION: Final = "1.12.0"
 JSON_SCHEMA_ID = f"urn:trustcheck:report:{JSON_SCHEMA_VERSION}"
-SchemaVersion: TypeAlias = Literal["1.11.0"]
-DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.11.0"
+SchemaVersion: TypeAlias = Literal["1.12.0"]
+DEFAULT_SCHEMA_VERSION: Final[SchemaVersion] = "1.12.0"
 
 
 class RiskFlagPayload(BaseModel):

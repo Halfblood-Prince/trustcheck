@@ -2475,7 +2475,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:trustcheck:report:1.11.0",
+  "$id": "urn:trustcheck:report:1.12.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -2483,8 +2483,8 @@
       "$ref": "#/$defs/TrustReportPayload"
     },
     "schema_version": {
-      "const": "1.11.0",
-      "default": "1.11.0",
+      "const": "1.12.0",
+      "default": "1.12.0",
       "title": "Schema Version",
       "type": "string"
     }

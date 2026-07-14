@@ -119,8 +119,8 @@ Plugins are disabled by default and require an explicit allowlist. Trusted
 plugin execution requires a signed `trustcheck-plugin.json` statement that
 binds the name, kind, entry point, API version, plugin protocol version,
 distribution name and version, installed RECORD digest, canonical installed
-content digest, declared dependencies, declared capabilities, resource
-requirements, and configuration schema digest. Trustcheck verifies the
+content digest, declared dependencies, declared capabilities, and
+configuration schema digest. Trustcheck verifies the
 signature, installed files against wheel `RECORD`, and a configured external
 trust root before importing code in a spawned, resource-bounded worker.
 Self-signed plugin metadata alone is rejected. Execution status, timing, and
@@ -198,9 +198,6 @@ The distribution includes `trustcheck-plugin.json`:
     "configuration_schema_sha256": "64 lowercase hex characters",
     "protocol_version": "1",
     "capabilities": ["evaluate"],
-    "requires_network": false,
-    "requires_filesystem": false,
-    "requires_subprocess": false,
     "dependencies": []
   },
   "public_key": "-----BEGIN PUBLIC KEY-----...",
@@ -217,6 +214,9 @@ The statement file itself and `RECORD` are metadata and are excluded from the
 canonical installed-content digest; every other recorded file must have a
 matching sha256 `RECORD` entry. Modifying plugin code, dependencies, `RECORD`,
 the declared configuration schema, or declared capabilities fails closed.
+The earlier `requires_network`, `requires_filesystem`, and
+`requires_subprocess` statement fields are rejected until Trustcheck has
+enforcement that can turn those declarations into real sandbox policy.
 
 Configure one trust-policy mode in `_trustcheck`:
 

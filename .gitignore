@@ -18,8 +18,7 @@ prime/
 stage/
 site/
 pytest-cache-files-*/
-tests/_tmp/cache/objects/
-tests/_tmp/cache/refs/
+tests/_tmp/cache/
 src/trustcheck/_version.py
 docs/assets/images/coverage.svg
 images/

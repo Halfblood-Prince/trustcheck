@@ -68,12 +68,11 @@ class ReleaseReadinessTests(unittest.TestCase):
         docs_changelog = (ROOT / "docs" / "changelog.md").read_text(encoding="utf-8")
 
         self.assertIn(f"## [{RELEASE_VERSION}] - {RELEASE_DATE}", changelog)
+        self.assertIn("## Unreleased", changelog)
         self.assertIn(
-            f"Package release `{RELEASE_VERSION}` emits machine-readable report schema "
-            f"`{JSON_SCHEMA_VERSION}`.",
+            f"Advanced the machine-readable report schema to `{JSON_SCHEMA_VERSION}`.",
             changelog,
         )
-        self.assertIn(f"advanced the schema to `{JSON_SCHEMA_VERSION}`", changelog)
         self.assertIn(f"JSON schema `{JSON_SCHEMA_VERSION}`", readme)
         self.assertIn(f"JSON schema `{JSON_SCHEMA_VERSION}`", docs_index)
         self.assertIn(

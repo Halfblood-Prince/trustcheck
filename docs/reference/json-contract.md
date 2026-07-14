@@ -14,18 +14,19 @@ interface for a single PyPI package.
 
 ## Current schema identifiers
 
-- `JSON_SCHEMA_VERSION = "1.11.0"`
-- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.11.0"`
+- `JSON_SCHEMA_VERSION = "1.12.0"`
+- `JSON_SCHEMA_ID = "urn:trustcheck:report:1.12.0"`
 
-Package versions and report schema versions are independent. Schema `1.11.0`
-adds malicious-package rule metadata, policy threshold evidence, and
-opt-in dynamic-analysis results.
+Package versions and report schema versions are independent. Schema `1.12.0`
+adds the expanded dynamic-analysis result contract, including phased execution
+status, sandbox mode metadata, failure classification, Python profile details,
+filesystem controls, and structured behavioral evidence.
 
 ## Top-level shape
 
 ```json
 {
-  "schema_version": "1.11.0",
+  "schema_version": "1.12.0",
   "report": {
     "project": "demo",
     "version": "1.2.3",

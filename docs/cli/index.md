@@ -70,7 +70,7 @@ container resolver image is pinned by digest.
   downloaded artifacts in a disposable Docker container with no network, a
   non-root user, digest-pinned image policy, and strict CPU/RAM/PID/time limits
 - `--dynamic-python 3.11|3.12|3.13|3.14`: select the bounded-analysis Python
-  profile
+  profile; profiles without a configured analyzer image fail as unsupported
 - `--dynamic-image IMAGE@sha256:DIGEST`: override the analyzer image with an
   explicit digest-pinned image
 - `scan --fast`: resolve dependencies and query advisories only (default)
@@ -488,8 +488,10 @@ capabilities, and bounded CPU, memory, process, and wall-clock limits. It is a
 bounded install analysis, not comprehensive behavioral analysis. The result is
 phased into archive validation, metadata preparation, wheel build, wheel
 installation, and skipped optional probes, with best-effort behavioral evidence.
-It rejects mutable image tags and is never enabled by default. An inconclusive
-or unsupported analysis is not a clean pass.
+It rejects mutable image tags and is never enabled by default. Source builds do
+not ship a generic default analyzer image; until release automation records
+Trustcheck analyzer image digests, use `--dynamic-image IMAGE@sha256:DIGEST`.
+An inconclusive or unsupported analysis is not a clean pass.
 
 Typosquatting, dependency-confusion, ownership, repository, and release-cadence
 heuristics run without `--inspect-artifacts`. Add local reference names with
@@ -516,7 +518,7 @@ in machine-readable output.
 
 Package releases and the machine-readable report schema are versioned
 independently. Deep provenance analysis and malicious-package rule metadata are
-represented in report schema `1.11.0`.
+represented in report schema `1.12.0`.
 
 For top-level package analysis, a complete absence of published provenance is typically surfaced as `review-required`. Stronger negative evidence such as failed verification, inconsistent provenance, or known vulnerabilities still drives `high-risk` outcomes.
 

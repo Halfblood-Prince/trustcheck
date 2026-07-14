@@ -10,6 +10,7 @@ import trustcheck.dynamic as dynamic_mod
 from trustcheck.dynamic import DEFAULT_DYNAMIC_IMAGE, RESULT_PREFIX, analyze_artifact_dynamic
 
 ROOT = Path(__file__).resolve().parents[1]
+PINNED_IMAGE = "registry.example/trustcheck-analyzer@sha256:" + "a" * 64
 
 
 class DynamicAnalysisTests(unittest.TestCase):
@@ -52,7 +53,11 @@ class DynamicAnalysisTests(unittest.TestCase):
 
     def test_reports_missing_docker_without_executing(self) -> None:
         with patch("trustcheck.dynamic.shutil.which", return_value=None):
-            result = analyze_artifact_dynamic("demo.whl", b"wheel")
+            result = analyze_artifact_dynamic(
+                "demo.whl",
+                b"wheel",
+                image=PINNED_IMAGE,
+            )
 
         self.assertTrue(result.enabled)
         self.assertFalse(result.executed)
@@ -65,12 +70,25 @@ class DynamicAnalysisTests(unittest.TestCase):
             result = analyze_artifact_dynamic(
                 "demo.whl",
                 b"wheel",
-                python_version="3.11",
+                python_version="3.12",
             )
 
         self.assertFalse(result.executed)
-        self.assertEqual(result.python_version, "3.11")
+        self.assertEqual(result.python_version, "3.12")
+        self.assertIsNone(DEFAULT_DYNAMIC_IMAGE)
         self.assertEqual(result.failure_type, "analyzer_image_unavailable")
+        which.assert_not_called()
+
+        with patch("trustcheck.dynamic.shutil.which") as which:
+            missing_profile = analyze_artifact_dynamic(
+                "demo.whl",
+                b"wheel",
+                python_version="3.11",
+            )
+
+        self.assertFalse(missing_profile.executed)
+        self.assertEqual(missing_profile.python_version, "3.11")
+        self.assertEqual(missing_profile.failure_type, "analyzer_image_unavailable")
         which.assert_not_called()
 
         with patch("trustcheck.dynamic.shutil.which") as which:
@@ -95,12 +113,16 @@ class DynamicAnalysisTests(unittest.TestCase):
             "trustcheck.dynamic.subprocess.run",
             return_value=completed,
         ) as run:
-            result = analyze_artifact_dynamic("demo.whl", b"wheel")
+            result = analyze_artifact_dynamic(
+                "demo.whl",
+                b"wheel",
+                image=PINNED_IMAGE,
+            )
 
         command = run.call_args.args[0]
         self.assertTrue(result.executed)
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.image, DEFAULT_DYNAMIC_IMAGE)
+        self.assertEqual(result.image, PINNED_IMAGE)
         self.assertEqual(result.classification, "inconclusive")
         self.assertEqual(result.failure_type, "result_unavailable")
         self.assertEqual(result.stdout, ["installed"])
@@ -111,7 +133,7 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertIn("cpu=10", command[command.index("--ulimit") + 1])
         self.assertIn("no-new-privileges", command)
         self.assertIn("ALL", command[command.index("--cap-drop") + 1])
-        self.assertEqual(command[command.index(DEFAULT_DYNAMIC_IMAGE)], DEFAULT_DYNAMIC_IMAGE)
+        self.assertEqual(command[command.index(PINNED_IMAGE)], PINNED_IMAGE)
 
     def test_parses_phased_result_and_behavioral_evidence(self) -> None:
         runner_payload = {
@@ -147,7 +169,11 @@ class DynamicAnalysisTests(unittest.TestCase):
             "trustcheck.dynamic.subprocess.run",
             return_value=completed,
         ):
-            result = analyze_artifact_dynamic("demo.whl", b"wheel")
+            result = analyze_artifact_dynamic(
+                "demo.whl",
+                b"wheel",
+                image=PINNED_IMAGE,
+            )
 
         self.assertEqual(result.classification, "passed")
         self.assertIsNone(result.failure_type)
@@ -190,7 +216,11 @@ class DynamicAnalysisTests(unittest.TestCase):
             "trustcheck.dynamic.subprocess.run",
             return_value=completed,
         ):
-            result = analyze_artifact_dynamic("demo.whl", b"wheel")
+            result = analyze_artifact_dynamic(
+                "demo.whl",
+                b"wheel",
+                image=PINNED_IMAGE,
+            )
 
         self.assertEqual(result.classification, "suspicious")
         self.assertEqual(result.failure_type, "suspicious_behavior")
@@ -206,7 +236,12 @@ class DynamicAnalysisTests(unittest.TestCase):
             "trustcheck.dynamic.subprocess.run",
             side_effect=timeout,
         ):
-            result = analyze_artifact_dynamic("", b"wheel", timeout=0.5)
+            result = analyze_artifact_dynamic(
+                "",
+                b"wheel",
+                image=PINNED_IMAGE,
+                timeout=0.5,
+            )
 
         self.assertFalse(result.executed)
         self.assertEqual(result.stdout, ["line 1", "line 2"])
@@ -220,7 +255,11 @@ class DynamicAnalysisTests(unittest.TestCase):
             "trustcheck.dynamic.subprocess.run",
             side_effect=OSError("permission denied"),
         ):
-            result = analyze_artifact_dynamic("demo.whl", b"wheel")
+            result = analyze_artifact_dynamic(
+                "demo.whl",
+                b"wheel",
+                image=PINNED_IMAGE,
+            )
 
         self.assertFalse(result.executed)
         self.assertEqual(result.failure_type, "container_start_failed")
@@ -237,7 +276,11 @@ class DynamicAnalysisTests(unittest.TestCase):
             "trustcheck.dynamic.subprocess.run",
             return_value=completed,
         ):
-            result = analyze_artifact_dynamic("demo.whl", b"wheel")
+            result = analyze_artifact_dynamic(
+                "demo.whl",
+                b"wheel",
+                image=PINNED_IMAGE,
+            )
 
         self.assertTrue(result.executed)
         self.assertEqual(result.exit_code, 42)

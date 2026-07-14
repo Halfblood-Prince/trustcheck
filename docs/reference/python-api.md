@@ -330,8 +330,10 @@ In most applications, you only need to provide:
   merge multiple advisory and enrichment providers
 - optionally `inspect_artifacts=True` to statically inspect downloaded wheels and sdists
 - optionally `dynamic_analysis=True` to run bounded install analysis in a
-  digest-pinned analyzer image; set `dynamic_analysis_python="3.13"` or
-  `dynamic_analysis_image="image@sha256:..."` for an explicit analyzer profile
+  digest-pinned analyzer image; set `dynamic_analysis_python="3.13"` for a
+  configured profile or `dynamic_analysis_image="image@sha256:..."` for an
+  explicit analyzer image. Profiles without a recorded digest-pinned analyzer
+  image fail as unsupported rather than falling back to a generic Python image.
 - optionally `trusted_projects=("internal-sdk",)` to extend the typosquatting
   reference set
 - optionally `dependency_confusion_indexes=(...)` to attach a resolver-observed

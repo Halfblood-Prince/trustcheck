@@ -6,6 +6,29 @@ The project follows Semantic Versioning for the supported public API described i
 
 ## Unreleased
 
+### Security
+
+- Removed the `sigstore-identity` plugin trust mode because plugin manifests
+  did not contain independently verified Sigstore evidence.
+- Plugin manifests that claim `sigstore_identity` or `sigstore_issuer` are now
+  rejected until genuine Sigstore bundle verification is implemented.
+- Organization plugin policy now accepts only configured trusted signing-key
+  fingerprints or exact installed-content digests.
+- Replaced plugin object IPC with bounded, versioned JSON messages and
+  parent-side reconstruction of approved result models.
+- Removed unenforced plugin `requires_network`, `requires_filesystem`, and
+  `requires_subprocess` statement fields until they can be backed by real
+  sandbox policy.
+
+### Changed
+
+- Restored the minimum branch-coverage requirement to 98%.
+- Expanded plugin IPC, trust-policy, dynamic-analysis, and GitHub Action tests.
+- Updated build-tool pins.
+- Advanced the machine-readable report schema to `1.12.0`.
+- Dynamic analysis no longer falls back to a generic Python base image when no
+  Trustcheck analyzer image digest is configured.
+
 ## [2.2.0] - 2026-07-05
 
 Package release `2.2.0` emits machine-readable report schema `1.11.0`.

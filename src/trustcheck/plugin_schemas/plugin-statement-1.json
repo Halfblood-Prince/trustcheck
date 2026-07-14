@@ -17,9 +17,6 @@
     "configuration_schema_sha256",
     "protocol_version",
     "capabilities",
-    "requires_network",
-    "requires_filesystem",
-    "requires_subprocess",
     "dependencies"
   ],
   "properties": {
@@ -86,15 +83,6 @@
           "client.locate_artifact_index"
         ]
       }
-    },
-    "requires_network": {
-      "type": "boolean"
-    },
-    "requires_filesystem": {
-      "type": "boolean"
-    },
-    "requires_subprocess": {
-      "type": "boolean"
     },
     "dependencies": {
       "type": "array",

@@ -27,7 +27,7 @@ from trustcheck.plugins import (
     PLUGIN_IPC_PROTOCOL_VERSION,
     PluginError,
     PluginManager,
-    _IsolatedPlugin,
+    _ResourceBoundedPlugin,
     _run_plugin_process,
     _verified_manifest,
 )
@@ -167,9 +167,6 @@ def write_manifest(
         "configuration_schema_sha256": digests["configuration_schema_sha256"],
         "protocol_version": "1",
         "capabilities": capabilities or ["query"],
-        "requires_network": False,
-        "requires_filesystem": False,
-        "requires_subprocess": False,
         "dependencies": dependencies or [],
     }
     if sigstore_identity is not None:
@@ -271,7 +268,7 @@ class ResourceModule:
 
 
 class PluginSecurityTests(unittest.TestCase):
-    def test_signed_allowlisted_plugin_is_isolated_and_reported(self) -> None:
+    def test_signed_allowlisted_plugin_is_resource_bounded_and_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             signer, digests = write_manifest(root)
@@ -285,7 +282,7 @@ class PluginSecurityTests(unittest.TestCase):
                 ),
             )
             descriptor = manager.descriptors()[0]
-            self.assertTrue(descriptor.isolated)
+            self.assertTrue(descriptor.resource_bounded)
             self.assertEqual(descriptor.signer_sha256, signer)
             self.assertEqual(descriptor.wheel_sha256, digests["wheel_sha256"])
             self.assertEqual(descriptor.record_sha256, digests["record_sha256"])
@@ -297,6 +294,19 @@ class PluginSecurityTests(unittest.TestCase):
                 result = manager.advisory_sources()[0].query("demo", "1")
         self.assertEqual(result[0].id, "PLUGIN-1")
         self.assertEqual(manager.executions()[0].status, "succeeded")
+        self.assertTrue(manager.executions()[0].resource_bounded)
+        report = TrustReport(
+            project="demo",
+            version="1",
+            summary=None,
+            package_url="pkg:pypi/demo@1",
+        )
+        manager.attach_executions(report)
+        self.assertEqual(
+            report.diagnostics.plugin_executions[0]["resource_bounded"],
+            True,
+        )
+        self.assertNotIn("isolated", report.diagnostics.plugin_executions[0])
 
     def test_enable_all_without_allowlist_is_rejected(self) -> None:
         with self.assertRaisesRegex(PluginError, "explicit"):
@@ -312,6 +322,10 @@ class PluginSecurityTests(unittest.TestCase):
                 ({"_trustcheck": {"trusted_wheel_sha256": [3]}}, "trusted_wheel"),
                 (
                     {"_trustcheck": {"trusted_sigstore_identities": ["bad"]}},
+                    "Sigstore bundle verification is not implemented",
+                ),
+                (
+                    {"_trustcheck": {"trusted_sigstore_identities": []}},
                     "Sigstore bundle verification is not implemented",
                 ),
                 ({"_trustcheck": {"trust_policy_mode": "bad"}}, "trust_policy"),
@@ -902,9 +916,6 @@ class PluginSecurityTests(unittest.TestCase):
         plugin_mod._verify_manifest_capabilities(
             {
                 "capabilities": ["query"],
-                "requires_network": False,
-                "requires_filesystem": False,
-                "requires_subprocess": False,
             },
             kind="advisory",
         )
@@ -912,19 +923,14 @@ class PluginSecurityTests(unittest.TestCase):
             plugin_mod._verify_manifest_capabilities(
                 {
                     "capabilities": ["query", "extra"],
-                    "requires_network": False,
-                    "requires_filesystem": False,
-                    "requires_subprocess": False,
                 },
                 kind="advisory",
             )
-        with self.assertRaisesRegex(PluginError, "requires_network"):
+        with self.assertRaisesRegex(PluginError, "unsupported resource"):
             plugin_mod._verify_manifest_capabilities(
                 {
                     "capabilities": ["query"],
-                    "requires_network": "false",
-                    "requires_filesystem": False,
-                    "requires_subprocess": False,
+                    "requires_network": False,
                 },
                 kind="advisory",
             )
@@ -962,12 +968,14 @@ class PluginSecurityTests(unittest.TestCase):
         with self.assertRaisesRegex(PluginError, "runtime name"):
             manager.descriptors()
 
-    def test_isolated_proxy_covers_all_plugin_and_repository_operations(self) -> None:
+    def test_resource_bounded_proxy_covers_all_plugin_and_repository_operations(
+        self,
+    ) -> None:
         manager = PluginManager()
-        proxy = _IsolatedPlugin("demo", "artifact", "module:Plugin", manager)
+        proxy = _ResourceBoundedPlugin("demo", "artifact", "module:Plugin", manager)
         with patch.object(
             PluginManager,
-            "_invoke_isolated",
+            "_invoke_resource_bounded",
             side_effect=[
                 [],
                 [],

@@ -193,7 +193,11 @@ class PluginDescriptor:
     record_sha256: str | None = None
     trust_policy_mode: str | None = None
     manifest_path: str | None = None
-    isolated: bool = True
+    resource_bounded: bool = True
+
+    @property
+    def isolated(self) -> bool:
+        return self.resource_bounded
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,7 +207,11 @@ class PluginExecution:
     operation: str
     status: str
     duration_ms: float
-    isolated: bool
+    resource_bounded: bool
+
+    @property
+    def isolated(self) -> bool:
+        return self.resource_bounded
 
 
 @dataclass(slots=True)
@@ -261,7 +269,7 @@ class PluginManager:
             not isinstance(item, str) for item in raw_wheel_digests
         ):
             raise PluginError("trusted_wheel_sha256 must contain SHA-256 digests")
-        if controls.get("trusted_sigstore_identities"):
+        if "trusted_sigstore_identities" in controls:
             raise PluginError(
                 "trusted_sigstore_identities is not supported for plugins; "
                 "real Sigstore bundle verification is not implemented"
@@ -308,7 +316,7 @@ class PluginManager:
                 "operation": item.operation,
                 "status": item.status,
                 "duration_ms": item.duration_ms,
-                "isolated": item.isolated,
+                "resource_bounded": item.resource_bounded,
             }
             for item in self._executions
         ]
@@ -468,7 +476,7 @@ class PluginManager:
                     declared_name = str(manifest["name"])
                     distribution_version = str(manifest["distribution_version"])
                 if self.isolate:
-                    plugin: object = _IsolatedPlugin(
+                    plugin: object = _ResourceBoundedPlugin(
                         name=declared_name,
                         kind=kind,
                         entry_value=entry_point.value,
@@ -507,7 +515,7 @@ class PluginManager:
                         self.trust_policy_mode if self.require_signed else "disabled"
                     ),
                     manifest_path=manifest_path,
-                    isolated=self.isolate,
+                    resource_bounded=self.isolate,
                 )
                 self._plugins.setdefault(kind, []).append((descriptor, plugin))
         missing = selected - discovered_names
@@ -516,7 +524,7 @@ class PluginManager:
                 "requested plugin(s) were not installed: " + ", ".join(sorted(missing))
             )
 
-    def _invoke_isolated(
+    def _invoke_resource_bounded(
         self,
         *,
         plugin: str,
@@ -544,7 +552,7 @@ class PluginManager:
                     operation=operation,
                     status=status,
                     duration_ms=round((time.perf_counter() - started) * 1000, 3),
-                    isolated=True,
+                    resource_bounded=True,
                 )
             )
 
@@ -926,6 +934,17 @@ def _distribution_dependencies(distribution: object) -> list[str]:
 
 
 def _verify_manifest_capabilities(manifest: Mapping[str, object], *, kind: str) -> None:
+    unsupported_resource_fields = {
+        "requires_network",
+        "requires_filesystem",
+        "requires_subprocess",
+    } & set(manifest)
+    if unsupported_resource_fields:
+        raise PluginError(
+            "plugin manifest contains unsupported resource requirement field(s): "
+            + ", ".join(sorted(unsupported_resource_fields))
+            + "; plugin capability declarations are not enforced as sandbox policy"
+        )
     capabilities = set(_required_string_list(manifest, "capabilities", "plugin manifest"))
     expected = PLUGIN_KIND_CAPABILITIES[kind]
     missing = expected - capabilities
@@ -940,9 +959,6 @@ def _verify_manifest_capabilities(manifest: Mapping[str, object], *, kind: str) 
             "plugin manifest declares unsupported capability "
             + ", ".join(sorted(unsupported))
         )
-    for key in ("requires_network", "requires_filesystem", "requires_subprocess"):
-        if not isinstance(manifest.get(key), bool):
-            raise PluginError(f"plugin manifest {key} must be a boolean")
 
 
 def _verify_manifest_dependencies(
@@ -1012,7 +1028,7 @@ def _canonical_json(value: Mapping[str, object]) -> bytes:
 
 
 @dataclass(slots=True)
-class _IsolatedPlugin:
+class _ResourceBoundedPlugin:
     name: str
     kind: str
     entry_value: str
@@ -1020,7 +1036,7 @@ class _IsolatedPlugin:
     extension: str = ".plugin"
 
     def _invoke(self, operation: str, **kwargs: Any) -> Any:
-        return self.manager._invoke_isolated(
+        return self.manager._invoke_resource_bounded(
             plugin=self.name,
             kind=self.kind,
             entry_value=self.entry_value,
@@ -1047,7 +1063,7 @@ class _IsolatedPlugin:
         return bool(self._invoke("supports", index_url=index_url))
 
     def create_client(self, *, index_url: str, config: Mapping[str, Any]) -> object:
-        return _IsolatedRepositoryClient(
+        return _ResourceBoundedRepositoryClient(
             plugin=self,
             index_url=index_url,
             config=dict(config),
@@ -1055,8 +1071,8 @@ class _IsolatedPlugin:
 
 
 @dataclass(slots=True)
-class _IsolatedRepositoryClient:
-    plugin: _IsolatedPlugin
+class _ResourceBoundedRepositoryClient:
+    plugin: _ResourceBoundedPlugin
     index_url: str
     config: dict[str, Any]
 

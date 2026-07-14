@@ -179,7 +179,7 @@ print(report.to_dict()["report"]["coverage"]["status"])
 print(report.dependency_summary.highest_risk_recommendation)
 ```
 
-Machine-readable reports currently use JSON schema `1.11.0`. The package release
+Machine-readable reports currently use JSON schema `1.12.0`. The package release
 and report schema are versioned independently.
 
 <script

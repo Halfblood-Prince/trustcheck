@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import unittest
 from pathlib import Path
@@ -23,6 +24,10 @@ from trustcheck.models import (
 )
 
 SNAPSHOT_DIR = Path(__file__).parent / "snapshots"
+KNOWN_SCHEMA_DIGESTS = {
+    "1.11.0": "0c8f8bc71cd280fb599c319ddf7856c3b5e0b6aad589a59b3f5a8706efdf22e7",
+    "1.12.0": "b2f26eb8ab4f143a6b9e445744589ac2b0d48dcb8edb06414dd9c33265c98580",
+}
 
 
 def _read_snapshot(name: str) -> str:
@@ -33,6 +38,10 @@ def _dump_json(value: object) -> str:
     return json.dumps(value, indent=2, sort_keys=True)
 
 
+def _schema_digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 class ContractTests(unittest.TestCase):
     def test_json_schema_snapshot(self) -> None:
         schema = get_json_schema()
@@ -40,6 +49,15 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(schema["$id"], JSON_SCHEMA_ID)
         self.assertEqual(schema["properties"]["schema_version"]["const"], JSON_SCHEMA_VERSION)
         self.assertEqual(_dump_json(schema), _read_snapshot("contract_schema.json"))
+
+    def test_current_json_schema_digest_is_immutable(self) -> None:
+        schema = get_json_schema()
+
+        self.assertIn(JSON_SCHEMA_VERSION, KNOWN_SCHEMA_DIGESTS)
+        self.assertEqual(
+            _schema_digest(_dump_json(schema)),
+            KNOWN_SCHEMA_DIGESTS[JSON_SCHEMA_VERSION],
+        )
 
     def test_report_payload_snapshot_verified_release(self) -> None:
         report = TrustReport(

@@ -92,7 +92,8 @@ in `packaging/dynamic-analyzers/` and prebuild common backend wheels so analysis
 can run with `--no-index`. `--dynamic-python` selects Python 3.11, 3.12, 3.13,
 or 3.14; profiles without a configured digest-pinned image fail as unsupported
 instead of silently reusing another Python version. `--dynamic-image` can supply
-an explicit digest-pinned image.
+an explicit digest-pinned image. Source builds do not default to a generic
+Python image without the prepared backend wheelhouse.
 
 Behavioral evidence is best-effort. The Python audit hook records child
 processes, executable paths, subprocess arguments, writes, attempted network

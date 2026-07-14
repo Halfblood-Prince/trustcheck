@@ -16,6 +16,11 @@ The following interfaces are supported across compatible releases:
 - the machine-readable `report.policy` evaluation block
 - the meaning of `schema_version`, `JSON_SCHEMA_ID`, and `get_json_schema()`
 
+The current machine-readable report schema is `1.12.0`
+(`urn:trustcheck:report:1.12.0`). Schema identifiers are immutable: a report
+with a given `schema_version` must continue to validate against the exact JSON
+Schema document advertised by the matching `JSON_SCHEMA_ID`.
+
 ## Best-effort fields
 
 These fields are useful, but may vary with upstream data or wording changes:
