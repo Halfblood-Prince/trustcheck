@@ -57,6 +57,18 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertIn("sbom: true", workflow)
         self.assertIn("dynamic-analyzer-digests/*.txt", workflow)
 
+    def test_pip_audit_wrapper_does_not_record_its_own_log_writes(self) -> None:
+        source = dynamic_mod._runner_source(
+            "/work/demo.whl",
+            import_probe=False,
+            entry_point_probe=False,
+        )
+        allowed_block = source.split("allowed = (", 1)[1].split(")", 1)[0]
+        self.assertIn("WRITING_AUDIT = False", source)
+        self.assertIn("if WRITING_AUDIT:", source)
+        self.assertIn("WRITING_AUDIT = True", source)
+        self.assertNotIn("/tmp/trustcheck-audit.jsonl", allowed_block)
+
     def test_rejects_mutable_container_images_without_executing(self) -> None:
         with patch("trustcheck.dynamic.shutil.which") as which:
             result = analyze_artifact_dynamic(
@@ -155,8 +167,14 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertIn("cpu=10", command[command.index("--ulimit") + 1])
         self.assertIn("no-new-privileges", command)
         self.assertIn("ALL", command[command.index("--cap-drop") + 1])
-        self.assertEqual(dynamic_mod.CONTAINER_TEMPFS, command[command.index("--tmpfs") + 1])
-        self.assertIn("exec", command[command.index("--tmpfs") + 1].split(":")[1].split(","))
+        self.assertEqual(
+            dynamic_mod.CONTAINER_TEMPFS,
+            command[command.index("--tmpfs") + 1],
+        )
+        self.assertIn(
+            "exec",
+            command[command.index("--tmpfs") + 1].split(":")[1].split(","),
+        )
         self.assertEqual(command[command.index(PINNED_IMAGE)], PINNED_IMAGE)
 
     @unittest.skipIf(os.name == "nt", "POSIX mode bits are not meaningful on Windows")
@@ -167,7 +185,12 @@ class DynamicAnalysisTests(unittest.TestCase):
             artifact = host_directory / "demo.whl"
             self.assertEqual(stat.S_IMODE(host_directory.stat().st_mode), 0o711)
             self.assertEqual(stat.S_IMODE(artifact.stat().st_mode), 0o644)
-            return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
 
         with patch("trustcheck.dynamic.shutil.which", return_value="docker"), patch(
             "trustcheck.dynamic.subprocess.run",
@@ -423,6 +446,23 @@ class DynamicAnalysisTests(unittest.TestCase):
                 dynamic_mod.DynamicAnalysisEvidence(),
             ),
             ("passed", None),
+        )
+        audit_log_write = dynamic_mod.DynamicAnalysisEvidence(
+            writes_outside_expected_locations=["/tmp/trustcheck-audit.jsonl"],
+        )
+        self.assertEqual(
+            dynamic_mod._classify_result(
+                0,
+                [
+                    dynamic_mod.DynamicAnalysisPhase(
+                        name="archive_validation",
+                        status="passed",
+                        classification="passed",
+                    )
+                ],
+                audit_log_write,
+            ),
+            ("suspicious", "suspicious_behavior"),
         )
         self.assertEqual(
             dynamic_mod._classify_result(0, [], dynamic_mod.DynamicAnalysisEvidence()),
