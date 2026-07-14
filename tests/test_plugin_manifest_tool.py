@@ -144,7 +144,7 @@ class Plugin:
 
 
 def _build_wheel(project: Path, dist: Path) -> Path:
-    subprocess.run(
+    completed = subprocess.run(
         [
             sys.executable,
             "-m",
@@ -155,12 +155,18 @@ def _build_wheel(project: Path, dist: Path) -> Path:
             str(dist),
             str(project),
         ],
-        check=True,
+        check=False,
         cwd=project,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
+    if completed.returncode != 0:
+        raise AssertionError(
+            "plugin fixture wheel build failed\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}"
+        )
     wheels = sorted(dist.glob("*.whl"))
     if len(wheels) != 1:
         raise AssertionError(f"expected one wheel, found {wheels!r}")
