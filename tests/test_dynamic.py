@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import subprocess
 import unittest
 from pathlib import Path
@@ -154,6 +156,28 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertIn("no-new-privileges", command)
         self.assertIn("ALL", command[command.index("--cap-drop") + 1])
         self.assertEqual(command[command.index(PINNED_IMAGE)], PINNED_IMAGE)
+
+    @unittest.skipIf(os.name == "nt", "POSIX mode bits are not meaningful on Windows")
+    def test_artifact_mount_is_readable_by_non_root_container(self) -> None:
+        def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            volume = command[command.index("--volume") + 1]
+            host_directory = Path(volume.split(":", 1)[0])
+            artifact = host_directory / "demo.whl"
+            self.assertEqual(stat.S_IMODE(host_directory.stat().st_mode), 0o711)
+            self.assertEqual(stat.S_IMODE(artifact.stat().st_mode), 0o644)
+            return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+        with patch("trustcheck.dynamic.shutil.which", return_value="docker"), patch(
+            "trustcheck.dynamic.subprocess.run",
+            side_effect=run,
+        ):
+            result = analyze_artifact_dynamic(
+                "demo.whl",
+                b"wheel",
+                image=PINNED_IMAGE,
+            )
+
+        self.assertTrue(result.executed)
 
     def test_parses_phased_result_and_behavioral_evidence(self) -> None:
         runner_payload = {

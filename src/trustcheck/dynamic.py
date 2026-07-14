@@ -90,6 +90,20 @@ def analyze_artifact_dynamic(
     with tempfile.TemporaryDirectory(prefix="trustcheck-dynamic-") as directory:
         artifact_path = Path(directory) / artifact_name
         artifact_path.write_bytes(payload)
+        try:
+            artifact_path.parent.chmod(0o711)
+            artifact_path.chmod(0o644)
+        except OSError as exc:
+            _fail_before_execution(
+                result,
+                error=(
+                    "unable to make artifact readable by bounded install analysis "
+                    f"container: {exc}"
+                ),
+                classification="unsupported",
+                failure_type="container_setup_failed",
+            )
+            return result
         container_path = f"/work/{artifact_name}"
         runner = _runner_source(
             container_path,
