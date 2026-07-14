@@ -312,9 +312,13 @@ class PluginSecurityTests(unittest.TestCase):
                 ({"_trustcheck": {"trusted_wheel_sha256": [3]}}, "trusted_wheel"),
                 (
                     {"_trustcheck": {"trusted_sigstore_identities": ["bad"]}},
-                    "trusted_sigstore",
+                    "Sigstore bundle verification is not implemented",
                 ),
                 ({"_trustcheck": {"trust_policy_mode": "bad"}}, "trust_policy"),
+                (
+                    {"_trustcheck": {"trust_policy_mode": "sigstore-identity"}},
+                    "trust_policy",
+                ),
             ):
                 path.write_text(json.dumps(payload), encoding="utf-8")
                 with self.subTest(payload=payload), self.assertRaisesRegex(
@@ -328,6 +332,23 @@ class PluginSecurityTests(unittest.TestCase):
             manager = PluginManager.from_options(enabled=False, config_path=str(path))
             self.assertTrue(manager.enabled)
             self.assertEqual(manager.timeout, 2)
+            path.write_text(
+                json.dumps(
+                    {
+                        "_trustcheck": {
+                            "allowlist": ["demo"],
+                            "trust_policy_mode": "disabled",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertFalse(
+                PluginManager.from_options(
+                    enabled=False,
+                    config_path=str(path),
+                ).require_signed
+            )
             path.write_text(json.dumps({"_trustcheck": None}), encoding="utf-8")
             self.assertFalse(
                 PluginManager.from_options(enabled=False, config_path=str(path)).enabled
@@ -362,6 +383,7 @@ class PluginSecurityTests(unittest.TestCase):
 
             for mutate, message in (
                 (lambda value: value.pop("public_key"), "incomplete"),
+                (lambda value: value.update({"manifest": "bad"}), "incomplete"),
                 (
                     lambda value: value["manifest"].update({"api_version": "2"}),
                     "incompatible",
@@ -388,6 +410,10 @@ class PluginSecurityTests(unittest.TestCase):
             path.write_text(json.dumps(envelope), encoding="utf-8")
             with self.assertRaisesRegex(PluginError, "RSA"):
                 _verified_manifest(entry, kind="advisory", trusted_signers=())
+
+            write_manifest(root, statement_overrides={"schema": "unsupported"})
+            with self.assertRaisesRegex(PluginError, "signed statement"):
+                _verified_manifest(entry, kind="advisory", trusted_signers=(signer,))
 
     def test_signed_statement_binds_installed_record_and_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -455,7 +481,9 @@ class PluginSecurityTests(unittest.TestCase):
             with self.assertRaisesRegex(PluginError, "runtime capability"):
                 _verified_manifest(entry, kind="policy", trusted_signers=(signer,))
 
-    def test_plugin_trust_policy_modes_cover_digest_and_sigstore_roots(self) -> None:
+    def test_plugin_trust_policy_modes_cover_digest_and_organization_policy_roots(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _, digests = write_manifest(root)
@@ -472,37 +500,439 @@ class PluginSecurityTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            write_manifest(
+            signer, _ = write_manifest(
                 root,
                 sigstore_identity="https://github.com/example/plugin/.github/workflows/release.yml@refs/tags/v1",
                 sigstore_issuer="https://token.actions.githubusercontent.com",
             )
             entry = EntryPoint(root)
+            with self.assertRaisesRegex(PluginError, "unsupported claimed Sigstore"):
+                _verified_manifest(
+                    entry,
+                    kind="advisory",
+                    trusted_signers=(signer,),
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            signer, digests = write_manifest(root)
+            entry = EntryPoint(root)
+            _verified_manifest(
+                entry,
+                kind="advisory",
+                trusted_signers=(signer,),
+                trust_policy_mode="organization-policy",
+            )
             _verified_manifest(
                 entry,
                 kind="advisory",
                 trusted_signers=(),
-                trusted_sigstore_identities=(
-                    (
-                        "https://github.com/example/plugin/.github/workflows/release.yml@refs/tags/v1",
-                        "https://token.actions.githubusercontent.com",
-                    ),
-                ),
-                trust_policy_mode="sigstore-identity",
+                trusted_wheel_sha256=(digests["wheel_sha256"],),
+                trust_policy_mode="organization-policy",
             )
-            with self.assertRaisesRegex(PluginError, "Sigstore identity"):
+            with self.assertRaisesRegex(PluginError, "organization policy"):
                 _verified_manifest(
                     entry,
                     kind="advisory",
                     trusted_signers=(),
-                    trusted_sigstore_identities=(
-                        (
-                            "https://github.com/example/plugin/.github/workflows/release.yml@refs/tags/v1",
-                            "https://issuer.example/wrong",
-                        ),
-                    ),
-                    trust_policy_mode="sigstore-identity",
+                    trust_policy_mode="organization-policy",
                 )
+
+    def test_plugin_trust_root_helper_rejects_untrusted_modes_and_roots(self) -> None:
+        manifest = {"wheel_sha256": "a" * 64}
+
+        self.assertEqual(
+            plugin_mod._default_plugin_trust_policy_mode(
+                trusted_signers=("signer",),
+                trusted_wheel_sha256=(),
+            ),
+            "trusted-key",
+        )
+        self.assertEqual(
+            plugin_mod._default_plugin_trust_policy_mode(
+                trusted_signers=(),
+                trusted_wheel_sha256=("digest",),
+            ),
+            "allowlisted-digest",
+        )
+        self.assertEqual(
+            plugin_mod._default_plugin_trust_policy_mode(
+                trusted_signers=(),
+                trusted_wheel_sha256=(),
+            ),
+            "trusted-key",
+        )
+
+        plugin_mod._verify_plugin_trust_root(
+            manifest,
+            signer_sha256="B" * 64,
+            trusted_signers=("b" * 64,),
+            trusted_wheel_sha256=(),
+            trust_policy_mode="trusted-key",
+            plugin_name="advisory:demo",
+        )
+        plugin_mod._verify_plugin_trust_root(
+            manifest,
+            signer_sha256="b" * 64,
+            trusted_signers=(),
+            trusted_wheel_sha256=("A" * 64,),
+            trust_policy_mode="allowlisted-digest",
+            plugin_name="advisory:demo",
+        )
+        plugin_mod._verify_plugin_trust_root(
+            manifest,
+            signer_sha256="b" * 64,
+            trusted_signers=("B" * 64,),
+            trusted_wheel_sha256=(),
+            trust_policy_mode="organization-policy",
+            plugin_name="advisory:demo",
+        )
+
+        cases = [
+            (
+                {
+                    "trusted_signers": (),
+                    "trusted_wheel_sha256": (),
+                    "trust_policy_mode": "disabled",
+                },
+                "requires a trust root",
+            ),
+            (
+                {
+                    "trusted_signers": (),
+                    "trusted_wheel_sha256": (),
+                    "trust_policy_mode": "trusted-key",
+                },
+                "requires trusted_signers",
+            ),
+            (
+                {
+                    "trusted_signers": ("c" * 64,),
+                    "trusted_wheel_sha256": (),
+                    "trust_policy_mode": "trusted-key",
+                },
+                "not allowlisted",
+            ),
+            (
+                {
+                    "trusted_signers": (),
+                    "trusted_wheel_sha256": (),
+                    "trust_policy_mode": "allowlisted-digest",
+                },
+                "requires trusted_wheel_sha256",
+            ),
+            (
+                {
+                    "trusted_signers": (),
+                    "trusted_wheel_sha256": ("c" * 64,),
+                    "trust_policy_mode": "allowlisted-digest",
+                },
+                "wheel digest is not allowlisted",
+            ),
+            (
+                {
+                    "trusted_signers": (),
+                    "trusted_wheel_sha256": (),
+                    "trust_policy_mode": "organization-policy",
+                },
+                "organization policy",
+            ),
+            (
+                {
+                    "trusted_signers": (),
+                    "trusted_wheel_sha256": (),
+                    "trust_policy_mode": "unknown",
+                },
+                "unsupported plugin trust policy mode",
+            ),
+        ]
+        for kwargs, message in cases:
+            with self.subTest(mode=kwargs["trust_policy_mode"]):
+                with self.assertRaisesRegex(PluginError, message):
+                    plugin_mod._verify_plugin_trust_root(
+                        manifest,
+                        signer_sha256="b" * 64,
+                        plugin_name="advisory:demo",
+                        **kwargs,
+                    )
+
+        with self.assertRaisesRegex(PluginError, "wheel_sha256"):
+            plugin_mod._verify_plugin_trust_root(
+                {},
+                signer_sha256="b" * 64,
+                trusted_signers=("b" * 64,),
+                trusted_wheel_sha256=(),
+                trust_policy_mode="trusted-key",
+                plugin_name="advisory:demo",
+            )
+
+    def test_distribution_record_helpers_validate_metadata_and_record_edges(self) -> None:
+        class StaticDistribution:
+            def __init__(self, root: Path, files: tuple[str, ...]) -> None:
+                self.root = root
+                self.files = files
+
+            def locate_file(self, name: str) -> Path:
+                return self.root / name
+
+        self.assertEqual(
+            plugin_mod._distribution_name(
+                SimpleNamespace(name="", metadata={"Name": "metadata-name"}),
+            ),
+            "metadata-name",
+        )
+        self.assertEqual(
+            plugin_mod._distribution_version(
+                SimpleNamespace(version="", metadata={"Version": "2.0.0"}),
+            ),
+            "2.0.0",
+        )
+        with self.assertRaisesRegex(PluginError, "missing a name"):
+            plugin_mod._distribution_name(SimpleNamespace(metadata={}))
+        with self.assertRaisesRegex(PluginError, "missing a name"):
+            plugin_mod._distribution_name(SimpleNamespace(name=""))
+        with self.assertRaisesRegex(PluginError, "missing a version"):
+            plugin_mod._distribution_version(SimpleNamespace(metadata={}))
+        with self.assertRaisesRegex(PluginError, "missing a version"):
+            plugin_mod._distribution_version(SimpleNamespace(version=""))
+        with self.assertRaisesRegex(PluginError, "configuration_schema"):
+            plugin_mod._configuration_schema_sha256({"configuration_schema": []})
+        with self.assertRaisesRegex(PluginError, "missing RECORD"):
+            plugin_mod._distribution_files(SimpleNamespace(files=None))
+
+        class CallableFilesDistribution:
+            def files(self):
+                return None
+
+        with self.assertRaisesRegex(PluginError, "missing RECORD"):
+            plugin_mod._distribution_files(CallableFilesDistribution())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(PluginError, "does not expose"):
+                plugin_mod._distribution_record_path(
+                    StaticDistribution(root, ("demo_plugin.py",))
+                )
+        with self.assertRaisesRegex(PluginError, "not UTF-8"):
+            plugin_mod._record_rows(b"\xff", Path("RECORD"))
+        with self.assertRaisesRegex(PluginError, "invalid row"):
+            plugin_mod._record_rows(b"one,two\n", Path("RECORD"))
+        for value in ("", "../evil.py", "C:/absolute.py", r"pkg\..\evil.py"):
+            with self.subTest(path=value), self.assertRaisesRegex(
+                PluginError,
+                "unsafe path",
+            ):
+                plugin_mod._normalized_record_path(value)
+        with self.assertRaisesRegex(PluginError, "cannot locate"):
+            plugin_mod._locate_distribution_file(SimpleNamespace(), "pkg/file.py")
+        with self.assertRaisesRegex(PluginError, "invalid hash"):
+            plugin_mod._record_hash_digest("sha256", "pkg/file.py")
+        with self.assertRaisesRegex(PluginError, "invalid hash"):
+            plugin_mod._record_hash_digest("sha256=\u00f8", "pkg/file.py")
+
+        with tempfile.TemporaryDirectory() as directory:
+            file_path = Path(directory) / "payload.py"
+            payload = b"payload"
+            file_path.write_bytes(payload)
+            digest = _record_digest(payload)
+            wrong_digest = _record_digest(b"other")
+            for hash_spec, size_text, message in (
+                ("", "", "missing a hash"),
+                (f"md5={digest}", "", "must use sha256"),
+                (f"sha256={wrong_digest}", "", "hash does not match"),
+                (f"sha256={digest}", "many", "invalid size"),
+                (f"sha256={digest}", str(len(payload) + 1), "size does not match"),
+            ):
+                with self.subTest(message=message), self.assertRaisesRegex(
+                    PluginError,
+                    message,
+                ):
+                    plugin_mod._verify_recorded_file(
+                        file_path,
+                        "pkg/payload.py",
+                        hash_spec,
+                        size_text,
+                    )
+            self.assertEqual(
+                plugin_mod._verify_recorded_file(
+                    file_path,
+                    "pkg/payload.py",
+                    f"sha256={digest}",
+                    str(len(payload)),
+                ),
+                (len(payload), hashlib.sha256(payload).hexdigest()),
+            )
+            self.assertEqual(
+                plugin_mod._verify_recorded_file(
+                    file_path,
+                    "pkg/payload.py",
+                    f"sha256={digest}",
+                    "",
+                ),
+                (len(payload), hashlib.sha256(payload).hexdigest()),
+            )
+            with self.assertRaisesRegex(PluginError, "unable to read plugin file"):
+                plugin_mod._verify_recorded_file(
+                    Path(directory),
+                    "pkg/directory",
+                    f"sha256={digest}",
+                    "",
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_manifest(root)
+            record_relative = "demo-distribution-1.0.0.dist-info/RECORD"
+            record_path = root / record_relative
+            manifest_path = root / "trustcheck-plugin.json"
+            distribution = StaticDistribution(
+                root,
+                ("demo_plugin.py", "trustcheck-plugin.json", record_relative),
+            )
+            with patch(
+                "trustcheck.plugins._distribution_record_path",
+                return_value=root,
+            ):
+                with self.assertRaisesRegex(PluginError, "unable to read plugin RECORD"):
+                    plugin_mod._verify_distribution_record(
+                        distribution,
+                        manifest_path=manifest_path,
+                    )
+
+            record_path.write_text("", encoding="utf-8")
+            with self.assertRaisesRegex(PluginError, "RECORD .* is empty"):
+                plugin_mod._verify_distribution_record(
+                    StaticDistribution(root, (record_relative,)),
+                    manifest_path=manifest_path,
+                )
+
+            rows = [
+                _record_row(root, "demo_plugin.py"),
+                _record_row(root, "demo_plugin.py"),
+                ("trustcheck-plugin.json", "", ""),
+                (record_relative, "", ""),
+            ]
+            _write_record(root, rows)
+            with self.assertRaisesRegex(PluginError, "duplicate entry"):
+                plugin_mod._verify_distribution_record(
+                    distribution,
+                    manifest_path=manifest_path,
+                )
+
+            rows = [
+                ("missing.py", "sha256=" + _record_digest(b""), "0"),
+                ("trustcheck-plugin.json", "", ""),
+                (record_relative, "", ""),
+            ]
+            _write_record(root, rows)
+            with self.assertRaisesRegex(PluginError, "missing file"):
+                plugin_mod._verify_distribution_record(
+                    StaticDistribution(
+                        root,
+                        ("missing.py", "trustcheck-plugin.json", record_relative),
+                    ),
+                    manifest_path=manifest_path,
+                )
+
+            rows = [
+                _record_row(root, "demo_plugin.py"),
+                _record_row(root, "trustcheck-plugin.json"),
+                (record_relative, "", ""),
+            ]
+            _write_record(root, rows)
+            with self.assertRaisesRegex(PluginError, "manifest RECORD entry"):
+                plugin_mod._verify_distribution_record(
+                    distribution,
+                    manifest_path=manifest_path,
+                )
+
+            rows = [_record_row(root, "demo_plugin.py"), (record_relative, "", "")]
+            _write_record(root, rows)
+            with self.assertRaisesRegex(PluginError, "manifest is not listed"):
+                plugin_mod._verify_distribution_record(
+                    StaticDistribution(root, ("demo_plugin.py", record_relative)),
+                    manifest_path=manifest_path,
+                )
+
+            rows = [_record_row(root, "demo_plugin.py"), ("trustcheck-plugin.json", "", "")]
+            _write_record(root, rows)
+            with self.assertRaisesRegex(PluginError, "RECORD does not list itself"):
+                plugin_mod._verify_distribution_record(
+                    distribution,
+                    manifest_path=manifest_path,
+                )
+
+            with self.assertRaisesRegex(PluginError, "unrecorded file"):
+                plugin_mod._reject_unrecorded_distribution_files(
+                    StaticDistribution(root, ("extra.py",)),
+                    set(),
+                )
+            plugin_mod._reject_unrecorded_physical_file(
+                root / "outside.py",
+                root / "other-root",
+                set(),
+            )
+            with patch("pathlib.Path.resolve", side_effect=OSError("bad path")):
+                self.assertFalse(plugin_mod._same_file(root / "a", root / "b"))
+
+        class RequiresCallableDistribution:
+            def requires(self):
+                return (" requests>=2 ", "")
+
+        class MetadataRequires:
+            def get_all(self, name):
+                return ["demo-dep==1"] if name == "Requires-Dist" else []
+
+        self.assertEqual(
+            plugin_mod._distribution_dependencies(RequiresCallableDistribution()),
+            ["requests>=2"],
+        )
+        self.assertEqual(
+            plugin_mod._distribution_dependencies(
+                SimpleNamespace(requires=None, metadata=MetadataRequires()),
+            ),
+            ["demo-dep==1"],
+        )
+        self.assertEqual(
+            plugin_mod._distribution_dependencies(SimpleNamespace(requires=None)),
+            [],
+        )
+        with self.assertRaisesRegex(PluginError, "must be a sequence"):
+            plugin_mod._distribution_dependencies(SimpleNamespace(requires="demo"))
+        plugin_mod._verify_manifest_capabilities(
+            {
+                "capabilities": ["query"],
+                "requires_network": False,
+                "requires_filesystem": False,
+                "requires_subprocess": False,
+            },
+            kind="advisory",
+        )
+        with self.assertRaisesRegex(PluginError, "unsupported capability"):
+            plugin_mod._verify_manifest_capabilities(
+                {
+                    "capabilities": ["query", "extra"],
+                    "requires_network": False,
+                    "requires_filesystem": False,
+                    "requires_subprocess": False,
+                },
+                kind="advisory",
+            )
+        with self.assertRaisesRegex(PluginError, "requires_network"):
+            plugin_mod._verify_manifest_capabilities(
+                {
+                    "capabilities": ["query"],
+                    "requires_network": "false",
+                    "requires_filesystem": False,
+                    "requires_subprocess": False,
+                },
+                kind="advisory",
+            )
+        with self.assertRaisesRegex(PluginError, "capabilities"):
+            plugin_mod._required_string_list(
+                {"capabilities": ["query", 3]},
+                "capabilities",
+                "plugin manifest",
+            )
 
     def test_in_process_plugin_load_failure_is_wrapped(self) -> None:
         entry = SimpleNamespace(
@@ -587,6 +1017,35 @@ class PluginSecurityTests(unittest.TestCase):
         resource.fail_next_set = True
         plugin_mod._set_plugin_resource_limit(resource, resource.RLIMIT_CPU, 4)
         plugin_mod._set_plugin_resource_limit(resource, None, 4)
+        plugin_mod._set_plugin_resource_limit(SimpleNamespace(), 1, 4)
+
+        class FailingLimitResource:
+            RLIM_INFINITY = -1
+
+            def getrlimit(self, limit_name):
+                del limit_name
+                raise OSError("unsupported")
+
+            def setrlimit(self, limit_name, values):
+                raise AssertionError((limit_name, values))
+
+        plugin_mod._set_plugin_resource_limit(FailingLimitResource(), 1, 4)
+
+        capped_resource = ResourceModule(
+            {
+                ResourceModule.RLIMIT_CPU: (10, 5),
+                ResourceModule.RLIMIT_AS: (10, 5),
+            }
+        )
+        plugin_mod._set_plugin_resource_limit(
+            capped_resource,
+            capped_resource.RLIMIT_CPU,
+            8,
+        )
+        self.assertEqual(
+            capped_resource.calls[-1],
+            (capped_resource.RLIMIT_CPU, (5, 5)),
+        )
 
     def test_plugin_ipc_result_serialization_round_trips_supported_operations(self) -> None:
         report = TrustReport(
@@ -662,6 +1121,155 @@ class PluginSecurityTests(unittest.TestCase):
         self.assertIsInstance(restored_request["report"], TrustReport)
         self.assertIsInstance(restored_request["package"], ExportPackage)
         self.assertIsInstance(restored_request["artifact"], ArtifactReference)
+
+    def test_plugin_ipc_helpers_reject_invalid_json_and_model_shapes(self) -> None:
+        with self.assertRaisesRegex(PluginError, "unsupported plugin operation"):
+            plugin_mod._validate_plugin_operation_keys("unknown", [])
+        with self.assertRaisesRegex(PluginError, "missing version"):
+            plugin_mod._validate_plugin_operation_keys("query", ["project"])
+        with self.assertRaisesRegex(PluginError, "unknown extra"):
+            plugin_mod._validate_plugin_operation_keys(
+                "query",
+                ["project", "version", "extra"],
+            )
+        with self.assertRaisesRegex(PluginError, "kwargs must be an object"):
+            plugin_mod._plugin_kwargs_from_data("query", [])
+        with self.assertRaisesRegex(PluginError, "non-string object key"):
+            plugin_mod._request_value_to_data({1: "bad"})
+        with self.assertRaisesRegex(PluginError, "unsupported typed request value"):
+            plugin_mod._request_value_from_data(
+                {"__trustcheck_type__": "Unknown", "data": {}}
+            )
+        with self.assertRaisesRegex(PluginError, "TrustReport request data"):
+            plugin_mod._request_value_from_data(
+                {"__trustcheck_type__": "TrustReport", "data": []}
+            )
+        with self.assertRaisesRegex(PluginError, "bytes value must be an object"):
+            plugin_mod._bytes_from_data([])
+        with self.assertRaisesRegex(PluginError, "unsupported type tag"):
+            plugin_mod._bytes_from_data({"__trustcheck_type__": "str", "data": ""})
+        with self.assertRaisesRegex(PluginError, "not valid base64"):
+            plugin_mod._bytes_from_data(
+                {"__trustcheck_type__": "bytes", "data": "not-base64!"}
+            )
+        source = SourceLocation(uri="file:///src/demo.py", line=7)
+        source_data = plugin_mod._request_value_to_data(source)
+        self.assertEqual(
+            plugin_mod._request_value_from_data([source_data])[0],
+            source,
+        )
+        with self.assertRaisesRegex(PluginError, "ExportPackage report"):
+            plugin_mod._export_package_from_data(
+                {"report": [], "source": None, "artifacts": []}
+            )
+        with self.assertRaisesRegex(PluginError, "index file yanked"):
+            plugin_mod._index_file_from_data(
+                {"filename": "demo.whl", "url": "https://files/demo.whl", "yanked": 3}
+            )
+        for value, message in (
+            ([["sha256"]], "two-item lists"),
+            ([[3, "digest"]], "contain strings"),
+        ):
+            with self.subTest(message=message), self.assertRaisesRegex(
+                PluginError,
+                message,
+            ):
+                plugin_mod._hash_pairs_from_data(value, "hashes")
+        with self.assertRaisesRegex(PluginError, "DemoModel must be an object"):
+            plugin_mod._strict_mapping([], "DemoModel", set())
+        with self.assertRaisesRegex(PluginError, "unsupported field"):
+            plugin_mod._reject_unknown_fields({"extra": 1}, "DemoModel", set())
+        with self.assertRaisesRegex(PluginError, "items must be a list"):
+            plugin_mod._required_list("bad", "items")
+        with self.assertRaisesRegex(PluginError, "demo must be an object"):
+            plugin_mod._required_string([], "name", "demo")
+        with self.assertRaisesRegex(PluginError, "demo value must be a string"):
+            plugin_mod._required_string(3, "", "demo")
+        with self.assertRaisesRegex(PluginError, "maybe must be a string or null"):
+            plugin_mod._optional_string({"maybe": 3}, "maybe", "demo")
+        with self.assertRaisesRegex(PluginError, "count must be an integer or null"):
+            plugin_mod._optional_int({"count": True}, "count", "demo")
+
+        with self.assertRaisesRegex(PluginError, "non-finite number"):
+            plugin_mod._json_value(float("nan"), path="value")
+        with self.assertRaisesRegex(PluginError, "non-string object key"):
+            plugin_mod._json_value({1: "bad"}, path="value")
+        with patch("trustcheck.plugins.PLUGIN_IPC_MAX_DEPTH", 1):
+            with self.assertRaisesRegex(PluginError, "depth limit"):
+                plugin_mod._json_value([[[]]], path="value")
+        with patch("trustcheck.plugins.PLUGIN_IPC_MAX_MAPPING_LENGTH", 1):
+            with self.assertRaisesRegex(PluginError, "mapping length"):
+                plugin_mod._json_value({"a": 1, "b": 2}, path="value")
+        with patch("trustcheck.plugins.PLUGIN_IPC_MAX_LIST_LENGTH", 1):
+            with self.assertRaisesRegex(PluginError, "list length"):
+                plugin_mod._json_value([1, 2], path="value")
+        with patch("trustcheck.plugins.PLUGIN_IPC_MAX_STRING_LENGTH", 1):
+            with self.assertRaisesRegex(PluginError, "object key"):
+                plugin_mod._json_value({"long": 1}, path="value")
+            with self.assertRaisesRegex(PluginError, "string length"):
+                plugin_mod._json_value("long", path="value")
+        with self.assertRaisesRegex(PluginError, "unsupported value type"):
+            plugin_mod._json_value(object(), path="value")
+        with self.assertRaisesRegex(PluginError, "byte limit"):
+            plugin_mod._encode_plugin_message(
+                {"ok": True},
+                max_bytes=1,
+                label="message",
+            )
+
+        with self.assertRaisesRegex(PluginError, "byte limit"):
+            plugin_mod._decode_plugin_message(b"{}", max_bytes=1, label="message")
+        with self.assertRaisesRegex(PluginError, "not valid JSON"):
+            plugin_mod._decode_plugin_message(b"{", max_bytes=100, label="message")
+        with self.assertRaisesRegex(PluginError, "must be a JSON object"):
+            plugin_mod._decode_plugin_message(b"[]", max_bytes=100, label="message")
+
+        envelope = {
+            "plugin_protocol_version": PLUGIN_IPC_PROTOCOL_VERSION,
+            "request_id": "request-1",
+            "entry_value": "module:Plugin",
+            "operation": "query",
+            "kwargs": {"project": "demo", "version": "1"},
+        }
+        for update, message in (
+            ({"plugin_protocol_version": "2"}, "incompatible plugin IPC protocol"),
+            ({"entry_value": ""}, "entry point cannot be empty"),
+            ({"request_id": ""}, "request id cannot be empty"),
+            ({"kwargs": []}, "kwargs must be an object"),
+        ):
+            candidate = {**envelope, **update}
+            with self.subTest(message=message), self.assertRaisesRegex(
+                PluginError,
+                message,
+            ):
+                plugin_mod._validate_request_envelope(candidate)
+
+        with self.assertRaisesRegex(PluginError, "supports result must be a boolean"):
+            plugin_mod._plugin_result_from_data("supports", "true")
+        with self.assertRaisesRegex(PluginError, "render result must be a string"):
+            plugin_mod._plugin_result_from_data("render", 3)
+        with self.assertRaisesRegex(PluginError, "string or null"):
+            plugin_mod._plugin_result_from_data("client.locate_artifact_index", 3)
+        with self.assertRaisesRegex(PluginError, "unsupported plugin operation"):
+            plugin_mod._plugin_result_from_data("unknown", None)
+
+        self.assertIsNone(plugin_mod._plugin_result_to_data("client.get_project", None))
+
+        for operation, value, message in (
+            ("query", "bad", "expected a sequence"),
+            ("query", [object()], "expected VulnerabilityRecord"),
+            ("render", 3, "expected str"),
+            ("supports", "true", "expected bool"),
+            ("client.download", "payload", "expected bytes"),
+            ("client.locate_artifact_index", 3, "expected str or None"),
+        ):
+            with self.subTest(operation=operation), self.assertRaisesRegex(
+                TypeError,
+                message,
+            ):
+                plugin_mod._plugin_result_to_data(operation, value)
+        with self.assertRaisesRegex(PluginError, "unsupported plugin operation"):
+            plugin_mod._plugin_result_to_data("unknown", None)
 
     def test_plugin_ipc_helpers_reject_malformed_envelopes(self) -> None:
         with patch("trustcheck.plugins._new_plugin_request_id", return_value="request-1"):
@@ -741,6 +1349,163 @@ class PluginSecurityTests(unittest.TestCase):
                     operation="render",
                 )
 
+        with self.assertRaisesRegex(PluginError, "plugin operation failed: RuntimeError"):
+            plugin_mod._plugin_result_from_response(
+                {
+                    "plugin_protocol_version": PLUGIN_IPC_PROTOCOL_VERSION,
+                    "request_id": "request-1",
+                    "ok": False,
+                    "error": {"type": "RuntimeError", "message": ""},
+                },
+                request_id="request-1",
+                operation="render",
+            )
+
+    def test_direct_plugin_execution_and_worker_response_fallbacks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "exec_plugin.py").write_text(
+                "\n".join(
+                    [
+                        "from trustcheck.models import VulnerabilityRecord",
+                        "",
+                        "class Client:",
+                        "    def download(self, url, *, index_url=None):",
+                        "        return f'{index_url}:{url}'.encode()",
+                        "",
+                        "class Plugin:",
+                        "    def query(self, project, version):",
+                        "        return [VulnerabilityRecord(",
+                        "            id=f'{project}-{version}',",
+                        "            summary='ok',",
+                        "        )]",
+                        "    def supports(self, index_url):",
+                        "        return index_url.startswith('demo+')",
+                        "    def create_client(self, *, index_url, config):",
+                        "        return Client()",
+                        "",
+                        "plugin = Plugin()",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            sys.path.insert(0, str(root))
+            try:
+                query_data = plugin_mod._execute_plugin_request(
+                    {
+                        "entry_value": "exec_plugin:Plugin",
+                        "operation": "query",
+                        "kwargs": plugin_mod._plugin_kwargs_to_data(
+                            "query",
+                            {"project": "demo", "version": "1"},
+                        ),
+                    }
+                )
+                self.assertEqual(query_data[0]["id"], "demo-1")
+                self.assertTrue(
+                    plugin_mod._execute_plugin_request(
+                        {
+                            "entry_value": "exec_plugin:plugin",
+                            "operation": "supports",
+                            "kwargs": plugin_mod._plugin_kwargs_to_data(
+                                "supports",
+                                {"index_url": "demo+https://index/"},
+                            ),
+                        }
+                    )
+                )
+                download_data = plugin_mod._execute_plugin_request(
+                    {
+                        "entry_value": "exec_plugin:Plugin",
+                        "operation": "client.download",
+                        "kwargs": plugin_mod._plugin_kwargs_to_data(
+                            "client.download",
+                            {
+                                "client_index_url": "demo+https://index/",
+                                "client_config": {},
+                                "url": "https://files/demo.whl",
+                                "index_url": "demo+https://index/",
+                            },
+                        ),
+                    }
+                )
+                self.assertEqual(
+                    plugin_mod._bytes_from_data(download_data),
+                    b"demo+https://index/:https://files/demo.whl",
+                )
+                with self.assertRaisesRegex(ValueError, "module:attribute"):
+                    plugin_mod._execute_plugin_request(
+                        {
+                            "entry_value": "exec_plugin",
+                            "operation": "query",
+                            "kwargs": plugin_mod._plugin_kwargs_to_data(
+                                "query",
+                                {"project": "demo", "version": "1"},
+                            ),
+                        }
+                    )
+            finally:
+                sys.path.remove(str(root))
+                sys.modules.pop("exec_plugin", None)
+
+        error = plugin_mod._plugin_error_response("request-1", RuntimeError("x" * 5000))
+        self.assertLessEqual(len(error["error"]["message"]), 4096)
+        self.assertTrue(error["error"]["message"].endswith("..."))
+
+        sender = Mock()
+        plugin_mod._send_plugin_response(
+            sender,
+            {
+                "plugin_protocol_version": PLUGIN_IPC_PROTOCOL_VERSION,
+                "request_id": "request-1",
+                "ok": True,
+                "result": object(),
+            },
+        )
+        decoded = plugin_mod._decode_plugin_message(
+            sender.send_bytes.call_args.args[0],
+            max_bytes=plugin_mod.PLUGIN_IPC_MAX_RESPONSE_BYTES,
+            label="plugin IPC response",
+        )
+        self.assertFalse(decoded["ok"])
+        self.assertEqual(decoded["request_id"], "request-1")
+        self.assertIn("unsupported value type", decoded["error"]["message"])
+
+        sender = Mock()
+        plugin_mod._send_plugin_response(
+            sender,
+            {
+                "plugin_protocol_version": PLUGIN_IPC_PROTOCOL_VERSION,
+                "request_id": "request-2",
+                "ok": True,
+                "result": "ok",
+            },
+        )
+        decoded = plugin_mod._decode_plugin_message(
+            sender.send_bytes.call_args.args[0],
+            max_bytes=plugin_mod.PLUGIN_IPC_MAX_RESPONSE_BYTES,
+            label="plugin IPC response",
+        )
+        self.assertEqual(decoded["result"], "ok")
+
+        sender = Mock()
+        plugin_mod._send_plugin_response(
+            sender,
+            {
+                "plugin_protocol_version": PLUGIN_IPC_PROTOCOL_VERSION,
+                "request_id": 3,
+                "ok": True,
+                "result": object(),
+            },
+        )
+        decoded = plugin_mod._decode_plugin_message(
+            sender.send_bytes.call_args.args[0],
+            max_bytes=plugin_mod.PLUGIN_IPC_MAX_RESPONSE_BYTES,
+            label="plugin IPC response",
+        )
+        self.assertEqual(decoded["request_id"], "unknown")
+
     def test_plugin_process_reports_success_failure_timeout_and_eof(self) -> None:
         kwargs = {"packages": [], "source_name": "source", "failures": [], "config": {}}
         for context, message in (
@@ -778,6 +1543,43 @@ class PluginSecurityTests(unittest.TestCase):
                 "ok",
             )
         context.Process.return_value.terminate.assert_called_once()
+
+        request_receiver = Mock()
+        request_sender = Mock()
+        request_sender.send_bytes.side_effect = OSError("closed")
+        response_receiver = Mock()
+        response_sender = Mock()
+        response_receiver.poll.return_value = True
+        response_receiver.recv_bytes.return_value = _ipc_response(
+            "request-1",
+            result="ok",
+        )
+        process = Mock()
+        process.is_alive.return_value = False
+        context = Mock()
+        context.Pipe.side_effect = [
+            (request_receiver, request_sender),
+            (response_receiver, response_sender),
+        ]
+        context.Process.return_value = process
+        with patch(
+            "trustcheck.plugins.multiprocessing.get_context",
+            return_value=context,
+        ), patch(
+            "trustcheck.plugins._new_plugin_request_id",
+            return_value="request-1",
+        ), self.assertRaisesRegex(PluginError, "could not receive request"):
+            _run_plugin_process("module:Plugin", "render", kwargs, timeout=1)
+
+        context = _process_context(ready=True, received=ValueError("too large"))
+        with patch(
+            "trustcheck.plugins.multiprocessing.get_context",
+            return_value=context,
+        ), patch(
+            "trustcheck.plugins._new_plugin_request_id",
+            return_value="request-1",
+        ), self.assertRaisesRegex(PluginError, "response exceeded"):
+            _run_plugin_process("module:Plugin", "render", kwargs, timeout=1)
 
     def test_plugin_ipc_protocol_validation_and_size_limits(self) -> None:
         query_kwargs = {"project": "demo", "version": "1"}

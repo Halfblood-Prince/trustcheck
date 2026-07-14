@@ -101,14 +101,6 @@
       "items": {
         "type": "string"
       }
-    },
-    "sigstore_identity": {
-      "type": "string",
-      "minLength": 1
-    },
-    "sigstore_issuer": {
-      "type": "string",
-      "minLength": 1
     }
   },
   "$defs": {

@@ -69,7 +69,6 @@ PLUGIN_TRUST_POLICY_MODES = frozenset(
         "disabled",
         "allowlisted-digest",
         "trusted-key",
-        "sigstore-identity",
         "organization-policy",
     }
 )
@@ -215,7 +214,6 @@ class PluginManager:
     allowlist: tuple[str, ...] = ()
     trusted_signers: tuple[str, ...] = ()
     trusted_wheel_sha256: tuple[str, ...] = ()
-    trusted_sigstore_identities: tuple[tuple[str, str], ...] = ()
     require_signed: bool = True
     trust_policy_mode: str = "trusted-key"
     isolate: bool = True
@@ -250,7 +248,6 @@ class PluginManager:
         raw_allowlist = controls.get("allowlist", [])
         raw_signers = controls.get("trusted_signers", [])
         raw_wheel_digests = controls.get("trusted_wheel_sha256", [])
-        raw_sigstore_identities = controls.get("trusted_sigstore_identities", [])
         trust_policy_mode = str(controls.get("trust_policy_mode", "") or "")
         if not isinstance(raw_allowlist, list) or any(
             not isinstance(item, str) for item in raw_allowlist
@@ -264,12 +261,15 @@ class PluginManager:
             not isinstance(item, str) for item in raw_wheel_digests
         ):
             raise PluginError("trusted_wheel_sha256 must contain SHA-256 digests")
-        sigstore_identities = _sigstore_identities_from_config(raw_sigstore_identities)
+        if controls.get("trusted_sigstore_identities"):
+            raise PluginError(
+                "trusted_sigstore_identities is not supported for plugins; "
+                "real Sigstore bundle verification is not implemented"
+            )
         if not trust_policy_mode:
             trust_policy_mode = _default_plugin_trust_policy_mode(
                 trusted_signers=raw_signers,
                 trusted_wheel_sha256=raw_wheel_digests,
-                trusted_sigstore_identities=sigstore_identities,
             )
         if trust_policy_mode not in PLUGIN_TRUST_POLICY_MODES:
             raise PluginError(
@@ -291,7 +291,6 @@ class PluginManager:
             allowlist=allowlist,
             trusted_signers=tuple(item.lower() for item in raw_signers),
             trusted_wheel_sha256=tuple(item.lower() for item in raw_wheel_digests),
-            trusted_sigstore_identities=sigstore_identities,
             require_signed=require_signed,
             trust_policy_mode=trust_policy_mode,
             isolate=controls.get("isolate", True) is not False,
@@ -464,7 +463,6 @@ class PluginManager:
                         kind=kind,
                         trusted_signers=self.trusted_signers,
                         trusted_wheel_sha256=self.trusted_wheel_sha256,
-                        trusted_sigstore_identities=self.trusted_sigstore_identities,
                         trust_policy_mode=self.trust_policy_mode,
                     )
                     declared_name = str(manifest["name"])
@@ -557,7 +555,6 @@ def _verified_manifest(
     kind: str,
     trusted_signers: Sequence[str],
     trusted_wheel_sha256: Sequence[str] = (),
-    trusted_sigstore_identities: Sequence[tuple[str, str]] = (),
     trust_policy_mode: str = "trusted-key",
 ) -> tuple[dict[str, Any], str, str, str, str]:
     distribution = entry_point.dist
@@ -571,6 +568,8 @@ def _verified_manifest(
     if not isinstance(envelope, dict) or envelope.get("schema") != PLUGIN_MANIFEST_SCHEMA:
         raise PluginError(f"plugin manifest {path} has an unsupported schema")
     manifest = envelope.get("manifest")
+    if isinstance(manifest, dict):
+        _reject_claimed_sigstore_fields(manifest, path)
     public_key_pem = envelope.get("public_key")
     signature_text = envelope.get("signature")
     if not isinstance(manifest, dict) or not isinstance(public_key_pem, str) or not isinstance(
@@ -637,7 +636,6 @@ def _verified_manifest(
         signer_sha256=signer,
         trusted_signers=trusted_signers,
         trusted_wheel_sha256=trusted_wheel_sha256,
-        trusted_sigstore_identities=trusted_sigstore_identities,
         trust_policy_mode=trust_policy_mode,
         plugin_name=f"{kind}:{entry_point.name}",
     )
@@ -650,36 +648,30 @@ def _verified_manifest(
     )
 
 
-def _sigstore_identities_from_config(value: object) -> tuple[tuple[str, str], ...]:
-    if not isinstance(value, list):
-        raise PluginError("trusted_sigstore_identities must be a list")
-    identities: list[tuple[str, str]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            raise PluginError("trusted_sigstore_identities entries must be objects")
-        identity = item.get("identity")
-        issuer = item.get("issuer")
-        if not isinstance(identity, str) or not isinstance(issuer, str):
-            raise PluginError(
-                "trusted_sigstore_identities entries require identity and issuer"
-            )
-        identities.append((identity, issuer))
-    return tuple(identities)
-
-
 def _default_plugin_trust_policy_mode(
     *,
     trusted_signers: Sequence[object],
     trusted_wheel_sha256: Sequence[object],
-    trusted_sigstore_identities: Sequence[object],
 ) -> str:
     if trusted_signers:
         return "trusted-key"
     if trusted_wheel_sha256:
         return "allowlisted-digest"
-    if trusted_sigstore_identities:
-        return "sigstore-identity"
     return "trusted-key"
+
+
+def _reject_claimed_sigstore_fields(
+    manifest: Mapping[str, object],
+    path: Path,
+) -> None:
+    claimed_fields = {"sigstore_identity", "sigstore_issuer"} & set(manifest)
+    if claimed_fields:
+        raise PluginError(
+            f"plugin manifest {path} contains unsupported claimed Sigstore "
+            "field(s): "
+            + ", ".join(sorted(claimed_fields))
+            + "; real Sigstore bundle verification is not implemented"
+        )
 
 
 def _distribution_name(distribution: object) -> str:
@@ -972,7 +964,6 @@ def _verify_plugin_trust_root(
     signer_sha256: str,
     trusted_signers: Sequence[str],
     trusted_wheel_sha256: Sequence[str],
-    trusted_sigstore_identities: Sequence[tuple[str, str]],
     trust_policy_mode: str,
     plugin_name: str,
 ) -> None:
@@ -980,13 +971,6 @@ def _verify_plugin_trust_root(
     trusted_signer_set = {item.lower() for item in trusted_signers}
     wheel_digest = _required_string(manifest, "wheel_sha256", "plugin manifest").lower()
     trusted_wheel_set = {item.lower() for item in trusted_wheel_sha256}
-    sigstore_identity = manifest.get("sigstore_identity")
-    sigstore_issuer = manifest.get("sigstore_issuer")
-    sigstore_match = (
-        isinstance(sigstore_identity, str)
-        and isinstance(sigstore_issuer, str)
-        and (sigstore_identity, sigstore_issuer) in set(trusted_sigstore_identities)
-    )
 
     if trust_policy_mode == "disabled":
         raise PluginError("signed plugin verification requires a trust root")
@@ -1005,20 +989,8 @@ def _verify_plugin_trust_root(
         if wheel_digest not in trusted_wheel_set:
             raise PluginError(f"plugin {plugin_name} wheel digest is not allowlisted")
         return
-    if trust_policy_mode == "sigstore-identity":
-        if not trusted_sigstore_identities:
-            raise PluginError(
-                "sigstore-identity plugin mode requires trusted_sigstore_identities"
-            )
-        if not sigstore_match:
-            raise PluginError(f"plugin {plugin_name} Sigstore identity is not trusted")
-        return
     if trust_policy_mode == "organization-policy":
-        if (
-            signer in trusted_signer_set
-            or wheel_digest in trusted_wheel_set
-            or sigstore_match
-        ):
+        if signer in trusted_signer_set or wheel_digest in trusted_wheel_set:
             return
         raise PluginError(f"plugin {plugin_name} is not trusted by organization policy")
     raise PluginError(f"unsupported plugin trust policy mode: {trust_policy_mode}")

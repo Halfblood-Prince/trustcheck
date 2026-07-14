@@ -7,8 +7,10 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import trustcheck.github_action as action_mod
 from trustcheck.action_options import ACTION_INPUTS, RUNTIME_ACTION_INPUTS
 from trustcheck.cli import EXIT_DATA_ERROR, EXIT_OK, EXIT_POLICY_FAILURE, EXIT_USAGE
 from trustcheck.contract import JSON_SCHEMA_VERSION
@@ -376,6 +378,11 @@ class GitHubActionTests(unittest.TestCase):
                 workspace=workspace,
             )
             self.assertIn("--with-deps", arguments)
+            with self.assertRaisesRegex(ActionInputError, "sandbox"):
+                build_cli_arguments(
+                    ActionSettings(target="sampleproject", sandbox="invalid"),
+                    workspace=workspace,
+                )
             self.assertEqual(
                 _resolve_workspace_path(str(dependency_file.resolve()), workspace),
                 dependency_file.resolve(),
@@ -522,6 +529,204 @@ class GitHubActionTests(unittest.TestCase):
             summarize_payload({"unexpected": True}, exit_code=EXIT_OK),
             ("error", False),
         )
+
+    def test_action_text_rendering_and_input_parser_edge_cases(self) -> None:
+        action_error = action_mod._render_text_payload(
+            {
+                "action_error": {
+                    "target": "demo",
+                    "exit_code": EXIT_USAGE,
+                    "message": "bad input",
+                }
+            },
+            exit_code=EXIT_USAGE,
+        )
+        self.assertIn("trustcheck action error", action_error)
+        self.assertIn("bad input", action_error)
+
+        report = action_mod._render_fallback_text_payload(
+            {
+                "report": {
+                    "project": "demo",
+                    "version": "1.0.0",
+                    "recommendation": "review-required",
+                    "policy": {"passed": True},
+                }
+            },
+            exit_code=EXIT_OK,
+        )
+        self.assertIn("trustcheck report for demo 1.0.0", report)
+        self.assertIn("policy: passed", report)
+        report_without_version = action_mod._render_fallback_text_payload(
+            {
+                "report": {
+                    "project": "demo",
+                    "recommendation": "verified",
+                    "policy": {"passed": False},
+                }
+            },
+            exit_code=EXIT_DATA_ERROR,
+        )
+        self.assertIn("trustcheck report for demo", report_without_version)
+        self.assertNotIn("demo 1.0.0", report_without_version)
+
+        vulnerabilities = action_mod._render_fallback_text_payload(
+            {
+                "project": "demo",
+                "version": "1.0.0",
+                "package_url": "pkg:pypi/demo@1.0.0",
+                "vulnerabilities": [
+                    {"id": "CVE-1", "summary": "first"},
+                    "ignored",
+                ],
+            },
+            exit_code=EXIT_DATA_ERROR,
+        )
+        self.assertIn("count: 2", vulnerabilities)
+        self.assertIn("CVE-1: first", vulnerabilities)
+
+        generic = action_mod._render_fallback_text_payload(
+            {"unexpected": True},
+            exit_code=EXIT_DATA_ERROR,
+        )
+        self.assertIn("recommendation: error", generic)
+        single_report = action_mod._render_text_payload(
+            complete_report_payload(),
+            exit_code=EXIT_OK,
+        )
+        self.assertIn("sampleproject", single_report)
+        scan_report = action_mod._render_text_payload(
+            {
+                "schema_version": JSON_SCHEMA_VERSION,
+                "file": "requirements.txt",
+                "reports": [complete_report_payload()["report"]],
+                "failures": [],
+                "remediation": {
+                    "status": "planned",
+                    "upgrades": [{"project": "demo"}],
+                },
+            },
+            exit_code=EXIT_OK,
+        )
+        self.assertIn("requirements.txt", scan_report)
+        self.assertIn("remediation:", scan_report)
+        with patch.object(
+            action_mod,
+            "export_packages_from_payload",
+            return_value=(
+                [SimpleNamespace(report=object()), SimpleNamespace(report=object())],
+                "source",
+                [],
+            ),
+        ):
+            fallback = action_mod._render_text_payload(
+                {"schema_version": JSON_SCHEMA_VERSION},
+                exit_code=EXIT_DATA_ERROR,
+            )
+        self.assertIn("trustcheck report", fallback)
+        remediation = action_mod._render_remediation_payload_summary(
+            {
+                "status": "planned",
+                "upgrades": [{"project": "demo"}],
+                "patch_files": ["fix.patch", 3],
+            }
+        )
+        self.assertIn("status: planned", remediation)
+        self.assertIn("upgrades: 1", remediation)
+        self.assertIn("fix.patch", remediation)
+        unknown_remediation = action_mod._render_remediation_payload_summary(
+            {
+                "status": 3,
+                "upgrades": "bad",
+                "patch_files": [],
+            }
+        )
+        self.assertIn("status: unknown", unknown_remediation)
+        self.assertNotIn("upgrades:", unknown_remediation)
+        self.assertEqual(action_mod._render_remediation_payload_summary(None), "")
+
+        with self.assertRaisesRegex(ValueError, "unsupported output format"):
+            action_mod._render_report_artifact("unknown", {}, exit_code=EXIT_OK)
+
+        self.assertEqual(action_mod._parse_multi_value("one two\nthree"), ("one", "two", "three"))
+        with patch.object(
+            action_mod,
+            "RUNTIME_ACTION_INPUTS",
+            (
+                action_mod.ActionInputSpec("ignored", None, "ignored input"),
+                *RUNTIME_ACTION_INPUTS,
+            ),
+        ):
+            self.assertEqual(
+                ActionSettings.from_environment(
+                    {"TRUSTCHECK_ACTION_TARGET": "sampleproject"}
+                ).target,
+                "sampleproject",
+            )
+        for overrides, message in (
+            ({"output_format": "unknown"}, "format"),
+            ({"remediation": "unknown"}, "remediation"),
+            ({"sandbox": "unknown"}, "sandbox"),
+        ):
+            def fake_parse(spec, raw_value, overrides=overrides):
+                del raw_value
+                if spec.field == "target":
+                    return "sampleproject"
+                return overrides.get(spec.field, spec.default)
+
+            with self.subTest(message=message), patch.object(
+                action_mod,
+                "_parse_action_input",
+                side_effect=fake_parse,
+            ), self.assertRaisesRegex(ActionInputError, message):
+                ActionSettings.from_environment(
+                    {"TRUSTCHECK_ACTION_TARGET": "sampleproject"}
+                )
+        args = build_cli_arguments(
+            ActionSettings(
+                target="sampleproject",
+                allow_unsigned_advisory_snapshot=True,
+            ),
+            workspace=Path.cwd(),
+        )
+        self.assertIn("--allow-unsigned-advisory-snapshot", args)
+        alias_spec = action_mod.ActionInputSpec(
+            "demo",
+            "demo",
+            "demo input",
+            default="fallback",
+            env_aliases=("TRUSTCHECK_DEMO_ALIAS",),
+        )
+        self.assertEqual(
+            action_mod._action_environment_value(
+                {"TRUSTCHECK_DEMO_ALIAS": "aliased"},
+                alias_spec,
+            ),
+            "aliased",
+        )
+        int_spec = action_mod.ActionInputSpec(
+            "count",
+            "count",
+            "count input",
+            default="1",
+            kind="int",
+            minimum=1,
+            maximum=2,
+        )
+        with self.assertRaisesRegex(ActionInputError, "at most 2"):
+            action_mod._parse_int_action_input(int_spec, "3")
+        float_spec = action_mod.ActionInputSpec(
+            "ratio",
+            "ratio",
+            "ratio input",
+            default="1",
+            kind="float",
+            minimum=0,
+            maximum=2,
+        )
+        for value, message in (("bad", "number"), ("0", "positive"), ("3", "at most 2")):
+            with self.subTest(value=value), self.assertRaisesRegex(ActionInputError, message):
+                action_mod._parse_float_action_input(float_spec, value)
 
     def test_main_writes_outputs_summary_and_report_path(self) -> None:
         def passing_runner(arguments):

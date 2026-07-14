@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import trustcheck.dynamic as dynamic_mod
 from trustcheck.dynamic import DEFAULT_DYNAMIC_IMAGE, RESULT_PREFIX, analyze_artifact_dynamic
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,6 +71,17 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertFalse(result.executed)
         self.assertEqual(result.python_version, "3.11")
         self.assertEqual(result.failure_type, "analyzer_image_unavailable")
+        which.assert_not_called()
+
+        with patch("trustcheck.dynamic.shutil.which") as which:
+            unsupported = analyze_artifact_dynamic(
+                "demo.whl",
+                b"wheel",
+                python_version="3.10",
+            )
+
+        self.assertFalse(unsupported.executed)
+        self.assertEqual(unsupported.failure_type, "unsupported_python")
         which.assert_not_called()
 
     def test_runs_disposable_no_network_non_root_container(self) -> None:
@@ -234,6 +246,104 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertIn("line 0", result.stdout[0])
         self.assertIn("truncated 5 line(s)", result.stdout[-1])
         self.assertIn("non-zero exit code 42", result.error or "")
+
+    def test_parser_helpers_ignore_malformed_payloads_and_classify_edges(self) -> None:
+        parsed, kept = dynamic_mod._parse_runner_result(
+            "\n".join(
+                [
+                    "kept",
+                    RESULT_PREFIX + "{",
+                    RESULT_PREFIX + json.dumps(["not", "an", "object"]),
+                ]
+            )
+        )
+        self.assertIsNone(parsed)
+        self.assertEqual(kept, "kept")
+
+        phases = dynamic_mod._parse_phases(
+            [
+                [],
+                {
+                    "name": "metadata_preparation",
+                    "status": "failed",
+                    "classification": "inconclusive",
+                    "failure_type": None,
+                    "exit_code": "1",
+                    "stdout": ["line", None],
+                    "stderr": "not-a-list",
+                    "error": None,
+                },
+            ]
+        )
+        self.assertEqual(len(phases), 1)
+        self.assertEqual(phases[0].stdout, ["line"])
+        self.assertIsNone(phases[0].exit_code)
+        self.assertIsNone(phases[0].failure_type)
+
+        evidence = dynamic_mod._parse_evidence(
+            {
+                "child_processes": [None, "/tmp/python"],
+                "subprocess_arguments": [["python", 3], "ignored"],
+            }
+        )
+        self.assertEqual(evidence.child_processes, ["/tmp/python"])
+        self.assertEqual(evidence.subprocess_arguments, [["python", "3"]])
+        self.assertEqual(dynamic_mod._parse_evidence(None).child_processes, [])
+
+        suspicious_phase = dynamic_mod.DynamicAnalysisPhase(
+            name="install",
+            status="passed",
+            classification="suspicious",
+        )
+        failed_phase = dynamic_mod.DynamicAnalysisPhase(
+            name="install",
+            status="failed",
+            classification="inconclusive",
+            error="boom",
+        )
+        self.assertEqual(
+            dynamic_mod._classify_result(
+                0,
+                [suspicious_phase],
+                dynamic_mod.DynamicAnalysisEvidence(),
+            ),
+            ("suspicious", "suspicious_behavior"),
+        )
+        self.assertEqual(
+            dynamic_mod._classify_result(
+                0,
+                [failed_phase],
+                dynamic_mod.DynamicAnalysisEvidence(),
+            ),
+            ("inconclusive", "phase_failed"),
+        )
+        self.assertEqual(
+            dynamic_mod._classify_result(3, [], dynamic_mod.DynamicAnalysisEvidence()),
+            ("inconclusive", "analysis_failed"),
+        )
+        self.assertEqual(
+            dynamic_mod._classify_result(
+                0,
+                [
+                    dynamic_mod.DynamicAnalysisPhase(
+                        name="archive_validation",
+                        status="passed",
+                        classification="passed",
+                    )
+                ],
+                dynamic_mod.DynamicAnalysisEvidence(),
+            ),
+            ("passed", None),
+        )
+        self.assertEqual(
+            dynamic_mod._classify_result(0, [], dynamic_mod.DynamicAnalysisEvidence()),
+            ("inconclusive", "result_unavailable"),
+        )
+        self.assertEqual(
+            dynamic_mod._error_from_phases([failed_phase]),
+            "install: boom",
+        )
+        self.assertIsNone(dynamic_mod._error_from_phases([suspicious_phase]))
 
 
 if __name__ == "__main__":

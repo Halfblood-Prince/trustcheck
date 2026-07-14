@@ -106,7 +106,7 @@ trusted models and rejects unknown fields or arbitrary custom result objects.
 Trusted plugin loading also requires a signed statement bound to the installed
 distribution version, RECORD digest, canonical installed-content digest,
 dependencies, capabilities, configuration schema hash, and an external trust
-root such as a trusted key, digest allowlist, or Sigstore identity.
+root: either a trusted key fingerprint or an installed-content digest allowlist.
 
 See [Performance and extensibility](performance-extensibility.md) for entry
 point group names and registration examples.

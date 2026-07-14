@@ -112,8 +112,8 @@ advisory options, and enabled plugins. Stale or mismatched state fails closed.
 !!! warning "Experimental"
 
     Third-party Trustcheck plugins remain explicitly opt-in. Keep plugin
-    loading disabled unless the plugin distribution, installed-code digest,
-    and publisher trust root are explicitly approved.
+    loading disabled unless the plugin distribution and installed-code digest
+    are explicitly approved through a trusted key or digest allowlist.
 
 Plugins are disabled by default and require an explicit allowlist. Trusted
 plugin execution requires a signed `trustcheck-plugin.json` statement that
@@ -224,9 +224,14 @@ Configure one trust-policy mode in `_trustcheck`:
 | --- | --- |
 | `trusted-key` | `trusted_signers`: SHA-256 fingerprints of approved public keys |
 | `allowlisted-digest` | `trusted_wheel_sha256`: canonical installed-content digests |
-| `sigstore-identity` | `trusted_sigstore_identities`: identity and issuer pairs |
-| `organization-policy` | Any configured organization-managed trust root |
+| `organization-policy` | Any configured `trusted_signers` or `trusted_wheel_sha256` root |
 | `disabled` | Disables signed-plugin enforcement only when `require_signed=false` |
+
+Plugin statements may not claim `sigstore_identity` or `sigstore_issuer`.
+Sigstore identity trust is intentionally unsupported until Trustcheck verifies
+a real Sigstore bundle or attestation, including the certificate chain, Fulcio
+root, transparency-log inclusion where applicable, certificate identity, OIDC
+issuer, and digest of the exact installed plugin contents.
 
 Example plugin configuration:
 

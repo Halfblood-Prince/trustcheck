@@ -16,6 +16,7 @@ from trustcheck.doctor import (
     _cache_permissions_check,
     _directory_writable,
     _externally_managed_environment_check,
+    _first_output_line,
     _keyring_check,
     _lockfile_tools_check,
     _module_available,
@@ -217,6 +218,42 @@ class DoctorTests(unittest.TestCase):
             ).status,
             "fail",
         )
+
+        def unavailable_pip(command, **kwargs):
+            del kwargs
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                stdout="",
+                stderr="pip module missing\nsecond line",
+            )
+
+        unavailable = _pip_runtime_check(
+            python_executable="python-broken",
+            command_runner=unavailable_pip,
+        )
+        self.assertEqual(unavailable.status, "fail")
+        self.assertIn("exit=1", unavailable.evidence)
+        self.assertIn("pip module missing", unavailable.evidence)
+
+        def unparsable_pip(command, **kwargs):
+            del kwargs
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="pip mystery output",
+                stderr="",
+            )
+
+        unparsable = _pip_runtime_check(
+            python_executable="python-weird",
+            command_runner=unparsable_pip,
+        )
+        self.assertEqual(unparsable.status, "fail")
+        self.assertIn("pip mystery output", unparsable.evidence)
+        self.assertIsNone(_first_output_line("\n  \n"))
+        self.assertEqual(_first_output_line("  useful line  \nsecond"), "useful line")
+        self.assertEqual(len(_first_output_line("x" * 300) or ""), 240)
 
         def missing_pip(command, **kwargs):
             del command, kwargs
