@@ -217,7 +217,6 @@ class PypiClient:
         payload = self._decode_json_payload(payload_bytes, url)
         if self._json_cache is not None:
             self._json_cache[cache_key] = payload
-        self._write_disk_cache(url, payload_bytes, accept=accept)
         return payload
 
     def _request_bytes(self, url: str, *, accept: str | None = None) -> bytes:

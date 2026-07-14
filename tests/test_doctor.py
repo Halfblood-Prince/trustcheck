@@ -15,10 +15,13 @@ from trustcheck.doctor import (
     _bubblewrap_check,
     _cache_permissions_check,
     _directory_writable,
+    _externally_managed_environment_check,
     _keyring_check,
     _lockfile_tools_check,
     _module_available,
+    _pip_runtime_check,
     _private_index_auth_check,
+    _resolver_container_image_check,
     _sandbox_selection_check,
     _sigstore_check,
     _sigstore_state_directories,
@@ -27,6 +30,19 @@ from trustcheck.doctor import (
     render_doctor_text,
     supported_lockfile_patterns,
 )
+
+
+def pip_version_runner(version: str = "26.1.2", *, returncode: int = 0):
+    def runner(command, **kwargs):
+        del kwargs
+        return subprocess.CompletedProcess(
+            command,
+            returncode,
+            stdout=f"pip {version} from /env/site-packages/pip (python 3.13)",
+            stderr="",
+        )
+
+    return runner
 
 
 class DoctorTests(unittest.TestCase):
@@ -48,6 +64,7 @@ class DoctorTests(unittest.TestCase):
                 keyring_provider="auto",
                 sandbox_mode="auto",
                 executable_finder=finder,
+                command_runner=pip_version_runner(),
                 module_checker=lambda name: name in {"sigstore", "keyring"},
                 environ={
                     "XDG_DATA_HOME": str(root / "data"),
@@ -63,10 +80,13 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(checks["Docker"].status, "pass")
         self.assertEqual(checks["Podman"].status, "warn")
         self.assertEqual(checks["Bubblewrap"].status, "pass")
+        self.assertEqual(checks["Resolver pip"].status, "pass")
+        self.assertEqual(checks["Externally managed Python"].status, "pass")
         self.assertEqual(checks["Keyring"].status, "pass")
         self.assertEqual(checks["Sigstore trust roots"].status, "pass")
         self.assertEqual(checks["Private-index authentication"].status, "pass")
         self.assertEqual(checks["Cache permissions"].status, "pass")
+        self.assertEqual(checks["Resolver container image"].status, "pass")
         self.assertIn("pylock*.toml", " ".join(checks["Supported lockfile tools"].evidence))
         self.assertIn("overall: pass", render_doctor_text(report))
         self.assertTrue(json.loads(render_doctor_json(report))["passed"])
@@ -80,6 +100,7 @@ class DoctorTests(unittest.TestCase):
                 keyring_provider="import",
                 sandbox_mode="container",
                 executable_finder=lambda name: None,
+                command_runner=pip_version_runner(),
                 module_checker=lambda name: False,
                 environ={
                     "XDG_DATA_HOME": str(root / "data"),
@@ -95,6 +116,7 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(checks["Keyring"].status, "fail")
         self.assertEqual(checks["Sigstore trust roots"].status, "fail")
         self.assertEqual(checks["Resolver sandbox"].status, "fail")
+        self.assertEqual(checks["Resolver pip"].status, "pass")
 
     def test_check_helpers_cover_platform_and_configuration_branches(self) -> None:
         self.assertEqual(
@@ -166,6 +188,59 @@ class DoctorTests(unittest.TestCase):
             ).status,
             "pass",
         )
+        self.assertEqual(
+            _sandbox_selection_check(
+                sandbox_mode="auto",
+                executable_finder=lambda name: None,
+                platform_system="Windows",
+            ).evidence,
+            ("fallback=strict-wheel-only",),
+        )
+        self.assertEqual(
+            _pip_runtime_check(
+                python_executable=sys.executable,
+                command_runner=pip_version_runner("22.2"),
+            ).status,
+            "pass",
+        )
+        self.assertEqual(
+            _pip_runtime_check(
+                python_executable=sys.executable,
+                command_runner=pip_version_runner("26.0"),
+            ).status,
+            "pass",
+        )
+        self.assertEqual(
+            _pip_runtime_check(
+                python_executable=sys.executable,
+                command_runner=pip_version_runner("21.3"),
+            ).status,
+            "fail",
+        )
+
+        def missing_pip(command, **kwargs):
+            del command, kwargs
+            raise OSError("missing pip")
+
+        self.assertEqual(
+            _pip_runtime_check(
+                python_executable="python-missing",
+                command_runner=missing_pip,
+            ).status,
+            "fail",
+        )
+        self.assertEqual(
+            _resolver_container_image_check(
+                container_image="python:latest",
+            ).status,
+            "fail",
+        )
+        self.assertEqual(
+            _resolver_container_image_check(
+                container_image="python@sha256:" + "a" * 64,
+            ).status,
+            "pass",
+        )
         lockfiles = _lockfile_tools_check(
             executable_finder=lambda name: f"/usr/bin/{name}",
         )
@@ -194,6 +269,23 @@ class DoctorTests(unittest.TestCase):
             file_path = root / "not-a-directory"
             file_path.write_text("x", encoding="utf-8")
             self.assertFalse(_directory_writable(file_path))
+            marker_root = root / "stdlib"
+            marker_root.mkdir()
+            (marker_root / "EXTERNALLY-MANAGED").write_text("", encoding="utf-8")
+            self.assertEqual(
+                _externally_managed_environment_check(
+                    stdlib_path=marker_root,
+                    in_virtualenv=False,
+                ).status,
+                "warn",
+            )
+            self.assertEqual(
+                _externally_managed_environment_check(
+                    stdlib_path=marker_root,
+                    in_virtualenv=True,
+                ).status,
+                "pass",
+            )
 
             with patch("trustcheck.doctor.sys.platform", "linux"):
                 roots = _sigstore_state_directories(environ={}, home=root)
@@ -224,6 +316,7 @@ class DoctorTests(unittest.TestCase):
             extra_index_url=[],
             keyring_provider="auto",
             sandbox="strict",
+            sandbox_image=None,
             format="json",
             output_file="doctor.json",
             strict=False,
@@ -252,6 +345,7 @@ class DoctorTests(unittest.TestCase):
             index_urls=("https://pypi.org/simple/",),
             keyring_provider="auto",
             sandbox_mode="strict",
+            sandbox_image=None,
         )
         self.assertEqual(emitted[-1], ('{"passed": true}', "doctor.json"))
 
@@ -261,6 +355,7 @@ class DoctorTests(unittest.TestCase):
             extra_index_url=["https://packages.example/simple/"],
             keyring_provider="import",
             sandbox="container",
+            sandbox_image="python@sha256:" + "a" * 64,
             format="text",
             output_file=None,
             strict=True,

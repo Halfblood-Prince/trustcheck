@@ -6,11 +6,11 @@ on:
       - "v*.*.*"
 
 permissions:
-  actions: read
-  attestations: write
-  contents: write
-  id-token: write
-  packages: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 env:
   SETUPTOOLS_SCM_PRETEND_VERSION: ${{ github.ref_name }}
@@ -19,6 +19,8 @@ env:
 jobs:
   verify-tag:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       action_major_tag: ${{ steps.release_version.outputs.major_tag }}
 
@@ -64,9 +66,44 @@ jobs:
           echo "Releasing from commit ${GITHUB_SHA}"
           git rev-parse HEAD
 
+      - name: Write release metadata artifact
+        env:
+          ACTION_MAJOR_TAG: ${{ steps.release_version.outputs.major_tag }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p release-metadata
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_TAG"]
+          payload = {
+              "tag": tag,
+              "version": tag.removeprefix("v"),
+              "sha": os.environ["RELEASE_SHA"],
+              "action_major_tag": os.environ["ACTION_MAJOR_TAG"],
+          }
+          Path("release-metadata/release-metadata.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload release metadata
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-metadata-${{ github.sha }}
+          path: release-metadata/release-metadata.json
+          if-no-files-found: error
+
   live-integration-freshness:
     needs: verify-tag
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
 
     steps:
       - name: Require a recent successful live integration run
@@ -102,6 +139,8 @@ jobs:
       - verify-tag
       - live-integration-freshness
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Check out tagged commit
@@ -135,6 +174,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
 
     steps:
       - name: Check out tagged commit
@@ -167,6 +208,9 @@ jobs:
             dist/*.whl \
             dist/*.tar.gz
 
+      - name: Validate distribution artifact contents
+        run: python scripts/validate_distribution_artifacts.py "dist/*.whl" "dist/*.tar.gz"
+
       - name: Prepare package upload directory
         shell: bash
         run: |
@@ -195,6 +239,10 @@ jobs:
   coverage-build:
     needs: matrix-build
     runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
 
     steps:
       - name: Check out tagged commit
@@ -225,6 +273,9 @@ jobs:
             --tag "$GITHUB_REF_NAME" \
             dist/*.whl \
             dist/*.tar.gz
+
+      - name: Validate distribution artifact contents
+        run: python scripts/validate_distribution_artifacts.py "dist/*.whl" "dist/*.tar.gz"
 
       - name: Smoke test built distributions in clean environments
         run: python scripts/smoke_test_distribution.py "dist/*.whl" "dist/*.tar.gz"
@@ -284,6 +335,9 @@ jobs:
   clam-av:
     needs: coverage-build
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
 
     steps:
       - name: Download build artifacts
@@ -330,6 +384,10 @@ jobs:
   snap-qa:
     needs: clam-av
     runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
 
     steps:
       - name: Check out tagged commit
@@ -442,6 +500,10 @@ jobs:
   build-windows-executable:
     needs: coverage-build
     runs-on: windows-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
 
     steps:
       - name: Check out tagged commit
@@ -619,6 +681,9 @@ jobs:
   windows-defender-scan:
     needs: build-windows-executable
     runs-on: windows-latest
+    permissions:
+      actions: read
+      contents: read
 
     steps:
       - name: Download built Windows executable
@@ -741,6 +806,9 @@ jobs:
   windows-clean-install:
     needs: windows-defender-scan
     runs-on: windows-latest
+    permissions:
+      actions: read
+      contents: read
 
     steps:
       - name: Download scanned Windows distributions
@@ -768,6 +836,9 @@ jobs:
   test-msix-installation:
     needs: windows-defender-scan
     runs-on: windows-latest
+    permissions:
+      actions: read
+      contents: read
 
     steps:
       - name: Download Microsoft Store MSIX
@@ -817,6 +888,10 @@ jobs:
   publish-pypi:
     needs: coverage-build
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
 
     steps:
       - name: Download build artifacts
@@ -840,6 +915,9 @@ jobs:
   publish-homebrew-tap:
     needs: publish-pypi
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
 
     steps:
       - name: Check out tagged commit
@@ -920,6 +998,11 @@ jobs:
       - coverage-build
       - verify-tag
     runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
 
     steps:
       - name: Check out tagged commit
@@ -987,6 +1070,9 @@ jobs:
       - coverage-build
       - verify-tag
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
 
     steps:
       - name: Download build artifacts
@@ -1014,7 +1100,6 @@ jobs:
             - `dist/*.cdx.json`
             - standalone `trustcheck-*-windows-x86_64.exe` with checksum
             - unsigned `trustcheck-*-store.msix` for Microsoft Store submission
-            - `trustcheck-gate-*.zip` agent skills plugin bundle
             - GHCR Docker images for `linux/amd64`, `linux/arm64`, and `linux/arm/v7`
 
             Verify the direct Windows executable before use:
@@ -1040,6 +1125,8 @@ jobs:
       - publish-github-release
       - verify-tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Check out released action
@@ -1114,55 +1201,15 @@ jobs:
             echo "[Edit ${RELEASE_TAG} and select **Publish this Action to the GitHub Marketplace**](https://github.com/${GITHUB_REPOSITORY}/releases/edit/${RELEASE_TAG})."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  publish-agent-skills:
-    needs: publish-github-release
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out agent skills plugin
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Publish Trustcheck Gate agent skills
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          archive="trustcheck-gate-${RELEASE_TAG}.zip"
-          mkdir -p skills-release
-          python - <<'PY'
-          import os
-          import zipfile
-          from pathlib import Path
-
-          release_tag = os.environ["RELEASE_TAG"]
-          source = Path("plugins/trustcheck-gate")
-          target = Path("skills-release") / f"trustcheck-gate-{release_tag}.zip"
-          with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
-              for path in sorted(source.rglob("*")):
-                  if path.is_dir() or "__pycache__" in path.parts or path.suffix == ".pyc":
-                      continue
-                  archive.write(path, Path("trustcheck-gate") / path.relative_to(source))
-          PY
-          gh release upload "$RELEASE_TAG" \
-            "skills-release/${archive}" \
-            --clobber \
-            --repo "$GITHUB_REPOSITORY"
-          {
-            echo "## Agent skills release"
-            echo
-            echo "- Uploaded \`${archive}\` with Codex, Claude Code, and Cursor manifests."
-            echo "- Included the shared \`trustcheck-gate\` skill and read-only adapter."
-          } >> "$GITHUB_STEP_SUMMARY"
-
   upload-windows-executable:
     needs:
       - windows-clean-install
       - test-msix-installation
       - publish-github-release
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
 
     steps:
       - name: Download Windows executable
@@ -1184,6 +1231,9 @@ jobs:
   publish-snap:
     needs: snap-qa
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
 
     steps:
       - name: Download verified snap

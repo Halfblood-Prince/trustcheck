@@ -1,4 +1,0 @@
-interface:
-  display_name: "Trustcheck Gate"
-  short_description: "Gate AI dependency changes with trustcheck"
-  default_prompt: "Use $trustcheck-gate to check a package before adding it to this project."

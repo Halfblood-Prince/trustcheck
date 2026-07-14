@@ -34,8 +34,14 @@ jobs:
           python -m pip check
 
       - name: Dependency audit
+        shell: bash
         run: |
-          python -m pip_audit --skip-editable --ignore-vuln PYSEC-2025-183
+          mapfile -t audit_ignore_args < <(
+            python scripts/check_audit_exceptions.py \
+              .github/audit-exceptions.json \
+              --emit-pip-audit-args
+          )
+          python -m pip_audit --skip-editable "${audit_ignore_args[@]}"
 
       - name: Generate SBOM preview
         run: |
@@ -150,6 +156,9 @@ jobs:
 
       - name: Build package
         run: python -m build
+
+      - name: Validate distribution artifact contents
+        run: python scripts/validate_distribution_artifacts.py "dist/*.whl" "dist/*.tar.gz"
 
       - name: Test built sdist source tree
         shell: bash
@@ -330,6 +339,9 @@ jobs:
 
       - name: Build package
         run: python -m build
+
+      - name: Validate distribution artifact contents
+        run: python scripts/validate_distribution_artifacts.py "dist/*.whl" "dist/*.tar.gz"
 
       - name: Smoke test built distributions in clean environments
         run: python scripts/smoke_test_distribution.py "dist/*.whl" "dist/*.tar.gz"

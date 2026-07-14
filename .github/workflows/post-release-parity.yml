@@ -14,7 +14,12 @@ on:
         required: true
 
 permissions:
+  actions: read
   contents: read
+
+concurrency:
+  group: post-release-parity-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.event.inputs.tag }}
+  cancel-in-progress: false
 
 jobs:
   verify-release-channels:
@@ -22,9 +27,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Download release metadata
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-metadata-${{ github.event.workflow_run.head_sha }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: release-metadata
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.event.inputs.tag }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python
@@ -36,13 +52,34 @@ jobs:
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
           INPUT_OBSERVED_JSON: ${{ github.event.inputs.observed-json }}
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
           RELEASE_CHANNEL_OBSERVATIONS_URL: ${{ vars.RELEASE_CHANNEL_OBSERVATIONS_URL }}
         run: |
           tag="${INPUT_TAG:-}"
-          if [ -z "$tag" ]; then
-            tag="$(gh release list --limit 1 --json tagName --jq '.[0].tagName')"
+          release_sha=""
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            metadata="release-metadata/release-metadata.json"
+            if [ ! -s "$metadata" ]; then
+              echo "Release metadata from the triggering workflow run was not found." >&2
+              exit 1
+            fi
+            tag="$(jq -r '.tag // empty' "$metadata")"
+            release_sha="$(jq -r '.sha // empty' "$metadata")"
+            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Release metadata contains an unexpected tag: ${tag}" >&2
+              exit 1
+            fi
+            if [ -z "$release_sha" ]; then
+              echo "Release metadata did not include a commit SHA." >&2
+              exit 1
+            fi
+            if [ "$release_sha" != "$WORKFLOW_RUN_SHA" ]; then
+              echo "Release metadata SHA ${release_sha} did not match workflow run SHA ${WORKFLOW_RUN_SHA}." >&2
+              exit 1
+            fi
           fi
           if [ -z "$tag" ]; then
             echo "Unable to determine the release tag to verify." >&2
@@ -55,6 +92,7 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
           echo "observed_json=$observed_json" >> "$GITHUB_OUTPUT"
 
       - name: Download release checksums
@@ -67,11 +105,17 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
           OBSERVED_JSON: ${{ steps.release.outputs.observed_json }}
         run: |
+          commit_args=()
+          if [ -n "$RELEASE_SHA" ]; then
+            commit_args=(--commit "$RELEASE_SHA")
+          fi
           python scripts/verify_release_channels.py \
             --expected-version "$RELEASE_VERSION" \
             --tag "$RELEASE_TAG" \
+            "${commit_args[@]}" \
             --expected-checksums SHA256SUMS.txt \
             --required-channel pypi \
             --required-channel github \

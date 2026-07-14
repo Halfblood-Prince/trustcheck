@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
+import subprocess  # nosec B404
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -191,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     ]
     print(f"Running acceptance case {case.case_id}: {case.description}")
     print("Command: " + " ".join(command))
-    result = subprocess.run(command, check=False)
+    result = subprocess.run(command, check=False)  # nosec B603
     if result.returncode not in case.expected_exit_codes:
         print(
             (

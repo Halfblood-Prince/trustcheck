@@ -5,7 +5,9 @@ import json
 import os
 import platform
 import shutil
+import subprocess  # nosec B404
 import sys
+import sysconfig
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -15,11 +17,19 @@ from urllib import parse
 
 from .indexes import DEFAULT_INDEX_URL, normalize_index_url, redact_url_credentials
 from .lockfiles import PYLOCK_NAME, SUPPORTED_LOCKFILES
-from .resolver import SANDBOX_MODES
+from .resolver import (
+    DEFAULT_SANDBOX_IMAGE,
+    DIGEST_PINNED_IMAGE_PATTERN,
+    MINIMUM_SUPPORTED_PIP,
+    SANDBOX_MODES,
+    is_supported_pip_version,
+    parse_pip_version_text,
+)
 
 DoctorStatus = Literal["pass", "warn", "fail"]
 ExecutableFinder = Callable[[str], str | None]
 ModuleChecker = Callable[[str], bool]
+CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,11 +61,16 @@ def collect_doctor_report(
     index_urls: Sequence[str] = (DEFAULT_INDEX_URL,),
     keyring_provider: str = "auto",
     sandbox_mode: str = "auto",
+    sandbox_image: str | None = None,
+    python_executable: str = sys.executable,
     executable_finder: ExecutableFinder = shutil.which,
+    command_runner: CommandRunner = subprocess.run,
     module_checker: ModuleChecker | None = None,
     environ: Mapping[str, str] | None = None,
     platform_system: str | None = None,
     home: Path | None = None,
+    stdlib_path: Path | None = None,
+    in_virtualenv: bool | None = None,
 ) -> DoctorReport:
     env = environ if environ is not None else os.environ
     module_available = module_checker or _module_available
@@ -66,6 +81,14 @@ def collect_doctor_report(
         _bubblewrap_check(
             executable_finder=executable_finder,
             platform_system=system,
+        ),
+        _pip_runtime_check(
+            python_executable=python_executable,
+            command_runner=command_runner,
+        ),
+        _externally_managed_environment_check(
+            stdlib_path=stdlib_path,
+            in_virtualenv=in_virtualenv,
         ),
         _keyring_check(
             keyring_provider=keyring_provider,
@@ -88,6 +111,7 @@ def collect_doctor_report(
             executable_finder=executable_finder,
             platform_system=system,
         ),
+        _resolver_container_image_check(container_image=sandbox_image),
     ]
     return DoctorReport(checks=tuple(checks))
 
@@ -154,6 +178,97 @@ def _bubblewrap_check(
         name="Bubblewrap",
         status="warn",
         message="bwrap was not found on PATH.",
+    )
+
+
+def _pip_runtime_check(
+    *,
+    python_executable: str,
+    command_runner: CommandRunner,
+) -> DoctorCheck:
+    command = [python_executable, "-m", "pip", "--version"]
+    try:
+        completed = command_runner(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            shell=False,
+        )
+    except OSError as exc:
+        return DoctorCheck(
+            name="Resolver pip",
+            status="fail",
+            message="unable to start pip through the selected Python executable.",
+            evidence=(str(exc), f"python={python_executable}"),
+        )
+    output = "\n".join(item for item in (completed.stdout, completed.stderr) if item)
+    parsed = parse_pip_version_text(output)
+    if completed.returncode != 0:
+        evidence = [f"python={python_executable}", f"exit={completed.returncode}"]
+        if output_line := _first_output_line(output):
+            evidence.append(output_line)
+        return DoctorCheck(
+            name="Resolver pip",
+            status="fail",
+            message="pip is not available through the selected Python executable.",
+            evidence=tuple(evidence),
+        )
+    if parsed is None:
+        evidence = [f"python={python_executable}"]
+        if output_line := _first_output_line(output):
+            evidence.append(output_line)
+        return DoctorCheck(
+            name="Resolver pip",
+            status="fail",
+            message="unable to parse pip version from resolver subprocess.",
+            evidence=tuple(evidence),
+        )
+    if not is_supported_pip_version(parsed):
+        return DoctorCheck(
+            name="Resolver pip",
+            status="fail",
+            message=(
+                f"pip {parsed} is unsupported; trustcheck requires pip "
+                f">= {MINIMUM_SUPPORTED_PIP} for dry-run installation reports."
+            ),
+            evidence=(f"python={python_executable}", f"pip={parsed}"),
+        )
+    return DoctorCheck(
+        name="Resolver pip",
+        status="pass",
+        message="pip is available through the selected Python executable.",
+        evidence=(f"python={python_executable}", f"pip={parsed}"),
+    )
+
+
+def _externally_managed_environment_check(
+    *,
+    stdlib_path: Path | None,
+    in_virtualenv: bool | None,
+) -> DoctorCheck:
+    virtual = in_virtualenv if in_virtualenv is not None else sys.prefix != sys.base_prefix
+    configured_stdlib = sysconfig.get_path("stdlib")
+    raw_stdlib = stdlib_path or Path(configured_stdlib or sys.prefix)
+    marker = raw_stdlib / "EXTERNALLY-MANAGED"
+    if marker.exists() and not virtual:
+        return DoctorCheck(
+            name="Externally managed Python",
+            status="warn",
+            message=(
+                "this Python installation is externally managed; resolver scans are "
+                "read-only, but a virtualenv or pipx-style install avoids pip policy "
+                "surprises."
+            ),
+            evidence=(str(marker),),
+        )
+    return DoctorCheck(
+        name="Externally managed Python",
+        status="pass",
+        message="the resolver is running in a virtualenv-style or unmanaged Python.",
+        evidence=(f"virtualenv={virtual}",),
     )
 
 
@@ -366,10 +481,15 @@ def _sandbox_selection_check(
             message=f"unsupported sandbox mode: {sandbox_mode}",
         )
     if sandbox_mode in {"off", "warn", "strict"}:
+        message = (
+            "strict wheel-only fallback is available without an OS sandbox runtime."
+            if sandbox_mode == "strict"
+            else f"resolver sandbox mode {sandbox_mode!r} does not require a runtime."
+        )
         return DoctorCheck(
             name="Resolver sandbox",
             status="pass",
-            message=f"resolver sandbox mode {sandbox_mode!r} does not require a runtime.",
+            message=message,
         )
     if sandbox_mode == "bubblewrap":
         status: DoctorStatus = (
@@ -402,8 +522,36 @@ def _sandbox_selection_check(
         name="Resolver sandbox",
         status="pass" if runtime else "warn",
         message=message,
-        evidence=(runtime,) if runtime else (),
+        evidence=(runtime,) if runtime else ("fallback=strict-wheel-only",),
     )
+
+
+def _resolver_container_image_check(
+    *,
+    container_image: str | None,
+) -> DoctorCheck:
+    image = container_image or DEFAULT_SANDBOX_IMAGE
+    if DIGEST_PINNED_IMAGE_PATTERN.fullmatch(image):
+        return DoctorCheck(
+            name="Resolver container image",
+            status="pass",
+            message="container resolver image is pinned by sha256 digest.",
+            evidence=(image,),
+        )
+    return DoctorCheck(
+        name="Resolver container image",
+        status="fail",
+        message="container resolver image must be pinned by a full sha256 digest.",
+        evidence=(image,),
+    )
+
+
+def _first_output_line(output: str) -> str | None:
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:240]
+    return None
 
 
 def _directory_writable(path: Path) -> bool:

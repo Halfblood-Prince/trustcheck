@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -321,11 +322,13 @@ class ResolverTests(unittest.TestCase):
         self.assertEqual(warnings, [])
 
     def test_strict_mode_is_isolated_and_wheel_only(self) -> None:
-        calls: list[list[str]] = []
+        calls: list[tuple[list[str], dict[str, str], bool]] = []
 
         def runner(command, **kwargs):
-            del kwargs
-            calls.append(command)
+            environment = kwargs["env"]
+            self.assertIsInstance(environment, dict)
+            guard_path = Path(environment["PYTHONPATH"])
+            calls.append((command, dict(environment), (guard_path / "sitecustomize.py").is_file()))
             return subprocess.CompletedProcess(
                 command,
                 0,
@@ -340,14 +343,20 @@ class ResolverTests(unittest.TestCase):
             ["demo>=1", "wheel-demo @ https://example.com/demo.whl"],
             offline=True,
         )
-        command = calls[0]
+        command, environment, guard_exists = calls[0]
         self.assertEqual(resolution.sandbox_mode, "strict")
-        self.assertEqual(command[1:3], ["-m", "trustcheck._resolver_guard"])
+        self.assertEqual(command[:4], [sys.executable, "-m", "pip", "install"])
+        self.assertNotIn("trustcheck._resolver_guard", command)
         self.assertIn("--isolated", command)
         self.assertEqual(
             command[command.index("--only-binary") + 1],
             ":all:",
         )
+        self.assertTrue(guard_exists)
+        self.assertIn("PYTHONPATH", environment)
+        self.assertNotIn(os.pathsep, environment["PYTHONPATH"])
+        self.assertEqual(environment["PIP_CONFIG_FILE"], os.devnull)
+        self.assertEqual(environment["PYTHONNOUSERSITE"], "1")
 
     def test_strict_mode_rejects_unsafe_requirement_forms(self) -> None:
         rejected = (

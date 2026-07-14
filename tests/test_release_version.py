@@ -16,20 +16,34 @@ class ReleaseVersionTests(unittest.TestCase):
         lines = manifest.splitlines()
 
         self.assertIn("include scripts/verify_release_version.py", lines)
+        self.assertIn("include scripts/validate_distribution_artifacts.py", lines)
         for directive in (
             "include README.md",
             "include pyproject.toml",
-            "recursive-include tests *",
-            "recursive-include docs *",
-            "recursive-include web *",
+            "recursive-include tests *.py",
+            "recursive-include tests/fixtures *.txt *.json",
+            "recursive-include tests/snapshots *.json",
+            "recursive-include docs *.md",
+            "recursive-include docs/assets *.js *.png",
+            "recursive-include web *.html *.css *.js *.png",
             "recursive-include scripts *.py",
-            "recursive-include snap *",
+            "recursive-include snap *.yaml *.md *.png",
             "recursive-include requirements *.in *.lock",
-            "recursive-include benchmarks *",
-            "recursive-include .github *",
+            "recursive-include benchmarks *.py *.md *.json *.sig *.pem *.txt *.lock *.toml",
+            "recursive-include packaging *.md Dockerfile *.txt",
+            "recursive-include .github *.yml *.yaml *.json",
+            "prune tests/_tmp",
+            "prune plugins",
+            "prune site",
+            "prune build",
+            "prune dist",
+            "global-exclude *.py[cod]",
         ):
             with self.subTest(directive=directive):
                 self.assertIn(directive, lines)
+        self.assertNotIn("recursive-include tests *", lines)
+        self.assertNotIn("recursive-include docs *", lines)
+        self.assertNotIn("recursive-include benchmarks *", lines)
 
     def test_artifact_metadata_must_exactly_match_release_version(self) -> None:
         metadata = b"Metadata-Version: 2.4\nName: trustcheck\nVersion: 1.10.0\n\n"

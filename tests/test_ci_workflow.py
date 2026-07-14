@@ -3,7 +3,14 @@ from __future__ import annotations
 import json
 import re
 import unittest
+from datetime import date
 from pathlib import Path
+
+from scripts.check_audit_exceptions import (
+    AuditExceptionError,
+    emit_pip_audit_args,
+    validate_exceptions,
+)
 
 ROOT = Path(__file__).parents[1]
 
@@ -46,6 +53,10 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
             source_workflow,
         )
         self.assertIn("--expected 0.0.0+source", source_workflow)
+        self.assertGreaterEqual(
+            source_workflow.count("scripts/validate_distribution_artifacts.py"),
+            2,
+        )
         self.assertIn(
             "SETUPTOOLS_SCM_PRETEND_VERSION: ${{ github.ref_name }}",
             release_workflow,
@@ -56,6 +67,10 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         )
         self.assertGreaterEqual(
             release_workflow.count("scripts/verify_release_version.py"), 2
+        )
+        self.assertGreaterEqual(
+            release_workflow.count("scripts/validate_distribution_artifacts.py"),
+            2,
         )
         self.assertIn('--tag "$GITHUB_REF_NAME"', release_workflow)
         build_step_start = release_workflow.index("- name: Build package")
@@ -85,6 +100,11 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         )
         self.assertNotIn('python-version: ["3.10"', publish)
         self.assertIn("name: Test built sdist source tree", workflow)
+        self.assertIn("name: Validate distribution artifact contents", workflow)
+        self.assertIn(
+            'python scripts/validate_distribution_artifacts.py "dist/*.whl" "dist/*.tar.gz"',
+            workflow,
+        )
         self.assertIn("python -m pytest -q tests/test_release_version.py", workflow)
 
     def test_ci_and_release_matrix_cover_all_supported_pythons_on_all_oses(self) -> None:
@@ -121,6 +141,35 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("$GITHUB_STEP_SUMMARY", workflow)
         self.assertNotIn("benchmark_signature.py", workflow)
         self.assertNotIn("BENCHMARK_SIGNING_KEY_PEM", workflow)
+
+    def test_benchmark_workflow_targets_exact_release_sha(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "benchmarks.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("name: Download release metadata", workflow)
+        self.assertIn(
+            "name: release-metadata-${{ github.event.workflow_run.head_sha }}",
+            workflow,
+        )
+        self.assertIn("run-id: ${{ github.event.workflow_run.id }}", workflow)
+        self.assertIn("WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}", workflow)
+        self.assertIn("Release metadata SHA ${RELEASE_SHA}", workflow)
+        self.assertIn("ref: ${{ steps.benchmark_target.outputs.ref }}", workflow)
+        self.assertIn(
+            "trustcheck-pip-audit-benchmark-"
+            "${{ steps.benchmark_target.outputs.artifact_suffix }}",
+            workflow,
+        )
+        self.assertIn(
+            "Package version: \\`$(python -m trustcheck --version)\\`",
+            workflow,
+        )
+        self.assertIn(
+            "Configuration: warmups=1 iterations=5 evidence-iterations=5",
+            workflow,
+        )
+        self.assertNotIn("path: benchmarks/results/latest.json", workflow)
 
     def test_ci_generates_and_publishes_coverage_badge(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
@@ -193,6 +242,114 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertNotIn("python -m pip install bandit", combined)
         self.assertNotIn("python -m pip install mkdocs-material", combined)
 
+    def test_ci_uses_auditable_dependency_audit_exceptions(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        exceptions = json.loads(
+            (ROOT / ".github" / "audit-exceptions.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(exceptions, {"exceptions": []})
+        self.assertIn("scripts/check_audit_exceptions.py", workflow)
+        self.assertIn("--emit-pip-audit-args", workflow)
+        self.assertIn(
+            'python -m pip_audit --skip-editable "${audit_ignore_args[@]}"',
+            workflow,
+        )
+        self.assertNotIn("--ignore-vuln PYSEC-2025-183", workflow)
+
+        valid = {
+            "exceptions": [
+                {
+                    "advisory_id": "PYSEC-2099-1",
+                    "reason": "waiting for an upstream fixed release",
+                    "owner": "security@example.com",
+                    "introduced": "2026-07-01",
+                    "expires": "2026-08-01",
+                }
+            ]
+        }
+        checked = validate_exceptions(valid, today=date(2026, 7, 14))
+        self.assertEqual(
+            emit_pip_audit_args(checked),
+            ["--ignore-vuln", "PYSEC-2099-1"],
+        )
+
+        expired = json.loads(json.dumps(valid))
+        expired["exceptions"][0]["expires"] = "2026-07-13"
+        with self.assertRaises(AuditExceptionError):
+            validate_exceptions(expired, today=date(2026, 7, 14))
+
+    def test_bandit_scans_release_scripts(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "bandit.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("bandit -r src scripts", workflow)
+        self.assertNotIn("plugins/", workflow)
+        self.assertNotIn("bandit -r src\n", workflow)
+
+    def test_release_workflow_uses_job_scoped_permissions(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
+            encoding="utf-8"
+        )
+        header = workflow[: workflow.index("env:")]
+
+        self.assertIn("permissions:\n  contents: read", header)
+        self.assertNotIn("packages: write", header)
+        self.assertIn("group: release-${{ github.ref_name }}", header)
+        self.assertIn("name: Upload release metadata", _job_block(workflow, "verify-tag"))
+        self.assertIn("release-metadata-${{ github.sha }}", _job_block(workflow, "verify-tag"))
+        self.assertIn(
+            "permissions:\n"
+            "      attestations: write\n"
+            "      contents: read\n"
+            "      id-token: write",
+            _job_block(workflow, "coverage-build"),
+        )
+        self.assertIn(
+            "permissions:\n      actions: read\n      contents: write",
+            _job_block(workflow, "publish-github-release"),
+        )
+        self.assertIn(
+            "permissions:\n"
+            "      attestations: write\n"
+            "      contents: read\n"
+            "      id-token: write\n"
+            "      packages: write",
+            _job_block(workflow, "publish-docker"),
+        )
+
+    def test_post_release_parity_uses_triggering_release_ref(self) -> None:
+        workflow = (
+            ROOT / ".github" / "workflows" / "post-release-parity.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("gh release list --limit 1", workflow)
+        self.assertIn("name: Download release metadata", workflow)
+        self.assertIn(
+            "name: release-metadata-${{ github.event.workflow_run.head_sha }}",
+            workflow,
+        )
+        self.assertIn("run-id: ${{ github.event.workflow_run.id }}", workflow)
+        self.assertIn(
+            "group: post-release-parity-${{ github.event_name == "
+            "'workflow_run' && github.event.workflow_run.head_sha || "
+            "github.event.inputs.tag }}",
+            workflow,
+        )
+        self.assertIn(
+            "WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}",
+            workflow,
+        )
+        self.assertIn(
+            "ref: ${{ github.event_name == 'workflow_run' && "
+            "github.event.workflow_run.head_sha || github.event.inputs.tag }}",
+            workflow,
+        )
+        self.assertIn('commit_args=(--commit "$RELEASE_SHA")', workflow)
+
     def test_docs_workflow_publishes_marketing_home_and_docs_subpath(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "docs.yml").read_text(
             encoding="utf-8"
@@ -252,6 +409,9 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
 
     def test_built_distributions_are_smoke_tested_in_clean_venvs(self) -> None:
         command = 'python scripts/smoke_test_distribution.py "dist/*.whl" "dist/*.tar.gz"'
+        validate_command = (
+            'python scripts/validate_distribution_artifacts.py "dist/*.whl" "dist/*.tar.gz"'
+        )
 
         for workflow_name, job_name in (
             ("ci.yml", "test-matrix"),
@@ -265,6 +425,8 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
             job = _job_block(workflow, job_name)
 
             with self.subTest(workflow=workflow_name, job=job_name):
+                self.assertIn("name: Validate distribution artifact contents", job)
+                self.assertIn(validate_command, job)
                 self.assertIn("name: Smoke test built distributions in clean environments", job)
                 self.assertIn(command, job)
                 self.assertNotIn(
@@ -296,47 +458,21 @@ class CoverageBadgeWorkflowTests(unittest.TestCase):
         self.assertIn("dist/*.cdx.json", workflow)
         self.assertNotIn("dist/trustcheck-sbom.json", workflow)
 
-    def test_release_publishes_agent_skills_bundle_to_github_release(self) -> None:
+    def test_release_does_not_publish_external_plugin_bundle_from_main_repo(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
             encoding="utf-8"
         )
         release = _job_block(workflow, "publish-github-release")
         action = _job_block(workflow, "publish-github-action")
-        skills = _job_block(workflow, "publish-agent-skills")
 
-        self.assertIn("trustcheck-gate-*.zip", release)
+        self.assertNotIn("*gate*.zip", release)
+        self.assertNotIn("publish-plugin-bundle:", workflow)
+        self.assertNotIn("plugins/", workflow)
         self.assertIn("- publish-github-release", action)
-        self.assertNotIn("name: Publish Trustcheck Gate agent skills", action)
-        self.assertIn("needs: publish-github-release", skills)
-        self.assertIn("name: Publish Trustcheck Gate agent skills", skills)
-        self.assertIn("name: Check out agent skills plugin", skills)
-        self.assertIn('source = Path("plugins/trustcheck-gate")', skills)
-        self.assertIn('archive="trustcheck-gate-${RELEASE_TAG}.zip"', skills)
-        self.assertIn('gh release upload "$RELEASE_TAG"', skills)
-        self.assertIn('"skills-release/${archive}"', skills)
-        self.assertIn("--clobber", skills)
 
-    def test_trustcheck_gate_plugin_uses_portable_direct_skill_layout(self) -> None:
-        plugin_root = ROOT / "plugins" / "trustcheck-gate"
-        skill = plugin_root / "skills" / "trustcheck-gate" / "SKILL.md"
-
-        self.assertTrue(skill.exists())
-        for manifest_dir in (".codex-plugin", ".claude-plugin", ".cursor-plugin"):
-            manifest = json.loads(
-                (plugin_root / manifest_dir / "plugin.json").read_text(
-                    encoding="utf-8"
-                )
-            )
-            with self.subTest(manifest=manifest_dir):
-                self.assertEqual(manifest["name"], "trustcheck-gate")
-                self.assertEqual(manifest.get("skills"), "./skills/")
-
-        nested_skill_entries = [
-            path
-            for path in (plugin_root / "skills").glob("*/*/SKILL.md")
-            if path != skill
-        ]
-        self.assertEqual(nested_skill_entries, [])
+    def test_external_plugin_bundle_is_not_owned_by_main_repository(self) -> None:
+        self.assertFalse((ROOT / "plugins").exists())
+        self.assertFalse((ROOT / "tests" / "test_agent_adapter.py").exists())
 
     def test_ci_gates_pull_requests_with_dependency_review(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(

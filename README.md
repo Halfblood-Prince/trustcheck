@@ -24,48 +24,28 @@
 [![Get it from the Snap Store](https://snapcraft.io/en/dark/install.svg)](https://snapcraft.io/trustcheck)
 <a href="https://pypi.org/project/trustcheck/"><img src="https://raw.githubusercontent.com/Halfblood-Prince/trustcheck/coverage-badge/PyPI.png" alt="Get it from PyPI" height="55"></a>
 
-`trustcheck` is a Python package and CLI for deciding whether a PyPI release,
-dependency file, or dependency update is safe enough to install, merge, or
-promote.
+`trustcheck` is a Python CLI and library for deciding whether a PyPI package,
+dependency file, or dependency update has enough trust evidence to install,
+merge, or promote.
 
-It combines vulnerability intelligence, PyPI provenance, cryptographic
-attestation verification, Trusted Publisher identity, repository matching,
-artifact hashes, private-index origin checks, and package-risk heuristics into
-one operator-friendly report.
+It combines vulnerability intelligence, PyPI provenance, Sigstore
+attestations, Trusted Publisher identity, repository matching, artifact hashes,
+private-index origin checks, static artifact inspection, and policy evaluation
+into one report. JSON reports currently use JSON schema `1.11.0`; package and
+report schema versions are independent.
 
 Standalone Windows and Linux executables are scanned by
 [Binary Security](https://github.com/Halfblood-Prince/trustcheck/actions/workflows/binary-security.yml)
 with Microsoft Defender and ClamAV.
 
-## Why trustcheck
-
-- Verifies PyPI provenance and artifact digests instead of trusting metadata alone.
-- Scans packages, requirements files, `pyproject.toml`, supported lockfiles,
-  installed environments, and dependency update pull requests.
-- Closes the check-to-install gap with `trustcheck install`, which installs only
-  already-verified artifacts from a temporary local wheelhouse.
-- Blocks trust regressions with manifests, repository expectations, publisher
-  policies, private-index protections, and CI-ready exit codes.
-- Emits text, JSON, SARIF, CycloneDX, SPDX, OpenVEX, and Markdown for humans,
-  release gates, code scanning, SBOMs, and downstream automation.
-- Benchmarked against `pip-audit` with matching recall and faster warm p50 in
-  the published fixed-input comparison.
-
 <!-- trustcheck-benchmark:start -->
 ## Latest benchmark
 
-Generated `2026-07-04T12:38:12.871592+00:00` on Python `3.14.6` with
-`pip-audit 2.10.1`. Corpus `2026.06` contains 133 entries; this fixed-input
-`--no-deps` comparison covers 112 comparable package entries.
-
-| Tool | Cold p50 | Warm p50 | Warm p95 | Peak RSS | Requests p50 | Recall |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| trustcheck scan --fast | 16.00 s | 14.20 s | 14.44 s | 78.0 MiB | unknown | 1 |
-| pip-audit | 36.69 s | 38.51 s | 39.82 s | 75.6 MiB | unknown | 1 |
-
-Alias-aware agreement: `1.0` across `105` compared packages and `263` matched
-advisories.
-Resolver exact match: `True` (trustcheck `22`, pip-audit `22`).
+The full fixed-input `pip-audit 2.10.1` comparison, corpus details, signed
+truth-corpus gates, and benchmark caveats live in the
+[Benchmarks](https://halfblood-prince.github.io/trustcheck/docs/reference/benchmarks/)
+reference. README benchmark markers are kept so maintainers can publish a
+reviewed table from `benchmarks/results/latest.json` when appropriate.
 <!-- trustcheck-benchmark:end -->
 
 ## Installation
@@ -74,7 +54,7 @@ Resolver exact match: `True` (trustcheck `22`, pip-audit `22`).
 pip install trustcheck
 ```
 
-Optional private-index keyring support:
+Private-index keyring support is optional:
 
 ```bash
 pip install "trustcheck[keyring]"
@@ -100,24 +80,38 @@ You can always bypass shell PATH lookup with:
 snap run trustcheck inspect requests
 ```
 
-Machine-readable reports currently use JSON schema `1.11.0`. Package and
-report schema versions are independent.
+## Three Commands
 
-## Quick start
+Inspect one release and its provenance:
 
 ```bash
-trustcheck inspect requests
-trustcheck scan -f requirements.txt --standard
+trustcheck inspect sampleproject --version 4.0.0 --expected-repo https://github.com/pypa/sampleproject
+```
+
+Scan a dependency file in CI:
+
+```bash
+trustcheck scan -f requirements.txt --policy strict --format json
+```
+
+Verify before installing:
+
+```bash
 trustcheck install -r requirements.txt --policy strict
 ```
 
-Review a dependency update:
+## Security Model
 
-```bash
-trustcheck diff requirements-old.lock requirements-new.lock
-```
+Trustcheck is evidence-producing, not a proof of safety. It can block policy
+failures, malformed artifacts, dependency-confusion risks, missing or changed
+provenance, vulnerable releases, and suspicious static signals. It cannot prove
+that a package is benign, and missing upstream data may make a result
+inconclusive.
 
-Run it in GitHub Actions:
+Dynamic installation analysis and third-party Trustcheck plugins are opt-in and
+experimental.
+
+## GitHub Action
 
 ```yaml
 steps:
@@ -128,16 +122,9 @@ steps:
       policy: strict
 ```
 
-## Command map
-
-| Command | Use it to |
-| --- | --- |
-| `trustcheck inspect` | assess one PyPI release |
-| `trustcheck scan` | audit a dependency file or package |
-| `trustcheck install` | verify before installing |
-| `trustcheck diff` | review dependency update PRs |
-| `trustcheck manifest` | lock approved trust evidence |
-| `trustcheck impact` | prioritize vulnerable packages by observed usage |
+Use `@v2` for compatible updates. For immutable release gates, pin the Action
+and supporting actions to a full commit SHA such as
+`Halfblood-Prince/trustcheck@<full-release-commit-sha>`.
 
 ## Documentation
 
@@ -148,7 +135,14 @@ Full docs: <https://halfblood-prince.github.io/trustcheck/docs/>
 - [CLI overview](https://halfblood-prince.github.io/trustcheck/docs/cli/)
 - [CI integration](https://halfblood-prince.github.io/trustcheck/docs/guides/ci-integration/)
 - [Trust model](https://halfblood-prince.github.io/trustcheck/docs/reference/trust-model/)
+- [Limitations and data flows](https://halfblood-prince.github.io/trustcheck/docs/reference/limitations-data-flows/)
 - [Benchmarks](https://halfblood-prince.github.io/trustcheck/docs/reference/benchmarks/)
+
+## Support
+
+- Bugs and feature requests: <https://github.com/Halfblood-Prince/trustcheck/issues>
+- Sensitive security reports: <https://github.com/Halfblood-Prince/trustcheck/security/advisories/new>
+- Security policy: <https://github.com/Halfblood-Prince/trustcheck/security/policy>
 
 ## License
 

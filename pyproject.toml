@@ -12,6 +12,8 @@ dynamic = ["version"]
 description = "Package trust and provenance verification for PyPI consumers."
 readme = "README.md"
 requires-python = ">=3.11"
+authors = [{ name = "Halfblood Prince" }]
+maintainers = [{ name = "Halfblood Prince" }]
 keywords = ["pypi", "security", "supply-chain", "provenance", "attestations"]
 license = "LicenseRef-Trustcheck-Personal-Use"
 license-files = ["LICENSE"]
@@ -29,6 +31,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Typing :: Typed",
 ]
 dependencies = [
   "cryptography>=49.0.0,<50",
@@ -56,6 +59,7 @@ trustcheck-workspace = "trustcheck.workspace:main"
 Repository = "https://github.com/Halfblood-Prince/trustcheck"
 Documentation = "https://halfblood-prince.github.io/trustcheck/docs/"
 Issues = "https://github.com/Halfblood-Prince/trustcheck/issues"
+Support = "https://github.com/Halfblood-Prince/trustcheck/issues"
 Changelog = "https://github.com/Halfblood-Prince/trustcheck/releases"
 Security = "https://github.com/Halfblood-Prince/trustcheck/security/advisories/new"
 

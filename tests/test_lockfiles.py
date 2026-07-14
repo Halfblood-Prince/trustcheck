@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from packaging.requirements import Requirement
 
+from trustcheck.lockfile_parsers import FunctionLockfileParser, select_lockfile_parser
 from trustcheck.lockfiles import (
     LockedPackage,
     LockfileResolution,
@@ -52,6 +53,35 @@ class LockfileTests(unittest.TestCase):
         self.assertTrue(is_supported_lockfile(Path("pylock.prod.toml")))
         self.assertFalse(is_supported_lockfile(Path("pylock.bad.name.toml")))
         self.assertFalse(is_supported_lockfile(Path("requirements.txt")))
+
+    def test_lockfile_parser_registry_selects_first_matching_parser(self) -> None:
+        calls: list[str] = []
+
+        def loader(path, extras, groups, environment):
+            del extras, groups, environment
+            calls.append(path.name)
+            return "loaded"
+
+        first = FunctionLockfileParser(
+            name="first",
+            supports_name=lambda name: name.endswith(".lock"),
+            loader=loader,
+        )
+        second = FunctionLockfileParser(
+            name="second",
+            supports_name=lambda name: name == "demo.lock",
+            loader=loader,
+        )
+
+        parser = select_lockfile_parser(Path("demo.lock"), (first, second))
+
+        self.assertIs(parser, first)
+        self.assertEqual(
+            parser.load(Path("demo.lock"), extras=(), groups=(), environment=None),
+            "loaded",
+        )
+        self.assertEqual(calls, ["demo.lock"])
+        self.assertIsNone(select_lockfile_parser(Path("requirements.txt"), (first,)))
 
     def test_load_lockfile_rejects_non_mapping_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

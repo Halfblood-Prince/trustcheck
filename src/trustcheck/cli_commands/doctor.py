@@ -19,6 +19,7 @@ def run(args: argparse.Namespace, context: CommandContext) -> int:
         index_urls=(args.index_url, *args.extra_index_url),
         keyring_provider=args.keyring_provider,
         sandbox_mode=args.sandbox,
+        sandbox_image=args.sandbox_image,
     )
     rendered = (
         render_doctor_json(report)

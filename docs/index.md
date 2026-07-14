@@ -67,7 +67,10 @@ steps:
       policy: strict
 ```
 
-The action uploads a JSON report and propagates the CLI policy exit code.
+The action asks the CLI for JSON internally, uploads the selected report
+artifact, and propagates the CLI policy exit code. The default artifact is
+`trustcheck-report.txt`; set `format: json` when an integration expects
+`trustcheck-report.json`.
 
 ## Common use cases
 
@@ -192,6 +195,7 @@ and report schema are versioned independently.
 - Use [Python API](reference/python-api.md) for programmatic use
 - Use [Compatibility](reference/compatibility.md) for API and JSON stability guarantees
 - Use [Performance and extensibility](reference/performance-extensibility.md) for batching, caching, snapshots, resume state, and plugins
+- Use [Limitations and data flows](reference/limitations-data-flows.md) for result meanings, privacy behavior, external services, retained data, and experimental feature limits
 - Use [Benchmarks](reference/benchmarks.md) for the reproducible `pip-audit` comparison
 - Use [Malicious-package detection](reference/malicious-package-detection.md) for heuristic scoring and calibration status
 - Use [Trust model and repository matching](reference/trust-model.md) for verification semantics and diagnostics

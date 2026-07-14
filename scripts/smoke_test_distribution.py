@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import glob
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 import tempfile
 from pathlib import Path
@@ -26,7 +26,7 @@ def _venv_executable(venv: Path, name: str) -> Path:
 def _run(command: list[Path | str]) -> None:
     rendered = " ".join(str(part) for part in command)
     print(f"+ {rendered}", flush=True)
-    subprocess.run([str(part) for part in command], cwd=ROOT, check=True)
+    subprocess.run([str(part) for part in command], cwd=ROOT, check=True)  # nosec B603
 
 
 def _expand_artifacts(patterns: list[str]) -> list[Path]:

@@ -21,6 +21,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from ._resolver_guard import write_sitecustomize
 from .indexes import (
     DependencyConfusionFinding,
     IndexConfiguration,
@@ -40,9 +41,30 @@ DEFAULT_SANDBOX_IMAGE = (
     "python:3.13-slim@"
     "sha256:c33f0bc4364a6881bed1ec0cc2665e6c53c87a43e774aaeab88e6f17af105e4f"
 )
+MINIMUM_SUPPORTED_PIP = Version("22.2")
+PIP_VERSION_PATTERN = re.compile(r"\bpip\s+([0-9][^\s]*)")
 DIGEST_PINNED_IMAGE_PATTERN = re.compile(r"^\S+@sha256:[0-9a-fA-F]{64}$")
 # This path is mounted as a fresh private tmpfs in each enforced sandbox.
 SANDBOX_TEMP_DIRECTORY = "/tmp"  # nosec B108
+STRICT_ENVIRONMENT_ALLOWLIST = frozenset(
+    {
+        "CURL_CA_BUNDLE",
+        "COMSPEC",
+        "HOME",
+        "LANG",
+        "LOCALAPPDATA",
+        "PATH",
+        "PATHEXT",
+        "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_FILE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "USERPROFILE",
+        "WINDIR",
+    }
+)
 
 
 class RepositoryIndexClient(Protocol):
@@ -299,6 +321,8 @@ class PipResolver:
             )
         run_cwd = Path(cwd).resolve() if cwd is not None else Path.cwd().resolve()
         stage_directory: tempfile.TemporaryDirectory[str] | None = None
+        guard_directory: tempfile.TemporaryDirectory[str] | None = None
+        subprocess_env: dict[str, str] | None = None
         try:
             sandbox_workspace = run_cwd
             staged_arguments = list(install_arguments)
@@ -344,12 +368,12 @@ class PipResolver:
                 command.extend(self.indexes.pip_arguments())
             command.extend(staged_arguments)
             if selected_mode == "strict":
-                command = [
-                    command[0],
-                    "-m",
-                    "trustcheck._resolver_guard",
-                    *command[3:],
-                ]
+                guard_directory = tempfile.TemporaryDirectory(
+                    prefix="trustcheck-resolver-guard-"
+                )
+                guard_path = Path(guard_directory.name).resolve()
+                write_sitecustomize(guard_path)
+                subprocess_env = _strict_resolver_environment(guard_path)
             command, subprocess_cwd = self._sandbox_command(
                 command,
                 mode=selected_mode,
@@ -367,10 +391,13 @@ class PipResolver:
                 errors="replace",
                 check=False,
                 shell=False,
+                env=subprocess_env,
             )
         except OSError as exc:
             raise ResolutionError(f"unable to start pip dependency resolver: {exc}") from exc
         finally:
+            if guard_directory is not None:
+                guard_directory.cleanup()
             if stage_directory is not None:
                 stage_directory.cleanup()
         if completed.returncode != 0:
@@ -1053,6 +1080,39 @@ def _dependency_group_risks(path: Path, group: str) -> list[str]:
         if isinstance(item, str)
         for risk in _requirement_risks(item)
     ]
+
+
+def _strict_resolver_environment(sitecustomize_dir: Path) -> dict[str, str]:
+    allowed = {name.upper() for name in STRICT_ENVIRONMENT_ALLOWLIST}
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in allowed or key.upper().startswith("LC_")
+    }
+    environment.update(
+        {
+            "PIP_CONFIG_FILE": os.devnull,
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+            "PIP_NO_INPUT": "1",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONPATH": str(sitecustomize_dir),
+        }
+    )
+    return environment
+
+
+def parse_pip_version_text(output: str) -> Version | None:
+    match = PIP_VERSION_PATTERN.search(output)
+    if match is None:
+        return None
+    try:
+        return Version(match.group(1))
+    except InvalidVersion:
+        return None
+
+
+def is_supported_pip_version(version: Version) -> bool:
+    return version >= MINIMUM_SUPPORTED_PIP
 
 
 def parse_installation_report(payload: object) -> Resolution:

@@ -3,13 +3,38 @@ include CHANGELOG.md
 include LICENSE
 include MANIFEST.in
 include action.yml
+include Dockerfile
+include mkdocs.yml
 include pyproject.toml
 include scripts/verify_release_version.py
-recursive-include tests *
-recursive-include docs *
-recursive-include web *
+include scripts/validate_distribution_artifacts.py
+recursive-include tests *.py
+recursive-include tests/fixtures *.txt *.json
+recursive-include tests/snapshots *.json
+recursive-include docs *.md
+recursive-include docs/assets *.js *.png
+recursive-include web *.html *.css *.js *.png
 recursive-include scripts *.py
-recursive-include snap *
+recursive-include snap *.yaml *.md *.png
 recursive-include requirements *.in *.lock
-recursive-include benchmarks *
-recursive-include .github *
+recursive-include benchmarks *.py *.md *.json *.sig *.pem *.txt *.lock *.toml
+recursive-include packaging *.md Dockerfile *.txt
+recursive-include .github *.yml *.yaml *.json
+prune .mypy_cache
+prune .pytest_cache
+prune .ruff_cache
+prune .tmp-build
+prune build
+prune dist
+prune htmlcov
+prune plugins
+prune site
+prune tests/_tmp
+global-exclude *.py[cod]
+global-exclude __pycache__
+global-exclude .coverage
+global-exclude .DS_Store
+global-exclude Thumbs.db
+global-exclude *.swp
+global-exclude *.swo
+global-exclude *~

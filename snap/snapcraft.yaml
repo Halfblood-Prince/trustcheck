@@ -62,13 +62,41 @@ apps:
       - removable-media
 
 parts:
+  runtime-wheelhouse:
+    plugin: nil
+    source: .
+    build-packages:
+      - python3-pip
+    override-build: |
+      mkdir -p "$CRAFT_PART_INSTALL/wheelhouse/build" "$CRAFT_PART_INSTALL/wheelhouse/runtime"
+      python3 -m pip download \
+        --disable-pip-version-check \
+        --require-hashes \
+        --dest "$CRAFT_PART_INSTALL/wheelhouse/build" \
+        --requirement requirements/snap-build.lock
+      python3 -m pip download \
+        --disable-pip-version-check \
+        --require-hashes \
+        --only-binary=:all: \
+        --dest "$CRAFT_PART_INSTALL/wheelhouse/runtime" \
+        --requirement requirements/runtime.lock
+
   trustcheck:
     plugin: python
+    after:
+      - runtime-wheelhouse
     source: .
-    python-packages:
-      - pip
-      - setuptools
-      - wheel
+    python-requirements:
+      - requirements/runtime.lock
+    python-packages: []
+    build-packages:
+      - python3-pip
+    build-environment:
+      - PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      - PIP_REQUIRE_HASHES: "1"
+      - PIP_NO_INDEX: "1"
+      - PIP_NO_DEPS: "1"
+      - PIP_FIND_LINKS: "$CRAFT_STAGE/wheelhouse/runtime"
     stage-packages:
       - ca-certificates
     override-build: |
@@ -76,6 +104,17 @@ parts:
       sed -i -E \
         "s/^fallback_version = .*/fallback_version = \"${release_version}\"/" \
         "$CRAFT_PART_BUILD/pyproject.toml"
+      python3 -m pip install \
+        --disable-pip-version-check \
+        --require-hashes \
+        --no-index \
+        --find-links "$CRAFT_STAGE/wheelhouse/build" \
+        --requirement "$CRAFT_PART_BUILD/requirements/snap-build.lock"
       export SETUPTOOLS_SCM_PRETEND_VERSION="$release_version"
       export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK="$release_version"
+      export PIP_DISABLE_PIP_VERSION_CHECK=1
+      export PIP_REQUIRE_HASHES=1
+      export PIP_NO_INDEX=1
+      export PIP_NO_DEPS=1
+      export PIP_FIND_LINKS="$CRAFT_STAGE/wheelhouse/runtime"
       craftctl default

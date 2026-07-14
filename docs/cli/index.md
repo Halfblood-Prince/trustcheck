@@ -44,6 +44,11 @@ Check local resolver, index, and provenance-verification prerequisites:
 trustcheck doctor
 ```
 
+`doctor` verifies that the selected Python can run `python -m pip`, reports
+unsupported pip versions, detects externally managed Python installs, checks
+resolver sandbox runtime availability, and validates that any configured
+container resolver image is pinned by digest.
+
 ## Core flags
 
 - `--version`: inspect a specific release instead of the latest project version
@@ -233,6 +238,10 @@ Requirements scans are resolved as complete environments with pip's
 installation-report interface. Nested `-r` requirements, nested `-c`
 constraints, hashes, extras, editable requirements, direct URLs, and VCS
 requirements use pip's own parsing and resolution behavior.
+Trustcheck invokes pip through the supported subprocess CLI,
+`python -m pip`; it does not import or call unsupported `pip._internal`
+modules. Resolver diagnostics require pip `>= 22.2`, the first supported
+compatibility floor for dry-run installation reports.
 
 Apply an additional constraints file and resolve for a target:
 
@@ -263,7 +272,7 @@ trustcheck scan -f requirements.txt --sandbox auto
 | `auto` | Default. Prefer Bubblewrap on Linux, then Docker/Podman; fall back to `strict`. |
 | `container` | Run as UID/GID 65534 in a read-only Docker/Podman container with no capabilities, `no-new-privileges`, bounded PIDs, a temporary cache, and only staged resolver inputs mounted read-only. |
 | `bubblewrap` | On Linux, unshare user, mount, IPC, UTS, cgroup, and PID namespaces; clear the environment; expose system paths and staged resolver inputs read-only. |
-| `strict` | Reject editable, VCS, source-archive, local non-wheel, and direct non-wheel inputs; use isolated pip configuration, require wheels, and deny child-process creation so unexpected transitive source hooks fail closed. |
+| `strict` | Reject editable, VCS, source-archive, local non-wheel, and direct non-wheel inputs; use isolated pip configuration, require wheels, and inject a temporary `sitecustomize.py` audit guard through a minimal `PYTHONPATH` so unexpected transitive source hooks fail closed. |
 
 Container and Bubblewrap keep network access because dependency resolution must
 reach configured indexes. They stage only requirement and constraint files,
@@ -273,6 +282,10 @@ project workspace, user home, and host pip cache are not mounted.
 resolution unless the configured index provides a target-compatible wheel.
 External keyring helpers are also unavailable in strict mode; use index URL
 credentials or an authenticated index endpoint.
+Container and Bubblewrap are the strong OS-sandbox modes. The strict mode is a
+portable wheel-only fallback for systems where those runtimes are unavailable;
+it constrains resolver inputs and child-process creation, but it is not a
+filesystem or network namespace.
 
 The container backend defaults to
 `python:3.13-slim@sha256:c33f0bc4364a6881bed1ec0cc2665e6c53c87a43e774aaeab88e6f17af105e4f`.

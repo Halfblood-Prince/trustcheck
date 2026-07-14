@@ -12,6 +12,19 @@ jobs:
   policy-mutations:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          - policy-thresholds
+          - plugin-ipc-validation
+          - plugin-trust-binding
+          - resolver-guard-decisions
+          - provenance-identity-matching
+          - archive-record-limits
+          - remediation-candidates
+          - dependency-confusion
+          - advisory-merge-schema
 
     steps:
       - name: Check out repository
@@ -31,15 +44,15 @@ jobs:
           python -m pip install --disable-pip-version-check --no-build-isolation --no-deps -e .
           python -m pip check
 
-      - name: Run decision-logic mutations
+      - name: Resolve mutation group targets
         run: >-
-          mutmut run
-          "trustcheck.policy._apply_suppressions*"
-          "trustcheck.indexes.SimpleRepositoryClient.find_dependency_confusion*"
-          "trustcheck.policy.evaluate_policy*"
-          "trustcheck.remediation._candidate_objective*"
-          "trustcheck.remediation._lockfile_hash_validation_from_artifacts*"
-          "trustcheck.remediation._root_allows_any_candidate*"
+          python scripts/mutation_targets.py
+          .github/mutation-groups.toml
+          "${{ matrix.group }}"
+          > mutation-targets.txt
+
+      - name: Run ${{ matrix.group }} mutations
+        run: xargs mutmut run < mutation-targets.txt
 
       - name: Export and enforce mutation score
         run: |
@@ -52,6 +65,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: mutation-results-${{ github.sha }}
-          path: mutants/mutmut-cicd-stats.json
+          name: mutation-results-${{ matrix.group }}-${{ github.sha }}
+          path: |
+            mutation-targets.txt
+            mutants/mutmut-cicd-stats.json
           if-no-files-found: warn

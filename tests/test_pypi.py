@@ -451,6 +451,24 @@ class PypiClientTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(second["info"]["version"], "1.0.0")
 
+    def test_json_request_stores_disk_cache_once(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = pypi_module.PypiClient(
+                cache_dir=tmpdir,
+                request_hook=lambda event, payload: events.append((event, payload)),
+            )
+            with patch(
+                "urllib.request.urlopen",
+                return_value=FakeResponse(json.dumps({"info": {"version": "1.0.0"}}).encode()),
+            ):
+                payload = client.get_project("demo")
+
+        self.assertEqual(payload["info"]["version"], "1.0.0")
+        cache_stores = [payload for event, payload in events if event == "cache_store"]
+        self.assertEqual(len(cache_stores), 1)
+        self.assertEqual(cache_stores[0]["kind"], "content-addressed")
+
     def test_nested_url_error_reasons_and_network_helpers(self) -> None:
         class ReasonWrapper:
             def __init__(self, reason: object) -> None:

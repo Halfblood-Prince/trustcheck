@@ -136,7 +136,7 @@ needed to call these rates measured. The seed manifest at
 corpus strata and metric contract, and is deliberately marked
 `seed-unmeasured`.
 
-The next security milestone is to populate that corpus with:
+The next calibration step is to populate that corpus with:
 
 - known malicious PyPI releases
 - typo-squats and dependency-confusion cases

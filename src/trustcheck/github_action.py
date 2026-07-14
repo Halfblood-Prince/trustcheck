@@ -7,8 +7,9 @@ import sys
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
+from .action_options import RUNTIME_ACTION_INPUTS, ActionInputSpec
 from .cli import EXIT_DATA_ERROR, EXIT_OK, EXIT_USAGE
 from .cli import main as cli_main
 from .cli_render import _render_scan_text, _render_text_report
@@ -94,235 +95,35 @@ class ActionSettings:
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> ActionSettings:
-        target = environment.get("TRUSTCHECK_ACTION_TARGET", "").strip()
+        values: dict[str, Any] = {}
+        for spec in RUNTIME_ACTION_INPUTS:
+            if spec.field is None:
+                continue
+            values[spec.field] = _parse_action_input(
+                spec,
+                _action_environment_value(environment, spec),
+            )
+
+        target = str(values["target"]).strip()
         if not target:
             raise ActionInputError("the action input 'target' is required")
-        output_format = (
-            environment.get("TRUSTCHECK_ACTION_FORMAT", "text").strip()
-            or "text"
-        )
+        output_format = str(values["output_format"]).strip() or "text"
         if output_format not in OUTPUT_FORMATS:
             raise ActionInputError(
                 "'format' must be one of: " + ", ".join(OUTPUT_FORMATS)
             )
-        remediation = (
-            environment.get("TRUSTCHECK_ACTION_REMEDIATION", "none").strip()
-            or "none"
-        )
-        if remediation not in {"none", "plan", "fix"}:
-            raise ActionInputError(
-                "'remediation' must be 'none', 'plan', or 'fix'"
-            )
-        try:
-            max_fix_attempts = int(
-                environment.get(
-                    "TRUSTCHECK_ACTION_MAX_FIX_ATTEMPTS",
-                    "256",
-                )
-            )
-        except ValueError as exc:
-            raise ActionInputError(
-                "'max-fix-attempts' must be an integer"
-            ) from exc
-        if max_fix_attempts < 1:
-            raise ActionInputError(
-                "'max-fix-attempts' must be at least 1"
-            )
-        try:
-            max_workers = int(
-                environment.get(
-                    "TRUSTCHECK_ACTION_WORKERS",
-                    environment.get("TRUSTCHECK_ACTION_MAX_WORKERS", "8"),
-                )
-            )
-        except ValueError as exc:
-            raise ActionInputError("'workers' must be an integer") from exc
-        if max_workers != -1 and not 1 <= max_workers <= 64:
-            raise ActionInputError("'workers' must be -1 or between 1 and 64")
-        try:
-            max_advisory_age = float(
-                environment.get("TRUSTCHECK_ACTION_MAX_ADVISORY_AGE", "168")
-            )
-        except ValueError as exc:
-            raise ActionInputError("'max-advisory-age' must be a number") from exc
-        if max_advisory_age <= 0:
-            raise ActionInputError("'max-advisory-age' must be positive")
-        sandbox = (
-            environment.get("TRUSTCHECK_ACTION_SANDBOX", "strict").strip()
-            or "strict"
-        )
-        if sandbox not in SANDBOX_MODES:
+        if values["remediation"] not in {"none", "plan", "fix"}:
+            raise ActionInputError("'remediation' must be 'none', 'plan', or 'fix'")
+        if values["sandbox"] not in SANDBOX_MODES:
             raise ActionInputError(
                 "'sandbox' must be off, warn, auto, container, bubblewrap, or strict"
             )
-        report_path = environment.get(
-            "TRUSTCHECK_ACTION_REPORT_PATH", ""
-        ).strip() or _default_report_path(output_format)
-        return cls(
-            target=target,
-            policy=environment.get("TRUSTCHECK_ACTION_POLICY", "default").strip()
-            or "default",
-            expected_repo=environment.get(
-                "TRUSTCHECK_ACTION_EXPECTED_REPO", ""
-            ).strip(),
-            trusted_publisher_organizations=_parse_multi_value(
-                environment.get(
-                    "TRUSTCHECK_ACTION_TRUSTED_PUBLISHER_ORGANIZATIONS",
-                    "",
-                )
-            ),
-            with_osv=_parse_bool(
-                environment.get("TRUSTCHECK_ACTION_WITH_OSV", "false"),
-                name="with-osv",
-            ),
-            osv_urls=_parse_multi_value(
-                environment.get("TRUSTCHECK_ACTION_OSV_URLS", "")
-            ),
-            with_ecosystems=_parse_bool(
-                environment.get(
-                    "TRUSTCHECK_ACTION_WITH_ECOSYSTEMS",
-                    "false",
-                ),
-                name="with-ecosystems",
-            ),
-            with_kev=_parse_bool(
-                environment.get("TRUSTCHECK_ACTION_WITH_KEV", "false"),
-                name="with-kev",
-            ),
-            with_epss=_parse_bool(
-                environment.get("TRUSTCHECK_ACTION_WITH_EPSS", "false"),
-                name="with-epss",
-            ),
-            with_deps=_parse_bool(
-                environment.get("TRUSTCHECK_ACTION_WITH_DEPS", "false"),
-                name="with-deps",
-            ),
-            with_transitive_deps=_parse_bool(
-                environment.get("TRUSTCHECK_ACTION_WITH_TRANSITIVE_DEPS", "false"),
-                name="with-transitive-deps",
-            ),
-            inspect_artifacts=_parse_bool(
-                environment.get("TRUSTCHECK_ACTION_INSPECT_ARTIFACTS", "false"),
-                name="inspect-artifacts",
-            ),
-            index_url=environment.get("TRUSTCHECK_ACTION_INDEX_URL", "").strip(),
-            extra_index_urls=_parse_multi_value(
-                environment.get("TRUSTCHECK_ACTION_EXTRA_INDEX_URLS", "")
-            ),
-            keyring_provider=environment.get(
-                "TRUSTCHECK_ACTION_KEYRING_PROVIDER", "auto"
-            ).strip()
-            or "auto",
-            allow_dependency_confusion=_parse_bool(
-                environment.get(
-                    "TRUSTCHECK_ACTION_ALLOW_DEPENDENCY_CONFUSION", "false"
-                ),
-                name="allow-dependency-confusion",
-            ),
-            trusted_projects=_parse_multi_value(
-                environment.get("TRUSTCHECK_ACTION_TRUSTED_PROJECTS", "")
-            ),
-            max_workers=max_workers,
-            sandbox=sandbox,
-            sandbox_image=environment.get(
-                "TRUSTCHECK_ACTION_SANDBOX_IMAGE", ""
-            ).strip(),
-            advisory_snapshots=_parse_multi_value(
-                environment.get(
-                    "TRUSTCHECK_ACTION_ADVISORY_SNAPSHOTS",
-                    "",
-                )
-            ),
-            write_advisory_snapshot=environment.get(
-                "TRUSTCHECK_ACTION_WRITE_ADVISORY_SNAPSHOT",
-                "",
-            ).strip(),
-            max_advisory_age=max_advisory_age,
-            advisory_snapshot_identity=environment.get(
-                "TRUSTCHECK_ACTION_ADVISORY_SNAPSHOT_IDENTITY",
-                "",
-            ).strip(),
-            advisory_snapshot_issuer=environment.get(
-                "TRUSTCHECK_ACTION_ADVISORY_SNAPSHOT_ISSUER",
-                "",
-            ).strip(),
-            sign_advisory_snapshot=_parse_bool(
-                environment.get(
-                    "TRUSTCHECK_ACTION_SIGN_ADVISORY_SNAPSHOT",
-                    "false",
-                ),
-                name="sign-advisory-snapshot",
-            ),
-            allow_unsigned_advisory_snapshot=_parse_bool(
-                environment.get(
-                    "TRUSTCHECK_ACTION_ALLOW_UNSIGNED_ADVISORY_SNAPSHOT",
-                    "false",
-                ),
-                name="allow-unsigned-advisory-snapshot",
-            ),
-            resume_state=environment.get(
-                "TRUSTCHECK_ACTION_RESUME_STATE",
-                "",
-            ).strip(),
-            enable_plugins=_parse_bool(
-                environment.get(
-                    "TRUSTCHECK_ACTION_ENABLE_PLUGINS",
-                    "false",
-                ),
-                name="enable-plugins",
-            ),
-            plugins=_parse_multi_value(
-                environment.get("TRUSTCHECK_ACTION_PLUGINS", "")
-            ),
-            plugin_config=environment.get(
-                "TRUSTCHECK_ACTION_PLUGIN_CONFIG",
-                "",
-            ).strip(),
-            remediation=remediation,
-            dry_run=_parse_bool(
-                environment.get("TRUSTCHECK_ACTION_DRY_RUN", "false"),
-                name="dry-run",
-            ),
-            allow_constraint_changes=_parse_bool(
-                environment.get(
-                    "TRUSTCHECK_ACTION_ALLOW_CONSTRAINT_CHANGES",
-                    "false",
-                ),
-                name="allow-constraint-changes",
-            ),
-            source_manifest=environment.get(
-                "TRUSTCHECK_ACTION_SOURCE_MANIFEST",
-                "",
-            ).strip(),
-            remediation_path=environment.get(
-                "TRUSTCHECK_ACTION_REMEDIATION_PATH",
-                "",
-            ).strip()
-            or "trustcheck-remediation.json",
-            max_fix_attempts=max_fix_attempts,
-            create_pr=_parse_bool(
-                environment.get("TRUSTCHECK_ACTION_CREATE_PR", "false"),
-                name="create-pr",
-            ),
-            pr_base=environment.get(
-                "TRUSTCHECK_ACTION_PR_BASE",
-                "",
-            ).strip(),
-            pr_branch=environment.get(
-                "TRUSTCHECK_ACTION_PR_BRANCH",
-                "",
-            ).strip(),
-            pr_title=environment.get(
-                "TRUSTCHECK_ACTION_PR_TITLE",
-                "",
-            ).strip(),
-            pr_ready=_parse_bool(
-                environment.get("TRUSTCHECK_ACTION_PR_READY", "false"),
-                name="pr-ready",
-            ),
-            output_format=output_format,
-            report_path=report_path,
+        values["target"] = target
+        values["output_format"] = output_format
+        values["report_path"] = str(values["report_path"]).strip() or _default_report_path(
+            output_format
         )
+        return cls(**values)
 
 
 @dataclass(slots=True)
@@ -862,6 +663,69 @@ def _looks_like_scan_file(target: str) -> bool:
 
 def _parse_multi_value(value: str) -> tuple[str, ...]:
     return tuple(item for line in value.splitlines() for item in line.split())
+
+
+def _action_environment_value(
+    environment: Mapping[str, str],
+    spec: ActionInputSpec,
+) -> str:
+    for key in (spec.environment_name, *spec.env_aliases):
+        if key in environment:
+            return environment[key]
+    return spec.default
+
+
+def _parse_action_input(spec: ActionInputSpec, raw_value: str) -> object:
+    value = raw_value.strip()
+    if spec.kind == "bool":
+        return _parse_bool(value or spec.default, name=spec.name)
+    if spec.kind == "multi":
+        return _parse_multi_value(value)
+    parsed: object
+    if spec.kind == "int":
+        parsed = _parse_int_action_input(spec, value)
+    elif spec.kind == "float":
+        parsed = _parse_float_action_input(spec, value)
+    else:
+        parsed = value or spec.default
+    if isinstance(parsed, str) and spec.choices and parsed not in spec.choices:
+        raise ActionInputError(
+            f"'{spec.name}' must be one of: " + ", ".join(spec.choices)
+        )
+    return parsed
+
+
+def _parse_int_action_input(spec: ActionInputSpec, value: str) -> int:
+    try:
+        parsed = int(value or spec.default)
+    except ValueError as exc:
+        raise ActionInputError(f"'{spec.name}' must be an integer") from exc
+    if spec.allow_minus_one and parsed == -1:
+        return parsed
+    if spec.minimum is not None and parsed < spec.minimum:
+        minimum = int(spec.minimum)
+        raise ActionInputError(f"'{spec.name}' must be at least {minimum}")
+    if spec.maximum is not None and parsed > spec.maximum:
+        maximum = int(spec.maximum)
+        if spec.allow_minus_one:
+            raise ActionInputError(
+                f"'{spec.name}' must be -1 or between {int(spec.minimum or 1)} "
+                f"and {maximum}"
+            )
+        raise ActionInputError(f"'{spec.name}' must be at most {maximum}")
+    return parsed
+
+
+def _parse_float_action_input(spec: ActionInputSpec, value: str) -> float:
+    try:
+        parsed = float(value or spec.default)
+    except ValueError as exc:
+        raise ActionInputError(f"'{spec.name}' must be a number") from exc
+    if spec.minimum is not None and parsed <= spec.minimum:
+        raise ActionInputError(f"'{spec.name}' must be positive")
+    if spec.maximum is not None and parsed > spec.maximum:
+        raise ActionInputError(f"'{spec.name}' must be at most {spec.maximum:g}")
+    return parsed
 
 
 def _render_report_artifact(

@@ -21,6 +21,7 @@ nav:
       - Industry output formats: reference/industry-formats.md
       - Compatibility: reference/compatibility.md
       - Trust model and repository matching: reference/trust-model.md
+      - Limitations and data flows: reference/limitations-data-flows.md
       - Malicious-package detection: reference/malicious-package-detection.md
       - Safe remediation: reference/remediation.md
       - Performance and extensibility: reference/performance-extensibility.md
@@ -28,9 +29,6 @@ nav:
       - Recommendation model: reference/recommendations.md
   - Guides:
       - TrustCheck Package Scanner: guides/ci-integration.md
-  - Development:
-      - Release baseline: development/release-baseline.md
-      - Hardening tracker: development/hardening-tracker.md
   - Changelog: changelog.md
 
 theme:

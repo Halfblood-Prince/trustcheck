@@ -81,7 +81,7 @@ class ReleaseReadinessTests(unittest.TestCase):
             json_contract,
         )
         self.assertIn(JSON_SCHEMA_ID, json_contract)
-        self.assertIn(f"Current release milestone: `{RELEASE_VERSION}`", docs_changelog)
+        self.assertIn(f"Current release: `{RELEASE_VERSION}`", docs_changelog)
         self.assertIn(
             f"Current development report schema: `{JSON_SCHEMA_VERSION}`",
             docs_changelog,
@@ -112,18 +112,100 @@ class ReleaseReadinessTests(unittest.TestCase):
         if current_major != "v1":
             self.assertNotIn("Halfblood-Prince/trustcheck@v1", documentation)
 
+    def test_reference_docs_cover_limitations_and_action_migration(self) -> None:
+        limitations = (
+            ROOT / "docs" / "reference" / "limitations-data-flows.md"
+        ).read_text(encoding="utf-8")
+        ci_guide = (ROOT / "docs" / "guides" / "ci-integration.md").read_text(
+            encoding="utf-8"
+        )
+        compatibility = (
+            ROOT / "docs" / "reference" / "compatibility.md"
+        ).read_text(encoding="utf-8")
+        mkdocs = (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+
+        for phrase in (
+            "Network-dependent checks may be unavailable",
+            "Advisory sources may be incomplete",
+            "Provenance absence is not automatically proof of maliciousness",
+            "Static analysis cannot guarantee safety",
+            "Bounded install analysis is experimental",
+            "Third-party Trustcheck plugins remain opt-in and experimental",
+            "Clean or verified",
+            "Blocked",
+            "Failed",
+            "Inconclusive",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, limitations)
+
+        for heading in (
+            "### `trustcheck inspect`",
+            "### `trustcheck scan`",
+            "### `trustcheck install`",
+            "### `trustcheck diff`",
+            "### `trustcheck manifest`",
+            "### `trustcheck environment`",
+            "### `trustcheck impact`",
+            "### `trustcheck doctor`",
+            "### TrustCheck Package Scanner Action",
+        ):
+            with self.subTest(heading=heading):
+                self.assertIn(heading, limitations)
+
+        for phrase in (
+            "Local files read",
+            "External services contacted",
+            "Artifacts downloaded",
+            "Data retained",
+            "Reports generated",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, limitations)
+
+        for document in (ci_guide, compatibility):
+            self.assertIn("documented minor-version behavior change", document)
+            self.assertIn("trustcheck-report.txt", document)
+            self.assertIn("trustcheck-report.json", document)
+            self.assertIn("format: json", document)
+            self.assertIn("report-path", document)
+
+        self.assertIn(
+            "Limitations and data flows: reference/limitations-data-flows.md",
+            mkdocs,
+        )
+
+    def test_readme_is_short_and_points_to_reference_docs(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertLessEqual(len(readme.splitlines()), 170)
+        self.assertIn("## Three Commands", readme)
+        self.assertIn("## Security Model", readme)
+        self.assertIn("Limitations and data flows", readme)
+        self.assertIn("Benchmarks", readme)
+        self.assertNotIn("## Common use cases", readme)
+        self.assertNotIn("## Inputs", readme)
+
     def test_public_support_links_use_stable_github_pages(self) -> None:
         with (ROOT / "pyproject.toml").open("rb") as pyproject_file:
-            project_urls = tomllib.load(pyproject_file)["project"]["urls"]
+            project = tomllib.load(pyproject_file)["project"]
+        project_urls = project["urls"]
 
         self.assertEqual(
             project_urls["Issues"],
             "https://github.com/Halfblood-Prince/trustcheck/issues",
         )
         self.assertEqual(
+            project_urls["Support"],
+            "https://github.com/Halfblood-Prince/trustcheck/issues",
+        )
+        self.assertEqual(
             project_urls["Security"],
             "https://github.com/Halfblood-Prince/trustcheck/security/advisories/new",
         )
+        self.assertEqual(project["authors"], [{"name": "Halfblood Prince"}])
+        self.assertEqual(project["maintainers"], [{"name": "Halfblood Prince"}])
+        self.assertIn("Typing :: Typed", project["classifiers"])
 
         public_files = [
             ROOT / "README.md",

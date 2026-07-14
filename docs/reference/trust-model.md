@@ -183,6 +183,10 @@ presented as proof that a publisher or package is malicious.
   inputs run pip's complete resolver. The default `--sandbox auto` mode uses an
   enforced sandbox or falls back to strict wheel-only resolution. `warn` is an
   explicit compatibility mode that can execute build-backend metadata hooks
+- resolver subprocesses invoke pip as `python -m pip` and never rely on
+  unsupported `pip._internal` imports. Strict fallback uses a temporary
+  `sitecustomize.py` audit guard and minimal `PYTHONPATH`; it is a portable
+  wheel-only fallback, not an OS namespace
 - resolver containers and Bubblewrap namespaces retain network access to
   configured package indexes. They expose staged resolver inputs and necessary
   local dependency directories, not the project workspace; they constrain host

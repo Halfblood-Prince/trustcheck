@@ -33,4 +33,4 @@ jobs:
           python -m pip check
 
       - name: Run Bandit
-        run: bandit -r src
+        run: bandit -r src scripts

@@ -531,10 +531,16 @@ class BenchmarkPublicationTests(unittest.TestCase):
         self.assertNotIn("pull_request:", workflow)
         self.assertNotIn("contents: write", workflow)
         self.assertNotIn("pull-requests: write", workflow)
-        self.assertIn("group: benchmark-results-${{ github.ref }}", workflow)
+        self.assertIn(
+            "group: benchmarks-${{ github.event_name == 'workflow_run' "
+            "&& github.event.workflow_run.head_sha || github.ref }}",
+            workflow,
+        )
         self.assertIn("uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", workflow)
         self.assertIn("persist-credentials: false", workflow)
-        self.assertIn("--output benchmarks/results/latest.json", workflow)
+        self.assertIn("--output benchmarks/results/${BENCHMARK_RESULT}", workflow)
+        self.assertIn("release-metadata-${{ github.event.workflow_run.head_sha }}", workflow)
+        self.assertIn("artifact_suffix=\"${RELEASE_TAG}-${RELEASE_SHA}\"", workflow)
         self.assertIn("--requirement requirements/ci.lock", workflow)
         self.assertIn("--require-hashes", workflow)
         self.assertIn(

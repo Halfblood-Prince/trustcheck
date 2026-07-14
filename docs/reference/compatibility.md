@@ -59,3 +59,29 @@ When a breaking JSON or Python API change is necessary, `trustcheck` will:
 - `trustcheck.get_json_schema()`
 
 Everything else under `trustcheck.*` should be treated as internal implementation detail and may change between minor releases.
+
+## GitHub Action Artifacts
+
+The TrustCheck Package Scanner Action asks the CLI for JSON internally so step
+outputs can remain structured, then uploads one report artifact in the selected
+format. The default format is text, so the derived default artifact path is
+`trustcheck-report.txt`.
+
+The switch from always uploading a JSON report artifact to format-specific
+artifact paths is a documented minor-version behavior change. Workflows that
+parse the artifact as JSON should set either:
+
+```yaml
+with:
+  format: json
+```
+
+or an explicit JSON path:
+
+```yaml
+with:
+  report-path: trustcheck-report.json
+```
+
+The `policy-passed`, `recommendation`, and `report-path` outputs remain the
+stable compatibility surface for downstream workflow steps.

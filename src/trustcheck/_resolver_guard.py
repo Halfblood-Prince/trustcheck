@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-# Strict mode installs a process-creation audit guard before invoking pip.
 import sys
-from collections.abc import Sequence
-
-from pip._internal.cli.main import main as pip_main
+from pathlib import Path
 
 BLOCKED_PROCESS_EVENTS = frozenset(
     {
@@ -23,6 +20,10 @@ class StrictResolverViolation(RuntimeError):
     pass
 
 
+def install_guard() -> None:
+    sys.addaudithook(_deny_child_process)
+
+
 def _deny_child_process(event: str, arguments: tuple[object, ...]) -> None:
     del arguments
     if event in BLOCKED_PROCESS_EVENTS:
@@ -33,10 +34,45 @@ def _deny_child_process(event: str, arguments: tuple[object, ...]) -> None:
         )
 
 
-def main(arguments: Sequence[str] | None = None) -> int:
-    pip_arguments = list(arguments if arguments is not None else sys.argv[1:])
-    sys.addaudithook(_deny_child_process)
-    return pip_main(pip_arguments)
+def sitecustomize_source() -> str:
+    events = tuple(sorted(BLOCKED_PROCESS_EVENTS))
+    return f'''\
+"""Trustcheck strict resolver guard, generated at runtime."""
+from __future__ import annotations
+
+import sys
+
+BLOCKED_PROCESS_EVENTS = frozenset({events!r})
+
+
+class StrictResolverViolation(RuntimeError):
+    pass
+
+
+def _deny_child_process(event, arguments):
+    del arguments
+    if event in BLOCKED_PROCESS_EVENTS:
+        raise StrictResolverViolation(
+            "strict resolver blocked child-process creation; a source build, "
+            "build-backend metadata hook, VCS command, or external credential "
+            "helper may have been requested"
+        )
+
+
+sys.addaudithook(_deny_child_process)
+'''
+
+
+def write_sitecustomize(directory: Path) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    sitecustomize = directory / "sitecustomize.py"
+    sitecustomize.write_text(sitecustomize_source(), encoding="utf-8")
+    return sitecustomize
+
+
+def main() -> int:
+    install_guard()
+    return 0
 
 
 if __name__ == "__main__":

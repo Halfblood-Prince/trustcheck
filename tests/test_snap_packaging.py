@@ -41,6 +41,17 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertIn("XDG_DATA_HOME: $SNAP_USER_COMMON/data", snapcraft)
         self.assertIn("plugin: python", snapcraft)
         self.assertIn("source: .", snapcraft)
+        self.assertIn("runtime-wheelhouse:", snapcraft)
+        self.assertIn("plugin: nil", snapcraft)
+        self.assertIn("--requirement requirements/snap-build.lock", snapcraft)
+        self.assertIn("--requirement requirements/runtime.lock", snapcraft)
+        self.assertIn("--require-hashes", snapcraft)
+        self.assertIn("--no-index", snapcraft)
+        self.assertIn('PIP_NO_DEPS: "1"', snapcraft)
+        self.assertIn("--find-links \"$CRAFT_STAGE/wheelhouse/build\"", snapcraft)
+        self.assertIn('PIP_FIND_LINKS: "$CRAFT_STAGE/wheelhouse/runtime"', snapcraft)
+        self.assertIn("python-requirements:", snapcraft)
+        self.assertIn("- requirements/runtime.lock", snapcraft)
         self.assertIn("- home", snapcraft)
         self.assertIn("- network", snapcraft)
         self.assertIn("- removable-media", snapcraft)
@@ -49,13 +60,35 @@ class SnapPackagingTests(unittest.TestCase):
         self.assertIn("$CRAFT_PART_BUILD/pyproject.toml", snapcraft)
 
         fallback_override = snapcraft.index("fallback_version =")
+        build_tool_install = snapcraft.index("requirements/snap-build.lock")
         version_override = snapcraft.index(
             "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK"
         )
         default_build = snapcraft.index("craftctl default")
 
         self.assertLess(fallback_override, version_override)
+        self.assertLess(build_tool_install, version_override)
         self.assertLess(version_override, default_build)
+
+    def test_snap_reproducibility_is_documented_and_locked(self) -> None:
+        lock = (ROOT / "requirements" / "snap-build.lock").read_text(encoding="utf-8")
+        readme = (ROOT / "snap" / "README.md").read_text(encoding="utf-8")
+
+        for requirement in (
+            "build==",
+            "pip==",
+            "setuptools==",
+            "setuptools-scm==",
+            "wheel==",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, lock)
+        self.assertIn("--hash=sha256:", lock)
+        self.assertIn("requirements/runtime.lock", readme)
+        self.assertIn("requirements/snap-build.lock", readme)
+        self.assertIn("`--require-hashes`, `--no-index`, and `--find-links`", readme)
+        self.assertIn("Official PyPI sdists and release assets", readme)
+        self.assertIn("0.0.0+source", readme)
 
     def test_snapcraft_project_declares_supported_cpu_platforms(self) -> None:
         snapcraft = (ROOT / "snap" / "snapcraft.yaml").read_text(encoding="utf-8")
@@ -89,10 +122,7 @@ class SnapPackagingTests(unittest.TestCase):
             "- publish-github-release",
             _job_block(workflow, "publish-github-action"),
         )
-        self.assertIn(
-            "needs: publish-github-release",
-            _job_block(workflow, "publish-agent-skills"),
-        )
+        self.assertNotIn("publish-plugin-bundle:", workflow)
         self.assertIn(
             "needs: coverage-build",
             _job_block(workflow, "build-windows-executable"),

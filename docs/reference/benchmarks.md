@@ -8,6 +8,11 @@ samples. The Trustcheck command explicitly uses `--fast`, limiting it to
 advisory lookup and lockfile/requirements parsing for an apples-to-apples
 comparison.
 
+The README intentionally carries only a short benchmark pointer. This reference
+page and the raw workflow artifact are authoritative for release comparisons.
+The fixed-input `--no-deps` numbers do not prove general superiority across
+all dependency graphs, policies, indexes, or artifact-inspection modes.
+
 ## Latest snapshot
 
 Generated `2026-07-04T12:38:12.871592+00:00` on Python `3.14.6` with
@@ -62,6 +67,8 @@ and prints the generated benchmark evidence table into the workflow summary for
 maintainer review. Publication requires at least five warm samples per tool, a
 signed truth corpus with declared correctness gates, no truth-corpus
 regressions, and no one-sided advisory findings.
+Release benchmark evidence must record the release tag, release SHA, benchmark
+configuration, package version, corpus manifest version, and raw artifact SHA.
 Local runs default to `benchmarks/results/latest.json`; commit or publish that
 file only when it was regenerated from the current corpus and environment.
 `pip-audit` exits `1` when it finds vulnerabilities; `trustcheck scan` exits
@@ -81,8 +88,7 @@ generation.
 The `pip-audit` benchmark does not calibrate malicious-package scoring because
 it runs `trustcheck scan --fast` and excludes artifact, history, AST, native
 binary, and dynamic-analysis heuristics. The seed manifest for that separate
-security milestone is
-`benchmarks/corpus/malicious-calibration.json`.
+calibration work is `benchmarks/corpus/malicious-calibration.json`.
 
 That manifest is versioned and defines required strata for known malicious PyPI
 releases, typo-squats, benign native-extension packages, legitimate packages

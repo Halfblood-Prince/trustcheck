@@ -7,7 +7,7 @@ import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib import parse
 
 from packaging.markers import InvalidMarker, Marker, default_environment
@@ -16,6 +16,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from .lockfile_parsers import FunctionLockfileParser, LockfileParser, select_lockfile_parser
 from .resolver import ArtifactReference
 
 SUPPORTED_LOCKFILES = {"pdm.lock", "pipfile.lock", "poetry.lock", "uv.lock"}
@@ -67,27 +68,17 @@ def load_lockfile(
     groups: Sequence[str] = (),
     environment: Mapping[str, str] | None = None,
 ) -> LockfileResolution:
-    name = path.name.lower()
-    if name == "pipfile.lock":
-        return _load_pipfile_lock(
+    parser = select_lockfile_parser(path, _LOCKFILE_PARSERS)
+    if parser is None:
+        raise ValueError(f"unsupported lockfile format: {path}")
+    return cast(
+        LockfileResolution,
+        parser.load(
             path,
-            groups=groups,
-            environment=environment,
-        )
-
-    payload = _read_toml_lockfile(path)
-    if PYLOCK_NAME.fullmatch(name):
-        return _load_pylock(
-            path,
-            payload,
             extras=extras,
             groups=groups,
             environment=environment,
-        )
-    return _load_legacy_toml_lockfile(
-        path,
-        payload,
-        environment=environment,
+        ),
     )
 
 
@@ -514,6 +505,62 @@ def _load_pipfile_lock(
         packages=tuple(packages),
         format="Pipfile.lock",
     )
+
+
+def _load_pipfile_parser(
+    path: Path,
+    extras: Sequence[str],
+    groups: Sequence[str],
+    environment: Mapping[str, str] | None,
+) -> LockfileResolution:
+    del extras
+    return _load_pipfile_lock(path, groups=groups, environment=environment)
+
+
+def _load_pylock_parser(
+    path: Path,
+    extras: Sequence[str],
+    groups: Sequence[str],
+    environment: Mapping[str, str] | None,
+) -> LockfileResolution:
+    payload = _read_toml_lockfile(path)
+    return _load_pylock(
+        path,
+        payload,
+        extras=extras,
+        groups=groups,
+        environment=environment,
+    )
+
+
+def _load_legacy_toml_parser(
+    path: Path,
+    extras: Sequence[str],
+    groups: Sequence[str],
+    environment: Mapping[str, str] | None,
+) -> LockfileResolution:
+    del extras, groups
+    payload = _read_toml_lockfile(path)
+    return _load_legacy_toml_lockfile(path, payload, environment=environment)
+
+
+_LOCKFILE_PARSERS: tuple[LockfileParser, ...] = (
+    FunctionLockfileParser(
+        name="Pipfile.lock",
+        supports_name=lambda name: name == "pipfile.lock",
+        loader=_load_pipfile_parser,
+    ),
+    FunctionLockfileParser(
+        name="pylock.toml",
+        supports_name=lambda name: PYLOCK_NAME.fullmatch(name) is not None,
+        loader=_load_pylock_parser,
+    ),
+    FunctionLockfileParser(
+        name="legacy-toml-lock",
+        supports_name=lambda name: name in SUPPORTED_LOCKFILES,
+        loader=_load_legacy_toml_parser,
+    ),
+)
 
 
 def _pylock_source(

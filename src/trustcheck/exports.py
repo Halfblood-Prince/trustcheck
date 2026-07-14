@@ -15,6 +15,8 @@ from urllib import parse
 from packaging.utils import canonicalize_name
 
 from .contract import deserialize_report
+from .export_cyclonedx import render_cyclonedx_json_export, render_cyclonedx_xml_export
+from .export_markdown import render_markdown_export
 from .export_models import (
     CYCLONEDX_17_NAMESPACE,
     OPENVEX_CONTEXT,
@@ -43,6 +45,9 @@ from .export_models import (
 from .export_models import (
     recommended_extension as recommended_extension,
 )
+from .export_openvex import render_openvex_export
+from .export_sarif import render_sarif_export
+from .export_spdx import render_spdx3_json_export, render_spdx_json_export
 from .export_xml import (
     _is_xml_character as _is_xml_character,
 )
@@ -84,24 +89,26 @@ def render_export(
 ) -> str:
     timestamp = _timestamp(generated_at)
     if output_format == "sarif":
-        payload = _sarif_document(packages, source_name, failures)
-        return _json_text(payload)
+        return render_sarif_export(packages, source_name, failures)
     if output_format == "cyclonedx-json":
-        payload = _cyclonedx_document(packages, source_name, failures, timestamp)
-        return _json_text(payload)
+        return render_cyclonedx_json_export(
+            packages,
+            source_name,
+            failures,
+            timestamp,
+        )
     if output_format == "cyclonedx-xml":
-        return _cyclonedx_xml(packages, source_name, failures, timestamp)
+        return render_cyclonedx_xml_export(packages, source_name, failures, timestamp)
     if output_format == "cyclonedx-1.7-json":
-        payload = _cyclonedx_document(
+        return render_cyclonedx_json_export(
             packages,
             source_name,
             failures,
             timestamp,
             spec_version="1.7",
         )
-        return _json_text(payload)
     if output_format == "cyclonedx-1.7-xml":
-        return _cyclonedx_xml(
+        return render_cyclonedx_xml_export(
             packages,
             source_name,
             failures,
@@ -109,16 +116,13 @@ def render_export(
             spec_version="1.7",
         )
     if output_format == "spdx-json":
-        payload = _spdx_document(packages, source_name, failures, timestamp)
-        return _json_text(payload)
+        return render_spdx_json_export(packages, source_name, failures, timestamp)
     if output_format == "spdx-3-json":
-        payload = _spdx3_document(packages, source_name, failures, timestamp)
-        return _json_text(payload)
+        return render_spdx3_json_export(packages, source_name, failures, timestamp)
     if output_format == "openvex":
-        payload = _openvex_document(packages, source_name, timestamp)
-        return _json_text(payload)
+        return render_openvex_export(packages, source_name, timestamp)
     if output_format == "markdown":
-        return _markdown_document(packages, source_name, failures)
+        return render_markdown_export(packages, source_name, failures)
     if plugin_manager is not None:
         return plugin_manager.render(
             output_format,

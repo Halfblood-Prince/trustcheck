@@ -187,6 +187,9 @@ print(resolution.versions)
 ```
 
 The resolver invokes pip with `--dry-run --ignore-installed --report -`.
+It starts pip through the supported subprocess CLI, `python -m pip`, using the
+configured `python_executable`; it does not import unsupported `pip._internal`
+modules.
 Cross-target resolution adds `--only-binary :all:` because source builds cannot
 be performed correctly for a foreign target. `sandbox_mode` accepts `off`,
 `warn`, `auto`, `container`, `bubblewrap`, and `strict`; the default is `auto`.
@@ -197,11 +200,11 @@ as `resolution.sandbox_mode` and `resolution.sandbox_warnings`.
 `bwrap`. `auto` prefers Bubblewrap, then a container, then strict wheel-only
 resolution. Strict mode rejects requirement forms that can directly execute
 source metadata hooks, tells pip to use isolated configuration and wheels
-only, and denies pip child-process creation so transitive backend or VCS
-commands fail closed. Container and Bubblewrap execution stages only resolver
-inputs and referenced local dependencies instead of mounting the project
-workspace. `container_image` overrides the built-in image and must contain a
-full `@sha256:` digest.
+only, and loads a temporary `sitecustomize.py` audit guard through a minimal
+`PYTHONPATH` so transitive backend or VCS commands fail closed. Container and
+Bubblewrap execution stages only resolver inputs and referenced local
+dependencies instead of mounting the project workspace. `container_image`
+overrides the built-in image and must contain a full `@sha256:` digest.
 
 ## Installed distributions
 

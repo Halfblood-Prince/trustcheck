@@ -9,6 +9,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from trustcheck.action_options import ACTION_INPUTS, RUNTIME_ACTION_INPUTS
 from trustcheck.cli import EXIT_DATA_ERROR, EXIT_OK, EXIT_POLICY_FAILURE, EXIT_USAGE
 from trustcheck.contract import JSON_SCHEMA_VERSION
 from trustcheck.github_action import (
@@ -50,6 +51,44 @@ def complete_report_payload(
             "policy": {"passed": policy_passed},
         },
     }
+
+
+def action_yaml_inputs() -> dict[str, dict[str, str]]:
+    inputs: dict[str, dict[str, str]] = {}
+    current: str | None = None
+    in_inputs = False
+    for line in Path("action.yml").read_text(encoding="utf-8").splitlines():
+        if line == "inputs:":
+            in_inputs = True
+            continue
+        if in_inputs and line and not line.startswith(" "):
+            break
+        if not in_inputs:
+            continue
+        match = re.match(r"^  ([a-z0-9-]+):$", line)
+        if match:
+            current = match.group(1)
+            inputs[current] = {}
+            continue
+        field = re.match(r"^    ([a-z-]+):\s*(.*)$", line)
+        if current is not None and field:
+            raw_value = field.group(2).strip()
+            inputs[current][field.group(1)] = raw_value.strip('"')
+    return inputs
+
+
+def action_runtime_environment_variables() -> tuple[str, ...]:
+    action = Path("action.yml").read_text(encoding="utf-8")
+    run_step = action.split("- name: Run trustcheck", maxsplit=1)[1]
+    env_block = run_step.split("run: python -m trustcheck.github_action", maxsplit=1)[0]
+    return tuple(re.findall(r"^\s+(TRUSTCHECK_ACTION_[A-Z0-9_]+):", env_block, re.M))
+
+
+def documented_action_inputs() -> tuple[str, ...]:
+    document = Path("docs/guides/ci-integration.md").read_text(encoding="utf-8")
+    table = document.split("| `target` |", maxsplit=1)[1].split("## Outputs", maxsplit=1)[0]
+    rows = re.findall(r"^\| `([^`]+)` \|", "| `target` |" + table, re.M)
+    return tuple(rows)
 
 
 class GitHubActionTests(unittest.TestCase):
@@ -628,6 +667,28 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn('action_ref="${TRUSTCHECK_ACTION_REF:-}"', action)
         self.assertIn("SETUPTOOLS_SCM_PRETEND_VERSION", action)
         self.assertIn("SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TRUSTCHECK", action)
+
+    def test_action_option_schema_matches_action_metadata_and_docs(self) -> None:
+        inputs = action_yaml_inputs()
+        expected_names = tuple(spec.name for spec in ACTION_INPUTS)
+        self.assertEqual(tuple(inputs), expected_names)
+        for spec in ACTION_INPUTS:
+            with self.subTest(input=spec.name):
+                self.assertTrue(inputs[spec.name]["description"])
+                self.assertEqual(
+                    inputs[spec.name].get("required", "false"),
+                    str(spec.required).lower(),
+                )
+                if spec.action_default is None:
+                    self.assertNotIn("default", inputs[spec.name])
+                else:
+                    self.assertEqual(inputs[spec.name].get("default", ""), spec.action_default)
+
+        self.assertEqual(
+            action_runtime_environment_variables(),
+            tuple(spec.environment_name for spec in RUNTIME_ACTION_INPUTS),
+        )
+        self.assertEqual(documented_action_inputs(), expected_names)
 
     def test_all_external_actions_are_commit_pinned(self) -> None:
         files = [Path("action.yml"), *Path(".github/workflows").glob("*.yml")]

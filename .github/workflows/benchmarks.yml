@@ -9,10 +9,11 @@ on:
     types: [completed]
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: benchmark-results-${{ github.ref }}
+  group: benchmarks-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -21,8 +22,64 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Download release metadata
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-metadata-${{ github.event.workflow_run.head_sha }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: release-metadata
+
+      - name: Resolve benchmark target
+        id: benchmark_target
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          DEFAULT_REF: ${{ github.ref_name }}
+          DEFAULT_SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            metadata="release-metadata/release-metadata.json"
+            if [ ! -s "$metadata" ]; then
+              echo "Release metadata from the triggering workflow run was not found." >&2
+              exit 1
+            fi
+            RELEASE_TAG="$(jq -r '.tag // empty' "$metadata")"
+            RELEASE_SHA="$(jq -r '.sha // empty' "$metadata")"
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Release-triggered benchmarks require a semantic release tag, got '${RELEASE_TAG}'." >&2
+              exit 1
+            fi
+            if [ -z "$RELEASE_SHA" ]; then
+              echo "Release-triggered benchmarks require the release workflow head SHA." >&2
+              exit 1
+            fi
+            if [ "$RELEASE_SHA" != "$WORKFLOW_RUN_SHA" ]; then
+              echo "Release metadata SHA ${RELEASE_SHA} did not match workflow run SHA ${WORKFLOW_RUN_SHA}." >&2
+              exit 1
+            fi
+            target_ref="$RELEASE_SHA"
+            benchmark_kind="release"
+            artifact_suffix="${RELEASE_TAG}-${RELEASE_SHA}"
+            release_tag="$RELEASE_TAG"
+          else
+            target_ref="$DEFAULT_SHA"
+            benchmark_kind="default-branch"
+            artifact_suffix="${DEFAULT_REF}-${DEFAULT_SHA}"
+            release_tag=""
+          fi
+          artifact_suffix="${artifact_suffix//\//-}"
+          echo "ref=$target_ref" >> "$GITHUB_OUTPUT"
+          echo "kind=$benchmark_kind" >> "$GITHUB_OUTPUT"
+          echo "artifact_suffix=$artifact_suffix" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "result_file=benchmark-${artifact_suffix}.json" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ steps.benchmark_target.outputs.ref }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
@@ -34,17 +91,40 @@ jobs:
           python -m pip install --disable-pip-version-check --no-build-isolation --no-deps .
           python -m pip check
       - name: Run benchmark
+        env:
+          BENCHMARK_RESULT: ${{ steps.benchmark_target.outputs.result_file }}
         run: >-
           python benchmarks/benchmark_against_pip_audit.py
           --warmups 1
           --iterations 5
           --evidence-iterations 5
-          --output benchmarks/results/latest.json
+          --output benchmarks/results/${BENCHMARK_RESULT}
+      - name: Record benchmark provenance
+        env:
+          BENCHMARK_KIND: ${{ steps.benchmark_target.outputs.kind }}
+          BENCHMARK_RESULT: ${{ steps.benchmark_target.outputs.result_file }}
+          BENCHMARK_SHA: ${{ steps.benchmark_target.outputs.ref }}
+          RELEASE_TAG: ${{ steps.benchmark_target.outputs.release_tag }}
+        run: |
+          {
+            echo "## Benchmark provenance"
+            echo
+            echo "- Kind: \`${BENCHMARK_KIND}\`"
+            echo "- Commit: \`${BENCHMARK_SHA}\`"
+            if [ -n "$RELEASE_TAG" ]; then
+              echo "- Release tag: \`${RELEASE_TAG}\`"
+            fi
+            echo "- Package version: \`$(python -m trustcheck --version)\`"
+            echo "- Configuration: warmups=1 iterations=5 evidence-iterations=5"
+            echo "- Result: \`benchmarks/results/${BENCHMARK_RESULT}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Present benchmark results
         shell: bash
+        env:
+          BENCHMARK_RESULT: ${{ steps.benchmark_target.outputs.result_file }}
         run: |
           python scripts/update_benchmark_table.py \
-            benchmarks/results/latest.json \
+            "benchmarks/results/${BENCHMARK_RESULT}" \
             --readme README.md
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           from pathlib import Path
@@ -58,7 +138,7 @@ jobs:
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: trustcheck-pip-audit-benchmark-${{ github.sha }}
-          path: benchmarks/results/latest.json
+          name: trustcheck-pip-audit-benchmark-${{ steps.benchmark_target.outputs.artifact_suffix }}
+          path: benchmarks/results/${{ steps.benchmark_target.outputs.result_file }}
           if-no-files-found: error
           retention-days: 90

@@ -55,6 +55,9 @@ jobs:
             --expected 0.0.0+source \
             "$archive_root"/dist/*.whl \
             "$archive_root"/dist/*.tar.gz
+          python scripts/validate_distribution_artifacts.py \
+            "$archive_root"/dist/*.whl \
+            "$archive_root"/dist/*.tar.gz
 
       - name: Smoke test built sdist
         shell: bash
@@ -73,5 +76,6 @@ jobs:
           python scripts/verify_release_version.py \
             --expected 0.0.0+source \
             "$archive_root"/dist/*.tar.gz
+          python scripts/validate_distribution_artifacts.py "$archive_root"/dist/*.tar.gz
           python -m pip install --force-reinstall "$archive_root"/dist/*.tar.gz
           trustcheck --help

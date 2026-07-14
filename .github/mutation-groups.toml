@@ -1,0 +1,92 @@
+[[groups]]
+id = "policy-thresholds"
+description = "Policy thresholds, suppressions, and malicious-score decisions."
+targets = [
+  "trustcheck.policy._apply_suppressions*",
+  "trustcheck.policy._apply_malicious_thresholds*",
+  "trustcheck.policy.evaluate_policy*",
+]
+
+[[groups]]
+id = "plugin-ipc-validation"
+description = "JSON IPC envelopes, size limits, schema reconstruction, and error paths."
+targets = [
+  "trustcheck.plugins._encode_plugin_message*",
+  "trustcheck.plugins._decode_plugin_message*",
+  "trustcheck.plugins._json_value*",
+  "trustcheck.plugins._validate_request_envelope*",
+  "trustcheck.plugins._plugin_result_from_response*",
+  "trustcheck.plugins._plugin_result_from_data*",
+]
+
+[[groups]]
+id = "plugin-trust-binding"
+description = "Plugin manifest statements, trust roots, RECORD, and wheel content binding."
+targets = [
+  "trustcheck.plugins._verified_manifest*",
+  "trustcheck.plugins._verify_distribution_record*",
+  "trustcheck.plugins._verify_recorded_file*",
+  "trustcheck.plugins._verify_plugin_trust_root*",
+  "trustcheck.plugins._reject_unrecorded_distribution_files*",
+]
+
+[[groups]]
+id = "resolver-guard-decisions"
+description = "Strict resolver guard decisions and wheel-only requirement preflight."
+targets = [
+  "trustcheck._resolver_guard._deny_child_process*",
+  "trustcheck.resolver._requirement_risks*",
+  "trustcheck.resolver._direct_url_risks*",
+  "trustcheck.resolver._strict_resolver_environment*",
+  "trustcheck.resolver.PipResolver._selected_sandbox_mode*",
+]
+
+[[groups]]
+id = "provenance-identity-matching"
+description = "Publisher organization allowlists and repository identity normalization."
+targets = [
+  "trustcheck.provenance.normalize_publisher_repository*",
+  "trustcheck.provenance.normalize_repository_uri*",
+  "trustcheck.provenance.validate_publisher_organization_allowlist*",
+  "trustcheck.provenance.publisher_matches_organization_allowlist*",
+]
+
+[[groups]]
+id = "archive-record-limits"
+description = "Archive limits, native/static findings, and wheel RECORD validation."
+targets = [
+  "trustcheck.artifacts._inspect_wheel_record*",
+  "trustcheck.artifacts._read_zip_member*",
+  "trustcheck.artifacts._record_python_findings*",
+  "trustcheck.artifacts._record_native_findings*",
+]
+
+[[groups]]
+id = "remediation-candidates"
+description = "Candidate ordering, hash preservation, and validated remediation patches."
+targets = [
+  "trustcheck.remediation._candidate_objective*",
+  "trustcheck.remediation._lockfile_hash_validation_from_artifacts*",
+  "trustcheck.remediation._root_allows_any_candidate*",
+  "trustcheck.remediation.validate_candidate*",
+]
+
+[[groups]]
+id = "dependency-confusion"
+description = "Cross-index name collision detection and plugin repository integration."
+targets = [
+  "trustcheck.indexes.SimpleRepositoryClient.find_dependency_confusion*",
+  "trustcheck.resolver.PipResolver.check_dependency_confusion*",
+  "trustcheck.plugins.PluginRepositoryClient.find_dependency_confusion*",
+]
+
+[[groups]]
+id = "advisory-merge-schema"
+description = "Advisory merge logic and report schema compatibility decisions."
+targets = [
+  "trustcheck.advisories.merge_vulnerabilities*",
+  "trustcheck.advisories._vulnerability_identifiers*",
+  "trustcheck.contract.serialize_report*",
+  "trustcheck.contract.deserialize_report*",
+  "trustcheck.contract.get_json_schema*",
+]

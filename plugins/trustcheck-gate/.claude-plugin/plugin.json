@@ -1,9 +1,0 @@
-{
-  "name": "trustcheck-gate",
-  "version": "0.1.0",
-  "description": "Read-only agent skill that gates AI-selected Python dependencies through Trustcheck before installation or remediation.",
-  "author": {
-    "name": "Trustcheck maintainers"
-  },
-  "skills": "./skills/"
-}

@@ -27,6 +27,13 @@ the requested report format to a workflow artifact. By default that artifact is
 `trustcheck-report.txt`; set `format: json` to upload `trustcheck-report.json`.
 A policy failure still uploads its report before failing the job.
 
+This is a documented minor-version behavior change from the early Action,
+which always uploaded a JSON report path. Existing consumers that parse the
+artifact file should set `format: json` or an explicit `report-path` ending in
+`.json`. Step outputs such as `policy-passed`, `recommendation`, and
+`report-path` remain stable and continue to be derived from the internal JSON
+result.
+
 Stable releases publish a full version tag such as `v2.1.1` and update the
 compatible major ref `v2`. Use `@v2` for compatible updates. For immutable
 release gates, pin `Halfblood-Prince/trustcheck` and supporting actions to full
