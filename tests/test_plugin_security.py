@@ -1639,6 +1639,15 @@ class PluginSecurityTests(unittest.TestCase):
         process.terminate.assert_called_once()
         process.kill.assert_not_called()
 
+        direct = Mock(pid=None)
+        direct.is_alive.return_value = True
+        with patch("trustcheck.plugins.os.name", "posix"):
+            plugin_mod._terminate_plugin_process(direct)
+
+        direct.terminate.assert_called_once()
+        direct.join.assert_called_once_with(timeout=1)
+        direct.kill.assert_not_called()
+
         stubborn = Mock(pid=456)
         stubborn.is_alive.side_effect = [True, True]
         with patch("trustcheck.plugins.os.name", "posix"), patch(
