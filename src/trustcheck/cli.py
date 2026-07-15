@@ -13,7 +13,7 @@ import threading
 import tomllib
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict, replace
 from datetime import timedelta
 from pathlib import Path
@@ -2392,12 +2392,16 @@ def _validate_fix_runtime(
             encoding="utf-8",
         )
         environment = _venv_environment(venv_path)
-        pip_context = (
-            nullcontext(([], environment))
-            if offline
-            else _index_configuration_from_args(args).pip_subprocess(env=environment)
-        )
-        with pip_context as (pip_arguments, environment):
+        pip_context: AbstractContextManager[
+            tuple[list[str], dict[str, str] | None]
+        ]
+        if offline:
+            pip_context = nullcontext(([], environment))
+        else:
+            pip_context = _index_configuration_from_args(args).pip_subprocess(
+                env=environment,
+            )
+        with pip_context as (pip_arguments, pip_environment):
             install_argv = [
                 str(python),
                 "-m",
@@ -2414,7 +2418,7 @@ def _validate_fix_runtime(
                 "python -m pip install -r <resolved graph>",
                 install_argv,
                 cwd=prepared.root,
-                env=environment,
+                env=pip_environment,
             )
         if not install.passed:
             return (

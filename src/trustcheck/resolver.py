@@ -11,7 +11,7 @@ import sys
 import tempfile
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from importlib.metadata import Distribution, distributions
 from pathlib import Path
@@ -389,11 +389,13 @@ class PipResolver:
                 guard_path = Path(guard_directory.name).resolve()
                 write_sitecustomize(guard_path)
                 subprocess_env = _strict_resolver_environment(guard_path)
-            pip_context = (
-                nullcontext(([], subprocess_env))
-                if offline
-                else self.indexes.pip_subprocess(env=subprocess_env)
-            )
+            pip_context: AbstractContextManager[
+                tuple[list[str], dict[str, str] | None]
+            ]
+            if offline:
+                pip_context = nullcontext(([], subprocess_env))
+            else:
+                pip_context = self.indexes.pip_subprocess(env=subprocess_env)
             with pip_context as (pip_arguments, subprocess_env):
                 command.extend(pip_arguments)
                 command.extend(staged_arguments)

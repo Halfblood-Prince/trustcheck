@@ -300,6 +300,136 @@ class PypiClientTests(unittest.TestCase):
                 b"ok",
             )
 
+        self.assertEqual(
+            pypi_module._read_bounded_response(
+                FakeResponse(b""),
+                limit=4,
+                url=url,
+            ),
+            b"",
+        )
+        self.assertEqual(
+            pypi_module._read_bounded_response(
+                FakeResponse(b"ignored"),
+                limit=-1,
+                url=url,
+            ),
+            b"",
+        )
+
+    def test_http_pool_and_cache_integrity_edge_branches(self) -> None:
+        class PoolResponse:
+            def __init__(self, status: int, data: bytes) -> None:
+                self.status = status
+                self.data = data
+                self.released = False
+
+            def release_conn(self) -> None:
+                self.released = True
+
+        class Pool:
+            def __init__(self, response: PoolResponse) -> None:
+                self.response = response
+
+            def request(self, *args: object, **kwargs: object) -> PoolResponse:
+                del args, kwargs
+                return self.response
+
+        response = PoolResponse(200, b"pool-bytes")
+        client = pypi_module.PypiClient(http_pool=Pool(response))  # type: ignore[arg-type]
+
+        self.assertEqual(
+            client.download_distribution("https://example.com/demo.whl"),
+            b"pool-bytes",
+        )
+        self.assertTrue(response.released)
+
+        failing_response = PoolResponse(500, b"")
+        failing = pypi_module.PypiClient(
+            http_pool=Pool(failing_response),  # type: ignore[arg-type]
+            max_retries=0,
+        )
+        with self.assertRaises(pypi_module.PypiClientError) as ctx:
+            failing.download_distribution("https://example.com/demo.whl")
+        self.assertEqual(ctx.exception.subcode, "http_transient")
+        self.assertTrue(failing_response.released)
+
+        with self.assertRaisesRegex(RuntimeError, "pool"):
+            pypi_module.PypiClient()._request_from_pool("https://example.com", {})
+
+        class CorruptContentCache:
+            def get(self, namespace: str, key: str) -> bytes | None:
+                del namespace, key
+                raise pypi_module.CacheIntegrityError("digest mismatch")
+
+        cached = pypi_module.PypiClient(cache_dir=".cache/test-cache")
+        cached._content_cache = CorruptContentCache()  # type: ignore[assignment]
+        with self.assertRaises(pypi_module.PypiClientError) as cache_ctx:
+            cached._read_disk_cache("https://example.com/demo.json", accept="application/json")
+        self.assertEqual(cache_ctx.exception.subcode, "cache_integrity_failed")
+
+    def test_disk_cached_json_and_streaming_pool_response_branches(self) -> None:
+        client = pypi_module.PypiClient()
+        with patch.object(
+            pypi_module.PypiClient,
+            "_read_disk_cache",
+            return_value=b'{"info":{"version":"1.0.0"}}',
+        ), patch.object(
+            pypi_module.PypiClient,
+            "_request_bytes",
+            side_effect=AssertionError("network should not be used"),
+        ):
+            payload = client.get_project("demo")
+
+        self.assertEqual(payload["info"]["version"], "1.0.0")
+        assert client._json_cache is not None
+        self.assertIn(
+            ("https://pypi.org/pypi/demo/json", pypi_module.JSON_ACCEPT),
+            client._json_cache,
+        )
+
+        uncached = pypi_module.PypiClient(enable_cache=False)
+        with patch.object(
+            pypi_module.PypiClient,
+            "_read_disk_cache",
+            return_value=b'{"info":{"version":"2.0.0"}}',
+        ), patch.object(
+            pypi_module.PypiClient,
+            "_request_bytes",
+            side_effect=AssertionError("network should not be used"),
+        ):
+            self.assertEqual(
+                uncached.get_project("demo")["info"]["version"],
+                "2.0.0",
+            )
+
+        class StreamingPoolResponse(FakeResponse):
+            def __init__(self, payload: bytes) -> None:
+                super().__init__(payload)
+                self.released = False
+
+            def release_conn(self) -> None:
+                self.released = True
+
+        class Pool:
+            def __init__(self, response: StreamingPoolResponse) -> None:
+                self.response = response
+
+            def request(self, *args: object, **kwargs: object) -> StreamingPoolResponse:
+                del args, kwargs
+                return self.response
+
+        response = StreamingPoolResponse(b"streamed")
+        pooled = pypi_module.PypiClient(
+            http_pool=Pool(response),  # type: ignore[arg-type]
+            enable_cache=False,
+        )
+        self.assertEqual(
+            pooled.download_distribution("https://example.com/demo.whl"),
+            b"streamed",
+        )
+        self.assertTrue(response.released)
+
     def test_request_hook_receives_retry_events(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
 
@@ -648,6 +778,42 @@ class PypiClientTests(unittest.TestCase):
         self.assertIsNotNone(client.repository_client)
         with self.assertRaisesRegex(pypi_module.PypiClientError, "only allowed"):
             client.download_distribution("file:///definitely/missing/demo.whl")
+        self.assertFalse(client._allows_local_artifact("https://example.com/demo.whl"))
+        with self.assertRaisesRegex(pypi_module.PypiClientError, "unsupported"):
+            pypi_module._local_file_url_path("file://remote-host/demo.whl")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = Path(tmpdir) / "missing.whl"
+            local_client = pypi_module.IndexBackedPackageClient(
+                base_client=pypi_module.PypiClient(),
+                project="demo",
+                version="1.0",
+                index_url="https://private.example/simple",
+                artifacts=(
+                    ArtifactReference(
+                        filename="remote.whl",
+                        url="https://example.com/remote.whl",
+                    ),
+                    ArtifactReference(kind="index", path=str(missing)),
+                    ArtifactReference(path=str(Path(tmpdir) / "other.whl")),
+                ),
+                repository_client=SimpleNamespace(),
+            )
+            self.assertFalse(local_client._allows_local_artifact(missing.as_uri()))
+
+            existing = Path(tmpdir) / "existing.whl"
+            existing.write_bytes(b"content")
+            read_failure_client = pypi_module.IndexBackedPackageClient(
+                base_client=pypi_module.PypiClient(),
+                project="demo",
+                version="1.0",
+                index_url="https://private.example/simple",
+                artifacts=(ArtifactReference(path=str(existing)),),
+                repository_client=SimpleNamespace(),
+            )
+            existing.unlink()
+            with self.assertRaisesRegex(pypi_module.PypiClientError, "unable to read"):
+                read_failure_client.download_distribution(existing.as_uri())
 
     def test_index_backed_client_rejects_nonmatching_index_artifacts(self) -> None:
         from trustcheck.indexes import IndexFile, IndexProject

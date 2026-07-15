@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
+from http.client import HTTPMessage
 from pathlib import Path
 from typing import Any, Iterator, Protocol, cast
 from urllib import error, parse, request
@@ -126,7 +127,7 @@ class _PolicyRedirectHandler(request.HTTPRedirectHandler):
     def __init__(self, policy: IndexURLPolicy) -> None:
         super().__init__()
         self.policy = policy
-        self.max_redirections = policy.max_redirects
+        setattr(self, "max_redirections", policy.max_redirects)
 
     def redirect_request(
         self,
@@ -134,7 +135,7 @@ class _PolicyRedirectHandler(request.HTTPRedirectHandler):
         fp: Any,
         code: int,
         msg: str,
-        headers: Mapping[str, str],
+        headers: HTTPMessage,
         newurl: str,
     ) -> request.Request | None:
         try:

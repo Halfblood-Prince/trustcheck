@@ -21,15 +21,23 @@ from trustcheck.indexes import (
     IndexProject,
     IndexURLPolicy,
     SimpleRepositoryClient,
+    _format_available_versions,
     _hash_fragment,
     _hash_mapping,
+    _join_compact,
     _metadata_hashes,
+    _metadata_signature_label,
     _optional_int,
     _optional_string,
     _PolicyRedirectHandler,
+    _read_bounded_response,
     _same_origin,
+    _secure_delete,
+    _url_has_credentials,
+    _version_sort_key,
     _without_url_credentials,
     _yanked_value,
+    dependency_confusion_evidence,
     files_for_version,
     normalize_index_url,
     parse_simple_html,
@@ -597,6 +605,8 @@ class IndexTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(IndexError, "invalid Simple"):
             client.get_project("https://index.example/simple", "demo")
+        with self.assertRaisesRegex(IndexError, "scheme and host|HTTPS"):
+            client.download("file:///tmp/demo.whl")
 
     def test_basic_netrc_import_and_subprocess_keyring_authentication(self) -> None:
         captured: list[str | None] = []
@@ -955,6 +965,100 @@ class IndexTests(unittest.TestCase):
             files=(IndexFile(filename="not-a-distribution.txt", url="https://x"),),
         )
         self.assertEqual(files_for_version(project, "1.0"), ())
+
+    def test_index_security_helper_edge_branches(self) -> None:
+        policy = IndexURLPolicy()
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            policy.validate_request_url("ftp://index.example/simple")
+
+        self.assertEqual(
+            _without_url_credentials("https://user:pass@[::1]:8443/simple"),
+            "https://[::1]:8443/simple",
+        )
+        self.assertEqual(
+            _without_url_credentials("https://user:pass@example.com:bad/simple"),
+            "https://example.com/simple",
+        )
+        self.assertEqual(
+            _without_url_credentials("https://[::1/simple"),
+            "https://[::1/simple",
+        )
+        self.assertFalse(
+            _same_origin(
+                parse.urlsplit("https://example.com:bad/simple"),
+                parse.urlsplit("https://example.com/simple"),
+            )
+        )
+        self.assertEqual(_format_available_versions(()), "unknown")
+        self.assertEqual(
+            _format_available_versions(tuple(str(version) for version in range(10))),
+            "0,1,2,3,4,5,6,+3 more",
+        )
+        self.assertEqual(_join_compact("value"), "value")
+        self.assertEqual(_join_compact(("",)), "unknown")
+        self.assertEqual(_join_compact(("a", "b", "c", "d")), "a/b/+2 more")
+        self.assertEqual(_version_sort_key("not a version")[0], 1)
+        self.assertFalse(_url_has_credentials("https://[::1/simple"))
+        self.assertEqual(
+            _read_bounded_response(FakeResponse(b"ignored"), limit=-1, url="demo"),
+            b"",
+        )
+
+        same_metadata = (
+            IndexFile(
+                filename="demo-1.0.tar.gz",
+                url="https://one.example/demo-1.0.tar.gz",
+                hashes=(("sha256", "a" * 64),),
+                metadata_hashes=(("sha256", "b" * 64),),
+                size=10,
+                upload_time="2026-01-01T00:00:00Z",
+            ),
+        )
+        self.assertIn("sizes=10", _metadata_signature_label(same_metadata))
+        self.assertNotIn(
+            "sizes=",
+            _metadata_signature_label(
+                (
+                    IndexFile(
+                        filename="demo-1.0.tar.gz",
+                        url="https://one.example/demo-1.0.tar.gz",
+                    ),
+                )
+            ),
+        )
+        evidence = dependency_confusion_evidence(
+            (
+                IndexProject(
+                    name="demo",
+                    index_url="https://one.example/simple",
+                    files=same_metadata,
+                ),
+                IndexProject(
+                    name="demo",
+                    index_url="https://two.example/simple",
+                    files=same_metadata,
+                ),
+            )
+        )
+        self.assertIn(
+            "available_versions[https://one.example/simple]=1.0",
+            evidence,
+        )
+        self.assertFalse(
+            any(item.startswith("version_metadata_mismatch") for item in evidence)
+        )
+
+        _secure_delete(Path("definitely-missing-secure-delete-target"))
+        with patch.object(Path, "unlink", side_effect=OSError("locked")):
+            _secure_delete(Path("definitely-missing-secure-delete-target"))
+
+        configuration = IndexConfiguration(
+            index_url="https://user:pass@index.example/simple",
+        )
+        with configuration.pip_subprocess() as (_, environment):
+            assert environment is not None
+            config_path = Path(environment["PIP_CONFIG_FILE"])
+            self.assertNotIn("extra-index-url", config_path.read_text(encoding="utf-8"))
 
     def test_netrc_and_empty_keyring_credentials(self) -> None:
         with patch(
