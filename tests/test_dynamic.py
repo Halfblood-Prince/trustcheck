@@ -102,6 +102,22 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertEqual(result.classification, "unsupported")
         self.assertEqual(result.network, "none")
 
+    def test_reports_private_artifact_setup_failure_without_container(self) -> None:
+        with patch("trustcheck.dynamic.shutil.which", return_value="C:\\Tools\\docker.exe"), patch(
+            "trustcheck.dynamic._prepare_private_artifact_mount",
+            side_effect=OSError("blocked"),
+        ), patch("trustcheck.dynamic.subprocess.run") as run:
+            result = analyze_artifact_dynamic(
+                "demo.whl",
+                b"wheel",
+                image=PINNED_IMAGE,
+            )
+
+        self.assertFalse(result.executed)
+        self.assertEqual(result.failure_type, "container_setup_failed")
+        self.assertIn("blocked", result.error or "")
+        run.assert_not_called()
+
     def test_unsupported_python_requires_configured_digest_pinned_image(self) -> None:
         with patch("trustcheck.dynamic.shutil.which") as which:
             result = analyze_artifact_dynamic(
@@ -140,13 +156,14 @@ class DynamicAnalysisTests(unittest.TestCase):
         which.assert_not_called()
 
     def test_runs_disposable_no_network_non_root_container(self) -> None:
+        docker_executable = "C:\\Tools\\docker.exe"
         completed = subprocess.CompletedProcess(
-            args=["docker"],
+            args=[docker_executable],
             returncode=0,
             stdout="installed\n",
             stderr="",
         )
-        with patch("trustcheck.dynamic.shutil.which", return_value="docker"), patch(
+        with patch("trustcheck.dynamic.shutil.which", return_value=docker_executable), patch(
             "trustcheck.dynamic.subprocess.run",
             return_value=completed,
         ) as run:
@@ -163,6 +180,7 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertEqual(result.classification, "inconclusive")
         self.assertEqual(result.failure_type, "result_unavailable")
         self.assertEqual(result.stdout, ["installed"])
+        self.assertEqual(command[0], docker_executable)
         self.assertIn("--rm", command)
         self.assertIn("--cidfile", command)
         self.assertIn("none", command[command.index("--network") + 1])
@@ -231,6 +249,14 @@ class DynamicAnalysisTests(unittest.TestCase):
         ):
             self.assertEqual(dynamic_mod._container_user(), "1234:5678")
 
+        with patch("trustcheck.dynamic.os.getuid", None, create=True), patch(
+            "trustcheck.dynamic.os.getgid",
+            None,
+            create=True,
+        ):
+            self.assertEqual(dynamic_mod._container_user(), "65534:65534")
+            self.assertFalse(dynamic_mod._caller_is_root())
+
         with self.subTest("root chown"):
             with tempfile.TemporaryDirectory(prefix="trustcheck-dynamic-test-") as temp:
                 directory = Path(temp)
@@ -267,6 +293,7 @@ class DynamicAnalysisTests(unittest.TestCase):
                 chown.assert_not_called()
 
     def test_container_cleanup_uses_cidfile_for_terminal_paths(self) -> None:
+        docker_executable = "C:\\Tools\\docker.exe"
         scenarios = {
             "normal": subprocess.CompletedProcess(
                 args=["docker"],
@@ -298,7 +325,8 @@ class DynamicAnalysisTests(unittest.TestCase):
                     command: list[str],
                     **_: object,
                 ) -> subprocess.CompletedProcess[str]:
-                    if command[:3] == ["docker", "rm", "--force"]:
+                    self.assertEqual(command[0], docker_executable)
+                    if command[1:3] == ["rm", "--force"]:
                         removed.append(command[3])
                         return subprocess.CompletedProcess(command, 0, "", "")
                     cidfile = Path(command[command.index("--cidfile") + 1])
@@ -307,7 +335,10 @@ class DynamicAnalysisTests(unittest.TestCase):
                         raise outcome
                     return outcome
 
-                with patch("trustcheck.dynamic.shutil.which", return_value="docker"), patch(
+                with patch(
+                    "trustcheck.dynamic.shutil.which",
+                    return_value=docker_executable,
+                ), patch(
                     "trustcheck.dynamic.subprocess.run",
                     side_effect=run,
                 ):
@@ -328,6 +359,33 @@ class DynamicAnalysisTests(unittest.TestCase):
                         )
 
                 self.assertEqual(removed, [container_id])
+
+    def test_container_cleanup_ignores_missing_invalid_and_failed_cleanup(self) -> None:
+        docker_executable = "C:\\Tools\\docker.exe"
+        with tempfile.TemporaryDirectory(prefix="trustcheck-dynamic-cleanup-") as temp:
+            root = Path(temp)
+            missing = root / "missing.cid"
+            with patch("trustcheck.dynamic.subprocess.run") as run:
+                dynamic_mod._force_remove_container(missing, docker_executable)
+            run.assert_not_called()
+
+            invalid = root / "invalid.cid"
+            invalid.write_text("not-a-container-id", encoding="ascii")
+            with patch("trustcheck.dynamic.subprocess.run") as run:
+                dynamic_mod._force_remove_container(invalid, docker_executable)
+            run.assert_not_called()
+
+            valid = root / "valid.cid"
+            valid.write_text("b" * 64, encoding="ascii")
+            with patch(
+                "trustcheck.dynamic.subprocess.run",
+                side_effect=OSError("docker unavailable"),
+            ) as run:
+                dynamic_mod._force_remove_container(valid, docker_executable)
+            self.assertEqual(
+                run.call_args.args[0],
+                [docker_executable, "rm", "--force", "b" * 64],
+            )
 
     def test_parses_phased_result_and_behavioral_evidence(self) -> None:
         runner_payload = {
@@ -516,6 +574,7 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertEqual(phases[0].stdout, ["line"])
         self.assertIsNone(phases[0].exit_code)
         self.assertIsNone(phases[0].failure_type)
+        self.assertEqual(dynamic_mod._parse_phases(None), [])
 
         evidence = dynamic_mod._parse_evidence(
             {

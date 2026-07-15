@@ -356,6 +356,8 @@ class PluginManifestToolTests(unittest.TestCase):
                 plugin_manifest_mod.fingerprint_public_key_pem(
                     ec_public_path.read_text(encoding="ascii")
                 )
+            with self.assertRaisesRegex(PluginError, "invalid public key data"):
+                plugin_manifest_mod.fingerprint_public_key_pem("not a key")
 
             encrypted_key = rsa.generate_private_key(
                 public_exponent=65537,
@@ -485,6 +487,16 @@ class PluginManifestToolTests(unittest.TestCase):
             with self.assertRaisesRegex(PluginError, "unsupported .data scheme"):
                 sign_plugin_wheel(unknown_data, key=key_path)
 
+            for member in (
+                "trustcheck_demo_plugin-1.0.0.data",
+                "trustcheck_demo_plugin-1.0.0.data/purelib/",
+            ):
+                with self.subTest(member=member), self.assertRaisesRegex(
+                    PluginError,
+                    "malformed .data member",
+                ):
+                    plugin_manifest_mod._installed_wheel_path(member)
+
             for signature_name in ("RECORD.jws", "RECORD.p7s"):
                 with self.subTest(signature_name=signature_name):
                     normalized_signature = signature_name.replace(".", "_")
@@ -509,6 +521,54 @@ class PluginManifestToolTests(unittest.TestCase):
             missing_input = base / "missing-1.0.0-py3-none-any.whl"
             with self.assertRaisesRegex(PluginError, "requires a wheel file"):
                 sign_plugin_wheel(missing_input, key=key_path)
+
+    def test_wheel_path_helpers_cover_install_layout_edges(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-paths-") as temp:
+            root = Path(temp)
+            input_path = root / "trustcheck_demo_plugin-1.0.0-py3-none-any.whl"
+            other_valid = root / "other_demo_plugin-1.0.0-py3-none-any.whl"
+
+            with self.assertRaisesRegex(PluginError, "must match"):
+                plugin_manifest_mod._validate_signing_output_path(
+                    input_path,
+                    other_valid,
+                )
+
+            with self.assertRaisesRegex(PluginError, "reserved path"):
+                plugin_manifest_mod._build_record(
+                    {
+                        (
+                            "trustcheck_demo_plugin-1.0.0.data/"
+                            "purelib/trustcheck-plugin.json"
+                        ): b"manifest",
+                    },
+                    "trustcheck_demo_plugin-1.0.0.dist-info/RECORD",
+                )
+
+            with self.assertRaisesRegex(PluginError, "duplicate path"):
+                plugin_manifest_mod._build_record(
+                    {
+                        "demo.py": b"root",
+                        "trustcheck_demo_plugin-1.0.0.data/purelib/demo.py": b"data",
+                    },
+                    "trustcheck_demo_plugin-1.0.0.dist-info/RECORD",
+                )
+
+            record_bytes = plugin_manifest_mod._render_record(
+                [
+                    (
+                        "trustcheck_demo_plugin-1.0.0.data/purelib/demo.py",
+                        "sha256=abc",
+                        "3",
+                    ),
+                    ("trustcheck_demo_plugin-1.0.0.dist-info/RECORD", "", ""),
+                ]
+            )
+            installed = plugin_manifest_mod._installed_record_payload(
+                record_bytes,
+                Path("trustcheck_demo_plugin-1.0.0.dist-info/RECORD"),
+            )
+            self.assertIn(b"demo.py,sha256=abc,3\n", installed)
 
     def test_supported_data_schemes_install_and_load_after_signing(self) -> None:
         with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-data-") as temp:

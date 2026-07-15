@@ -1620,6 +1620,42 @@ class PluginSecurityTests(unittest.TestCase):
         ), self.assertRaisesRegex(PluginError, "response exceeded"):
             _run_plugin_process("module:Plugin", "render", kwargs, timeout=1)
 
+    def test_plugin_process_group_termination_fallbacks_are_bounded(self) -> None:
+        stopped = Mock()
+        stopped.is_alive.return_value = False
+        plugin_mod._terminate_plugin_process(stopped)
+        stopped.terminate.assert_not_called()
+
+        process = Mock(pid=123)
+        process.is_alive.side_effect = [True, False]
+        with patch("trustcheck.plugins.os.name", "posix"), patch(
+            "trustcheck.plugins.os.killpg",
+            side_effect=OSError("not a process group"),
+            create=True,
+        ) as killpg:
+            plugin_mod._terminate_plugin_process(process)
+
+        killpg.assert_called_once()
+        process.terminate.assert_called_once()
+        process.kill.assert_not_called()
+
+        stubborn = Mock(pid=456)
+        stubborn.is_alive.side_effect = [True, True]
+        with patch("trustcheck.plugins.os.name", "posix"), patch(
+            "trustcheck.plugins.signal.SIGKILL",
+            9,
+            create=True,
+        ), patch(
+            "trustcheck.plugins.os.killpg",
+            side_effect=[None, ProcessLookupError()],
+            create=True,
+        ) as killpg:
+            plugin_mod._terminate_plugin_process(stubborn)
+
+        self.assertEqual(killpg.call_count, 2)
+        stubborn.kill.assert_called_once()
+        self.assertEqual(stubborn.join.call_count, 2)
+
     def test_plugin_ipc_protocol_validation_and_size_limits(self) -> None:
         query_kwargs = {"project": "demo", "version": "1"}
         context = _process_context(

@@ -80,7 +80,8 @@ def analyze_artifact_dynamic(
             failure_type="policy_blocked",
         )
         return result
-    if shutil.which("docker") is None:
+    docker_executable = shutil.which("docker")
+    if docker_executable is None:
         _fail_before_execution(
             result,
             error="bounded install analysis requires the Docker CLI to be available",
@@ -117,7 +118,7 @@ def analyze_artifact_dynamic(
             entry_point_probe=entry_point_probe,
         )
         docker_command = [
-            "docker",
+            docker_executable,
             "run",
             "--rm",
             "--cidfile",
@@ -194,7 +195,7 @@ def analyze_artifact_dynamic(
                 )
                 return result
         finally:
-            _force_remove_container(cidfile)
+            _force_remove_container(cidfile, docker_executable)
 
     result.executed = True
     result.exit_code = completed.returncode
@@ -250,13 +251,13 @@ def _caller_is_root() -> bool:
     return callable(getuid) and int(getuid()) == 0
 
 
-def _force_remove_container(cidfile: Path) -> None:
+def _force_remove_container(cidfile: Path, docker_executable: str) -> None:
     container_id = _container_id_from_cidfile(cidfile)
     if container_id is None:
         return
     try:
         subprocess.run(  # nosec B603
-            ["docker", "rm", "--force", container_id],
+            [docker_executable, "rm", "--force", container_id],
             capture_output=True,
             check=False,
             text=True,
