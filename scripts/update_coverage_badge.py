@@ -28,7 +28,7 @@ def _coverage_percent(payload: Any) -> int:
     totals = payload["totals"]
     display = totals.get("percent_covered_display")
     if isinstance(display, str):
-        percent = int(display.rstrip("%"))
+        percent = round(float(display.rstrip("%")))
     else:
         percent = round(float(totals["percent_covered"]))
     return max(0, min(100, percent))
