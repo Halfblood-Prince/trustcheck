@@ -14,13 +14,23 @@ The project follows Semantic Versioning for the supported public API described i
 - Kept bounded dynamic-analysis artifacts private on POSIX by running the
   container as the host UID/GID instead of making mounted artifacts
   world-readable.
+- Run bounded dynamic-analysis containers as UID/GID `65534:65534` when
+  Trustcheck itself is launched as root, and forcibly clean up cidfile-tracked
+  Docker containers after timeouts, interruptions, client failures, or malformed
+  analyzer output.
 - Added archive size, member-count, expanded-size and compression-ratio limits
   to plugin-manifest wheel verification.
+- Require RSA plugin-manifest signing keys to be at least 2048 bits in
+  authoring, fingerprinting, and runtime manifest verification.
+- Reject plugin wheels containing stale `RECORD.jws` or `RECORD.p7s` signatures,
+  unsupported external `.data` schemes, or duplicate installed archive paths.
 
 ### Changed
 
 - Plugin-manifest signing preserves unchanged wheel member `ZipInfo` metadata
   and writes deterministic metadata for the inserted manifest and `RECORD`.
+- Plugin-manifest signing now allows separate output only when the output
+  basename is the same valid wheel filename as the input wheel.
 - Dynamic analysis now keeps pip build isolation enabled while installing build
   backends from the offline analyzer wheelhouse.
 - `plugin-manifest` authoring commands no longer initialize installed plugins

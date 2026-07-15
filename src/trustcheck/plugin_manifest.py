@@ -19,6 +19,7 @@ from typing import Any, cast
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from packaging.utils import InvalidWheelFilename, parse_wheel_filename
 
 from .artifacts import (
     ENTRY_POINT_NAME_PATTERN,
@@ -41,6 +42,7 @@ from .plugins import (
     PluginError,
     _canonical_json,
     _record_rows,
+    _require_rsa_key_strength,
     _verified_manifest,
 )
 
@@ -153,8 +155,7 @@ def sign_plugin_wheel(
     """Insert a signed v2 plugin manifest into *wheel* and revalidate it."""
     wheel_path = Path(wheel)
     output_path = Path(output) if output is not None else wheel_path
-    if output_path.suffix != ".whl":
-        raise PluginError(f"plugin manifest output must be a .whl file: {output_path}")
+    _validate_signing_output_path(wheel_path, output_path)
     project = _read_plugin_wheel(wheel_path)
     schema = _load_configuration_schema(configuration_schema)
     statement, record = _build_statement(project, schema)
@@ -208,6 +209,7 @@ def fingerprint_public_key_file(path: str | Path) -> str:
 
 
 def fingerprint_public_key(public_key: rsa.RSAPublicKey) -> str:
+    _require_rsa_key_strength(public_key)
     return hashlib.sha256(
         public_key.public_bytes(
             serialization.Encoding.DER,
@@ -219,6 +221,7 @@ def fingerprint_public_key(public_key: rsa.RSAPublicKey) -> str:
 def _read_plugin_wheel(path: Path) -> _WheelProject:
     if not path.is_file() or path.suffix != ".whl":
         raise PluginError(f"plugin manifest signing requires a wheel file: {path}")
+    _parse_wheel_basename(path.name, "input")
     try:
         if path.stat().st_size > MAX_ARTIFACT_BYTES:
             raise PluginError(
@@ -251,6 +254,7 @@ def _read_plugin_wheel(path: Path) -> _WheelProject:
     record_path = f"{dist_info_dir}/RECORD"
     if record_path not in entries:
         raise PluginError("plugin wheel must contain a dist-info RECORD")
+    _reject_existing_record_signatures(entries, dist_info_dir)
 
     metadata = Parser().parsestr(entries[metadata_paths[0]].decode("utf-8"))
     entry_points_path = f"{dist_info_dir}/entry_points.txt"
@@ -341,8 +345,10 @@ def _build_statement(
 
 
 def _build_record(entries: Mapping[str, bytes], record_path: str) -> _WheelRecord:
-    rows: list[tuple[str, str, str]] = []
+    wheel_rows: list[tuple[str, str, str]] = []
+    runtime_rows: list[tuple[str, str, str]] = []
     canonical_entries: list[str] = []
+    installed_paths: set[str] = set()
     for name in sorted(entries):
         if name in {PLUGIN_MANIFEST_NAME, record_path}:
             continue
@@ -351,17 +357,27 @@ def _build_record(entries: Mapping[str, bytes], record_path: str) -> _WheelRecor
         digest_text = (
             base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
         )
-        rows.append((name, f"sha256={digest_text}", str(len(payload))))
-        canonical_entries.append(f"{name}\0{digest.hex()}\0{len(payload)}")
-    rows.append((PLUGIN_MANIFEST_NAME, "", ""))
-    rows.append((record_path, "", ""))
-    record_bytes = _render_record(rows)
+        installed_name = _installed_wheel_path(name)
+        if installed_name in {PLUGIN_MANIFEST_NAME, record_path}:
+            raise PluginError(f"plugin wheel installs reserved path {installed_name}")
+        if installed_name in installed_paths:
+            raise PluginError(f"plugin wheel installs duplicate path {installed_name}")
+        installed_paths.add(installed_name)
+        wheel_rows.append((name, f"sha256={digest_text}", str(len(payload))))
+        runtime_rows.append((installed_name, f"sha256={digest_text}", str(len(payload))))
+        canonical_entries.append(f"{installed_name}\0{digest.hex()}\0{len(payload)}")
+    wheel_rows.append((PLUGIN_MANIFEST_NAME, "", ""))
+    wheel_rows.append((record_path, "", ""))
+    runtime_record_bytes = _render_record(
+        [*sorted(runtime_rows), (PLUGIN_MANIFEST_NAME, "", ""), (record_path, "", "")]
+    )
+    record_bytes = _render_record(wheel_rows)
     wheel_sha256 = hashlib.sha256(
         "\n".join(sorted(canonical_entries)).encode("utf-8")
     ).hexdigest()
     return _WheelRecord(
         wheel_sha256=wheel_sha256,
-        record_sha256=hashlib.sha256(record_bytes).hexdigest(),
+        record_sha256=hashlib.sha256(runtime_record_bytes).hexdigest(),
         record_bytes=record_bytes,
     )
 
@@ -471,6 +487,7 @@ def _load_private_key(path: Path) -> rsa.RSAPrivateKey:
         raise PluginError(f"unable to read plugin private key {path}: {exc}") from exc
     if not isinstance(key, rsa.RSAPrivateKey):
         raise PluginError("plugin manifests require an RSA private key")
+    _require_rsa_key_strength(key)
     return key
 
 
@@ -520,9 +537,13 @@ def _extract_wheel(path: Path, root: Path) -> None:
                 if info.is_dir():
                     continue
                 name = _safe_wheel_path(info.filename)
-                destination = root / name
+                destination_name = _installed_wheel_path(name)
+                payload = archive.read(info)
+                if name.endswith(".dist-info/RECORD"):
+                    payload = _installed_record_payload(payload, Path(name))
+                destination = root / destination_name
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(archive.read(info))
+                destination.write_bytes(payload)
     except zipfile.BadZipFile as exc:
         raise PluginError(f"plugin wheel {path} is not a valid zip archive") from exc
 
@@ -534,7 +555,17 @@ def _validate_wheel_members(path: Path, infos: Sequence[zipfile.ZipInfo]) -> Non
             f"plugin wheel contains {len(files)} members; limit is {MAX_ARCHIVE_MEMBERS}"
         )
     total = 0
+    raw_names: set[str] = set()
+    installed_names: set[str] = set()
     for info in files:
+        name = _safe_wheel_path(info.filename)
+        if name in raw_names:
+            raise PluginError(f"wheel {path} contains duplicate entry {name}")
+        raw_names.add(name)
+        installed_name = _installed_wheel_path(name)
+        if installed_name in installed_names:
+            raise PluginError(f"wheel {path} installs duplicate path {installed_name}")
+        installed_names.add(installed_name)
         total += info.file_size
         if total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
             raise PluginError(
@@ -550,6 +581,71 @@ def _validate_wheel_members(path: Path, infos: Sequence[zipfile.ZipInfo]) -> Non
                 )
     if not files:
         raise PluginError(f"plugin wheel {path} contains no files")
+
+
+def _validate_signing_output_path(input_path: Path, output_path: Path) -> None:
+    if output_path.suffix != ".whl":
+        raise PluginError(f"plugin manifest output must be a .whl file: {output_path}")
+    input_parts = _parse_wheel_basename(input_path.name, "input")
+    output_parts = _parse_wheel_basename(output_path.name, "output")
+    if output_parts != input_parts or output_path.name != input_path.name:
+        raise PluginError(
+            "plugin manifest output wheel filename must match the input wheel "
+            f"filename {input_path.name!r}; choose a different directory for "
+            "separate signed output"
+        )
+
+
+def _parse_wheel_basename(filename: str, label: str) -> tuple[object, object, object, object]:
+    try:
+        return parse_wheel_filename(filename)
+    except InvalidWheelFilename as exc:
+        raise PluginError(
+            f"plugin manifest {label} must use a valid wheel filename: {filename}"
+        ) from exc
+
+
+def _reject_existing_record_signatures(
+    entries: Mapping[str, bytes],
+    dist_info_dir: str,
+) -> None:
+    for name in (f"{dist_info_dir}/RECORD.jws", f"{dist_info_dir}/RECORD.p7s"):
+        if name in entries:
+            raise PluginError(
+                f"plugin wheel contains existing RECORD signature {name}; "
+                "rewriting RECORD would invalidate it"
+            )
+
+
+def _installed_wheel_path(name: str) -> str:
+    parts = name.split("/")
+    if not parts or not parts[0].endswith(".data"):
+        return name
+    if len(parts) < 3 or not parts[1]:
+        raise PluginError(f"plugin wheel contains malformed .data member {name}")
+    scheme = parts[1]
+    if scheme in {"purelib", "platlib"}:
+        installed = "/".join(parts[2:])
+        if not installed:
+            raise PluginError(f"plugin wheel contains malformed .data member {name}")
+        return installed
+    if scheme in {"scripts", "headers", "data"}:
+        raise PluginError(
+            f"plugin wheels with .data/{scheme} entries are not supported; "
+            "those files install outside the verified distribution root"
+        )
+    raise PluginError(
+        f"plugin wheel uses unsupported .data scheme {scheme!r}; "
+        "only purelib and platlib are supported"
+    )
+
+
+def _installed_record_payload(record_bytes: bytes, record_path: Path) -> bytes:
+    rows = [
+        (_installed_wheel_path(_safe_wheel_path(relative_path)), hash_spec, size_text)
+        for relative_path, hash_spec, size_text in _record_rows(record_bytes, record_path)
+    ]
+    return _render_record(rows)
 
 
 def _copy_zip_info(info: zipfile.ZipInfo, filename: str) -> zipfile.ZipInfo:

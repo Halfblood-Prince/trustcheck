@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import subprocess
@@ -158,6 +159,22 @@ class PluginManifestToolTests(unittest.TestCase):
             self.assertEqual(manifest.date_time, (2024, 1, 2, 3, 4, 6))
             self.assertEqual(record.date_time, (2024, 1, 2, 3, 4, 6))
 
+            site_packages = _install_wheel_into_venv(output, root / "venv")
+            sys.path.insert(0, str(site_packages))
+            importlib.invalidate_caches()
+            try:
+                manager = PluginManager(
+                    enabled=True,
+                    allowlist=("advisory:demo",),
+                    trusted_signers=(signer,),
+                    entry_point_loader=_entry_points_from(site_packages),
+                    timeout=10,
+                )
+                self.assertEqual(manager.advisory_sources()[0].query("demo", "1"), [])
+            finally:
+                sys.path.remove(str(site_packages))
+                sys.modules.pop("demo_plugin", None)
+
     def test_configuration_schema_directory_verification_and_cli_paths(self) -> None:
         with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-cli-") as temp:
             root = Path(temp)
@@ -203,7 +220,7 @@ class PluginManifestToolTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(json.loads(stdout.getvalue())["fingerprint_sha256"], signer)
 
-            signed = root / "signed.whl"
+            signed = root / "signed" / wheel.name
             output_file = root / "summary.txt"
             with redirect_stdout(StringIO()):
                 exit_code = cli_main(
@@ -283,6 +300,36 @@ class PluginManifestToolTests(unittest.TestCase):
                 sign_plugin_wheel(wheel, key=key_path)
             with self.assertRaisesRegex(PluginError, ".whl"):
                 sign_plugin_wheel(wheel, key=key_path, output=root / "signed.zip")
+
+            valid_wheel = _write_minimal_plugin_wheel(root / "valid")
+            with self.assertRaisesRegex(PluginError, "valid wheel filename"):
+                sign_plugin_wheel(valid_wheel, key=key_path, output=root / "signed.whl")
+
+    def test_signing_rejects_weak_rsa_keys_and_accepts_modern_sizes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-key-size-") as temp:
+            root = Path(temp)
+            wheel = _write_minimal_plugin_wheel(root / "wheel")
+            weak_key_path, weak_public_path, _ = _write_key_pair(
+                root / "weak",
+                key_size=1024,
+                allow_weak=True,
+            )
+
+            with self.assertRaisesRegex(PluginError, "at least 2048 bits"):
+                sign_plugin_wheel(wheel, key=weak_key_path)
+            with self.assertRaisesRegex(PluginError, "at least 2048 bits"):
+                fingerprint_public_key_file(weak_public_path)
+
+            for key_size in (2048, 3072):
+                with self.subTest(key_size=key_size):
+                    key_path, public_key_path, signer = _write_key_pair(
+                        root / f"rsa-{key_size}",
+                        key_size=key_size,
+                    )
+                    output = root / f"signed-{key_size}" / wheel.name
+                    summary = sign_plugin_wheel(wheel, key=key_path, output=output)
+                    self.assertEqual(summary.signer_sha256, signer)
+                    self.assertEqual(fingerprint_public_key_file(public_key_path), signer)
 
     def test_signing_and_fingerprint_wrap_key_loading_errors(self) -> None:
         with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-keys-") as temp:
@@ -412,6 +459,48 @@ class PluginManifestToolTests(unittest.TestCase):
             with self.assertRaisesRegex(PluginError, "unsafe path"):
                 sign_plugin_wheel(unsafe, key=key_path)
 
+            for scheme in ("scripts", "headers", "data"):
+                with self.subTest(scheme=scheme):
+                    external = base / f"external_{scheme}-1.0.0-py3-none-any.whl"
+                    _write_minimal_plugin_wheel(
+                        base / f"external-{scheme}-source",
+                        output=external,
+                        extra_entries={
+                            f"trustcheck_demo_plugin-1.0.0.data/{scheme}/raw-helper": (
+                                b"#!/bin/sh\nexit 0\n"
+                            )
+                        },
+                    )
+                    with self.assertRaisesRegex(PluginError, f".data/{scheme}"):
+                        sign_plugin_wheel(external, key=key_path)
+
+            unknown_data = base / "external_other-1.0.0-py3-none-any.whl"
+            _write_minimal_plugin_wheel(
+                base / "external-other-source",
+                output=unknown_data,
+                extra_entries={
+                    "trustcheck_demo_plugin-1.0.0.data/stdlib/raw-helper": b""
+                },
+            )
+            with self.assertRaisesRegex(PluginError, "unsupported .data scheme"):
+                sign_plugin_wheel(unknown_data, key=key_path)
+
+            for signature_name in ("RECORD.jws", "RECORD.p7s"):
+                with self.subTest(signature_name=signature_name):
+                    normalized_signature = signature_name.replace(".", "_")
+                    stale = base / f"stale_{normalized_signature}-1.0.0-py3-none-any.whl"
+                    _write_minimal_plugin_wheel(
+                        base / f"stale-{signature_name}-source",
+                        output=stale,
+                        extra_entries={
+                            f"trustcheck_demo_plugin-1.0.0.dist-info/{signature_name}": (
+                                b"stale-signature"
+                            )
+                        },
+                    )
+                    with self.assertRaisesRegex(PluginError, "existing RECORD signature"):
+                        sign_plugin_wheel(stale, key=key_path)
+
             malformed = base / "malformed-1.0.0-py3-none-any.whl"
             malformed.write_bytes(b"not a zip")
             with self.assertRaisesRegex(PluginError, "valid zip"):
@@ -420,6 +509,47 @@ class PluginManifestToolTests(unittest.TestCase):
             missing_input = base / "missing-1.0.0-py3-none-any.whl"
             with self.assertRaisesRegex(PluginError, "requires a wheel file"):
                 sign_plugin_wheel(missing_input, key=key_path)
+
+    def test_supported_data_schemes_install_and_load_after_signing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-data-") as temp:
+            root = Path(temp)
+            for scheme in ("purelib", "platlib"):
+                with self.subTest(scheme=scheme):
+                    wheel = _write_minimal_plugin_wheel(
+                        root / scheme / "wheel",
+                        extra_entries={
+                            (
+                                "trustcheck_demo_plugin-1.0.0.data/"
+                                f"{scheme}/demo_{scheme}.py"
+                            ): f"SCHEME = {scheme!r}\n".encode("utf-8")
+                        },
+                    )
+                    key_path, _, signer = _write_key_pair(root / scheme / "key")
+                    output = root / scheme / "signed" / wheel.name
+
+                    sign_plugin_wheel(wheel, key=key_path, output=output)
+                    site_packages = _install_wheel_into_venv(
+                        output,
+                        root / scheme / "venv",
+                    )
+                    self.assertTrue((site_packages / f"demo_{scheme}.py").is_file())
+                    sys.path.insert(0, str(site_packages))
+                    importlib.invalidate_caches()
+                    try:
+                        manager = PluginManager(
+                            enabled=True,
+                            allowlist=("advisory:demo",),
+                            trusted_signers=(signer,),
+                            entry_point_loader=_entry_points_from(site_packages),
+                            timeout=10,
+                        )
+                        self.assertEqual(
+                            manager.advisory_sources()[0].query("demo", "1"),
+                            [],
+                        )
+                    finally:
+                        sys.path.remove(str(site_packages))
+                        sys.modules.pop("demo_plugin", None)
 
     def test_verify_rejects_malformed_manifests_and_archive_limits(self) -> None:
         with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-verify-") as temp:
@@ -431,8 +561,17 @@ class PluginManifestToolTests(unittest.TestCase):
 
             wheel = _write_minimal_plugin_wheel(root)
             key_path, _, _ = _write_key_pair(root)
-            signed = root / "signed.whl"
+            signed = root / "signed" / wheel.name
             sign_plugin_wheel(wheel, key=key_path, output=signed)
+
+            duplicate_signed = root / "duplicate" / wheel.name
+            sign_plugin_wheel(wheel, key=key_path, output=duplicate_signed)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with zipfile.ZipFile(duplicate_signed, "a") as archive:
+                    archive.writestr("trustcheck-plugin.json", b"duplicate\n")
+            with self.assertRaisesRegex(PluginError, "duplicate"):
+                verify_plugin_manifest(duplicate_signed)
 
             with patch(
                 "trustcheck.plugin_manifest.MAX_ARCHIVE_MEMBERS",
@@ -466,7 +605,7 @@ class PluginManifestToolTests(unittest.TestCase):
             with self.assertRaisesRegex(PluginError, "contains no files"):
                 sign_plugin_wheel(empty, key=key_path)
 
-            invalid_epoch_output = root / "invalid-epoch.whl"
+            invalid_epoch_output = root / "invalid-epoch" / wheel.name
             with patch.dict("os.environ", {"SOURCE_DATE_EPOCH": "not-an-int"}):
                 sign_plugin_wheel(wheel, key=key_path, output=invalid_epoch_output)
             with zipfile.ZipFile(invalid_epoch_output) as archive:
@@ -650,7 +789,12 @@ def _write_minimal_plugin_wheel(
         )
     )
     entries = {
-        "demo_plugin.py": b"class Plugin:\n    name = 'demo'\n",
+        "demo_plugin.py": (
+            b"class Plugin:\n"
+            b"    name = 'demo'\n"
+            b"    def query(self, project, version):\n"
+            b"        return []\n"
+        ),
         "bin/helper": b"#!/bin/sh\nexit 0\n",
         f"{dist_info}/METADATA": metadata_payload.encode("utf-8"),
         f"{dist_info}/WHEEL": (
@@ -717,8 +861,14 @@ def _build_wheel(project: Path, dist: Path) -> Path:
     return wheels[0]
 
 
-def _write_key_pair(root: Path) -> tuple[Path, Path, str]:
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+def _write_key_pair(
+    root: Path,
+    *,
+    key_size: int = 2048,
+    allow_weak: bool = False,
+) -> tuple[Path, Path, str]:
+    root.mkdir(parents=True, exist_ok=True)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=key_size)
     key_path = root / "plugin-key.pem"
     public_key_path = root / "plugin-key.pub.pem"
     key_path.write_bytes(
@@ -729,13 +879,22 @@ def _write_key_pair(root: Path) -> tuple[Path, Path, str]:
         )
     )
     public_key = key.public_key()
+    public_key_der = public_key.public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
     public_key_path.write_bytes(
         public_key.public_bytes(
             serialization.Encoding.PEM,
             serialization.PublicFormat.SubjectPublicKeyInfo,
         )
     )
-    return key_path, public_key_path, fingerprint_public_key(public_key)
+    signer = (
+        hashlib.sha256(public_key_der).hexdigest()
+        if allow_weak
+        else fingerprint_public_key(public_key)
+    )
+    return key_path, public_key_path, signer
 
 
 def _install_wheel_into_venv(wheel: Path, venv_dir: Path) -> Path:

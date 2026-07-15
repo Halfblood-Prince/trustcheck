@@ -26,6 +26,8 @@ MAX_DYNAMIC_CPU_SECONDS = 10
 MAX_DYNAMIC_MEMORY = "512m"
 MAX_DYNAMIC_OUTPUT_LINES = 25
 RESULT_PREFIX = "TRUSTCHECK_DYNAMIC_RESULT="
+UNPRIVILEGED_CONTAINER_UID = 65534
+UNPRIVILEGED_CONTAINER_GID = 65534
 # This private tmpfs must be executable because the disposable venv lives there.
 CONTAINER_TEMPFS = "/tmp:rw,exec,nosuid,nodev,size=256m"  # nosec B108
 
@@ -91,11 +93,12 @@ def analyze_artifact_dynamic(
     result.user = container_user
     artifact_name = Path(filename).name or "artifact"
     with tempfile.TemporaryDirectory(prefix="trustcheck-dynamic-") as directory:
+        host_directory = Path(directory)
         artifact_path = Path(directory) / artifact_name
+        cidfile = host_directory / "container.cid"
         artifact_path.write_bytes(payload)
         try:
-            artifact_path.parent.chmod(0o700)
-            artifact_path.chmod(0o600)
+            _prepare_private_artifact_mount(host_directory, artifact_path)
         except OSError as exc:
             _fail_before_execution(
                 result,
@@ -117,6 +120,8 @@ def analyze_artifact_dynamic(
             "docker",
             "run",
             "--rm",
+            "--cidfile",
+            str(cidfile),
             "--network",
             "none",
             "--user",
@@ -152,41 +157,44 @@ def analyze_artifact_dynamic(
         ]
         result.command = [*docker_command[:-1], "<bounded-install-runner>"]
         try:
-            completed = subprocess.run(  # nosec B603
-                docker_command,
-                capture_output=True,
-                check=False,
-                text=True,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as exc:
-            result.stdout = _excerpt(exc.stdout or "")
-            result.stderr = _excerpt(exc.stderr or "")
-            result.error = (
-                f"bounded install analysis exceeded the {timeout:g}-second time limit"
-            )
-            result.classification = "timed-out"
-            result.failure_type = "timed_out"
-            result.phases = [
-                DynamicAnalysisPhase(
-                    name="sandbox_execution",
-                    status="failed",
-                    classification="timed-out",
-                    failure_type="timed_out",
-                    error=result.error,
-                    stdout=result.stdout,
-                    stderr=result.stderr,
+            try:
+                completed = subprocess.run(  # nosec B603
+                    docker_command,
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                    timeout=timeout,
                 )
-            ]
-            return result
-        except OSError as exc:
-            _fail_before_execution(
-                result,
-                error=f"unable to start bounded install analysis container: {exc}",
-                classification="unsupported",
-                failure_type="container_start_failed",
-            )
-            return result
+            except subprocess.TimeoutExpired as exc:
+                result.stdout = _excerpt(exc.stdout or "")
+                result.stderr = _excerpt(exc.stderr or "")
+                result.error = (
+                    f"bounded install analysis exceeded the {timeout:g}-second time limit"
+                )
+                result.classification = "timed-out"
+                result.failure_type = "timed_out"
+                result.phases = [
+                    DynamicAnalysisPhase(
+                        name="sandbox_execution",
+                        status="failed",
+                        classification="timed-out",
+                        failure_type="timed_out",
+                        error=result.error,
+                        stdout=result.stdout,
+                        stderr=result.stderr,
+                    )
+                ]
+                return result
+            except OSError as exc:
+                _fail_before_execution(
+                    result,
+                    error=f"unable to start bounded install analysis container: {exc}",
+                    classification="unsupported",
+                    failure_type="container_start_failed",
+                )
+                return result
+        finally:
+            _force_remove_container(cidfile)
 
     result.executed = True
     result.exit_code = completed.returncode
@@ -217,8 +225,55 @@ def _container_user() -> str:
     getuid = getattr(os, "getuid", None)
     getgid = getattr(os, "getgid", None)
     if callable(getuid) and callable(getgid):
-        return f"{getuid()}:{getgid()}"
-    return "65534:65534"
+        uid = int(getuid())
+        gid = int(getgid())
+        if uid == 0:
+            return f"{UNPRIVILEGED_CONTAINER_UID}:{UNPRIVILEGED_CONTAINER_GID}"
+        return f"{uid}:{gid}"
+    return f"{UNPRIVILEGED_CONTAINER_UID}:{UNPRIVILEGED_CONTAINER_GID}"
+
+
+def _prepare_private_artifact_mount(directory: Path, artifact_path: Path) -> None:
+    directory.chmod(0o700)
+    artifact_path.chmod(0o600)
+    if not _caller_is_root():
+        return
+    chown = getattr(os, "chown", None)
+    if not callable(chown):
+        raise OSError("cannot chown analyzer artifact for unprivileged container user")
+    chown(directory, UNPRIVILEGED_CONTAINER_UID, UNPRIVILEGED_CONTAINER_GID)
+    chown(artifact_path, UNPRIVILEGED_CONTAINER_UID, UNPRIVILEGED_CONTAINER_GID)
+
+
+def _caller_is_root() -> bool:
+    getuid = getattr(os, "getuid", None)
+    return callable(getuid) and int(getuid()) == 0
+
+
+def _force_remove_container(cidfile: Path) -> None:
+    container_id = _container_id_from_cidfile(cidfile)
+    if container_id is None:
+        return
+    try:
+        subprocess.run(  # nosec B603
+            ["docker", "rm", "--force", container_id],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+
+
+def _container_id_from_cidfile(cidfile: Path) -> str | None:
+    try:
+        container_id = cidfile.read_text(encoding="ascii").strip()
+    except OSError:
+        return None
+    if re.fullmatch(r"[0-9a-fA-F]{12,128}", container_id) is None:
+        return None
+    return container_id
 
 
 def _base_result(

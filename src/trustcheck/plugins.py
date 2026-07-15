@@ -8,6 +8,8 @@ import io
 import json
 import math
 import multiprocessing
+import os
+import signal
 import sys
 import tempfile
 import time
@@ -71,9 +73,12 @@ PLUGIN_LEGACY_MANIFEST_ERROR = (
     "re-sign the manifest using plugin statement v2."
 )
 PLUGIN_EMPTY_CONFIGURATION_SCHEMA_SHA256 = hashlib.sha256(b"").hexdigest()
+MIN_PLUGIN_RSA_KEY_BITS = 2048
 DEFAULT_PLUGIN_TIMEOUT = 10.0
 PLUGIN_CPU_SECONDS = 8
 PLUGIN_MEMORY_BYTES = 256 * 1024 * 1024
+PLUGIN_PROCESS_COUNT_LIMIT = 32
+PLUGIN_FILE_DESCRIPTOR_LIMIT = 64
 PLUGIN_TRUST_POLICY_MODES = frozenset(
     {
         "disabled",
@@ -109,6 +114,14 @@ PLUGIN_KIND_CAPABILITIES: dict[str, frozenset[str]] = {
 
 class PluginError(RuntimeError):
     """Raised when a requested plugin cannot be loaded or violates its contract."""
+
+
+def _require_rsa_key_strength(key: rsa.RSAPrivateKey | rsa.RSAPublicKey) -> None:
+    if key.key_size < MIN_PLUGIN_RSA_KEY_BITS:
+        raise PluginError(
+            "plugin signing keys must use RSA with at least "
+            f"{MIN_PLUGIN_RSA_KEY_BITS} bits"
+        )
 
 
 class AdvisorySourcePlugin(Protocol):
@@ -691,6 +704,7 @@ def _verified_manifest(
         raise PluginError(f"plugin manifest {path} has invalid signing data") from exc
     if not isinstance(public_key, rsa.RSAPublicKey):
         raise PluginError(f"plugin manifest {path} must use an RSA public key")
+    _require_rsa_key_strength(public_key)
     signed_payload = json.dumps(
         manifest,
         sort_keys=True,
@@ -2019,8 +2033,7 @@ def _run_plugin_process(
         finally:
             request_sender.close()
         if not response_receiver.poll(timeout):
-            process.terminate()
-            process.join(timeout=1)
+            _terminate_plugin_process(process)
             raise PluginError(
                 f"plugin {entry_value} operation {operation} exceeded {timeout:g} seconds"
             )
@@ -2055,8 +2068,32 @@ def _run_plugin_process(
         response_receiver.close()
         response_sender.close()
         if process.is_alive():
+            _terminate_plugin_process(process)
+
+
+def _terminate_plugin_process(process: multiprocessing.Process) -> None:
+    if not process.is_alive():
+        return
+    pid = getattr(process, "pid", None)
+    if os.name == "posix" and isinstance(pid, int) and pid > 0:
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
             process.terminate()
+        except OSError:
+            process.terminate()
+        process.join(timeout=1)
+        if process.is_alive():
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                process.kill()
+            except OSError:
+                process.kill()
             process.join(timeout=1)
+        return
+    process.terminate()
+    process.join(timeout=1)
 
 
 def _plugin_worker(
@@ -2065,6 +2102,7 @@ def _plugin_worker(
 ) -> None:  # pragma: no cover - executed in spawned worker
     request_id = "unknown"
     try:
+        _start_plugin_process_group()
         _apply_plugin_limits()
         with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-pycache-") as cache:
             sys.pycache_prefix = cache
@@ -2090,6 +2128,16 @@ def _plugin_worker(
     finally:
         request_receiver.close()
         response_sender.close()
+
+
+def _start_plugin_process_group() -> None:  # pragma: no cover - OS-specific worker bootstrap
+    setsid = getattr(os, "setsid", None)
+    if os.name != "posix" or not callable(setsid):
+        return
+    try:
+        setsid()
+    except OSError:
+        return
 
 
 def _plugin_error_response(request_id: str, exc: BaseException) -> dict[str, object]:
@@ -2143,6 +2191,16 @@ def _apply_plugin_limits() -> None:  # pragma: no cover - OS-specific worker boo
         resource,
         getattr(resource, "RLIMIT_AS", None),
         PLUGIN_MEMORY_BYTES,
+    )
+    _set_plugin_resource_limit(
+        resource,
+        getattr(resource, "RLIMIT_NPROC", None),
+        PLUGIN_PROCESS_COUNT_LIMIT,
+    )
+    _set_plugin_resource_limit(
+        resource,
+        getattr(resource, "RLIMIT_NOFILE", None),
+        PLUGIN_FILE_DESCRIPTOR_LIMIT,
     )
 
 

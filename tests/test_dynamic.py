@@ -4,6 +4,7 @@ import json
 import os
 import stat
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -163,6 +164,7 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertEqual(result.failure_type, "result_unavailable")
         self.assertEqual(result.stdout, ["installed"])
         self.assertIn("--rm", command)
+        self.assertIn("--cidfile", command)
         self.assertIn("none", command[command.index("--network") + 1])
         self.assertEqual(
             command[command.index("--user") + 1],
@@ -193,7 +195,7 @@ class DynamicAnalysisTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(artifact.stat().st_mode), 0o600)
             self.assertEqual(
                 command[command.index("--user") + 1],
-                f"{os.getuid()}:{os.getgid()}",
+                dynamic_mod._container_user(),
             )
             return subprocess.CompletedProcess(
                 args=command,
@@ -213,6 +215,119 @@ class DynamicAnalysisTests(unittest.TestCase):
             )
 
         self.assertTrue(result.executed)
+
+    def test_root_and_non_root_container_user_private_mount_ownership(self) -> None:
+        with patch("trustcheck.dynamic.os.getuid", return_value=0, create=True), patch(
+            "trustcheck.dynamic.os.getgid",
+            return_value=0,
+            create=True,
+        ):
+            self.assertEqual(dynamic_mod._container_user(), "65534:65534")
+
+        with patch("trustcheck.dynamic.os.getuid", return_value=1234, create=True), patch(
+            "trustcheck.dynamic.os.getgid",
+            return_value=5678,
+            create=True,
+        ):
+            self.assertEqual(dynamic_mod._container_user(), "1234:5678")
+
+        with self.subTest("root chown"):
+            with tempfile.TemporaryDirectory(prefix="trustcheck-dynamic-test-") as temp:
+                directory = Path(temp)
+                artifact = directory / "demo.whl"
+                artifact.write_bytes(b"wheel")
+                with patch(
+                    "trustcheck.dynamic.os.getuid",
+                    return_value=0,
+                    create=True,
+                ), patch("trustcheck.dynamic.os.chown", create=True) as chown:
+                    dynamic_mod._prepare_private_artifact_mount(directory, artifact)
+
+                self.assertEqual(
+                    chown.call_args_list[0].args,
+                    (directory, 65534, 65534),
+                )
+                self.assertEqual(
+                    chown.call_args_list[1].args,
+                    (artifact, 65534, 65534),
+                )
+
+        with self.subTest("non-root no chown"):
+            with tempfile.TemporaryDirectory(prefix="trustcheck-dynamic-test-") as temp:
+                directory = Path(temp)
+                artifact = directory / "demo.whl"
+                artifact.write_bytes(b"wheel")
+                with patch(
+                    "trustcheck.dynamic.os.getuid",
+                    return_value=1234,
+                    create=True,
+                ), patch("trustcheck.dynamic.os.chown", create=True) as chown:
+                    dynamic_mod._prepare_private_artifact_mount(directory, artifact)
+
+                chown.assert_not_called()
+
+    def test_container_cleanup_uses_cidfile_for_terminal_paths(self) -> None:
+        scenarios = {
+            "normal": subprocess.CompletedProcess(
+                args=["docker"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+            "timeout": subprocess.TimeoutExpired(
+                cmd=["docker"],
+                timeout=0.5,
+                output=b"line\n",
+                stderr=b"error\n",
+            ),
+            "interruption": KeyboardInterrupt(),
+            "malformed": subprocess.CompletedProcess(
+                args=["docker"],
+                returncode=0,
+                stdout=RESULT_PREFIX + "{\n",
+                stderr="",
+            ),
+            "client-error": OSError("client exited"),
+        }
+        for name, outcome in scenarios.items():
+            with self.subTest(name=name):
+                removed: list[str] = []
+                container_id = "a" * 64
+
+                def run(
+                    command: list[str],
+                    **_: object,
+                ) -> subprocess.CompletedProcess[str]:
+                    if command[:3] == ["docker", "rm", "--force"]:
+                        removed.append(command[3])
+                        return subprocess.CompletedProcess(command, 0, "", "")
+                    cidfile = Path(command[command.index("--cidfile") + 1])
+                    cidfile.write_text(container_id, encoding="ascii")
+                    if isinstance(outcome, BaseException):
+                        raise outcome
+                    return outcome
+
+                with patch("trustcheck.dynamic.shutil.which", return_value="docker"), patch(
+                    "trustcheck.dynamic.subprocess.run",
+                    side_effect=run,
+                ):
+                    if isinstance(outcome, KeyboardInterrupt):
+                        with self.assertRaises(KeyboardInterrupt):
+                            analyze_artifact_dynamic(
+                                "demo.whl",
+                                b"wheel",
+                                image=PINNED_IMAGE,
+                                timeout=0.5,
+                            )
+                    else:
+                        analyze_artifact_dynamic(
+                            "demo.whl",
+                            b"wheel",
+                            image=PINNED_IMAGE,
+                            timeout=0.5,
+                        )
+
+                self.assertEqual(removed, [container_id])
 
     def test_parses_phased_result_and_behavioral_evidence(self) -> None:
         runner_payload = {

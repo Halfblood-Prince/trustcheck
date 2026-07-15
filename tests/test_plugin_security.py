@@ -115,6 +115,7 @@ def _canonical_configuration_schema_hash(value: object) -> str:
 def write_manifest(
     root: Path,
     *,
+    key_size: int = 2048,
     kind: str = "advisory",
     capabilities: list[str] | None = None,
     dependencies: list[str] | None = None,
@@ -124,7 +125,7 @@ def write_manifest(
     sigstore_identity: str | None = None,
     sigstore_issuer: str | None = None,
 ) -> tuple[str, dict[str, str]]:
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=key_size)
     plugin_files = _plugin_file_paths(entry_point)
     for relative in plugin_files:
         path = root / relative
@@ -424,6 +425,14 @@ class PluginSecurityTests(unittest.TestCase):
             path.write_text(json.dumps(envelope), encoding="utf-8")
             with self.assertRaisesRegex(PluginError, "RSA"):
                 _verified_manifest(entry, kind="advisory", trusted_signers=())
+
+            weak_signer, _ = write_manifest(root, key_size=1024)
+            with self.assertRaisesRegex(PluginError, "at least 2048 bits"):
+                _verified_manifest(
+                    entry,
+                    kind="advisory",
+                    trusted_signers=(weak_signer,),
+                )
 
             write_manifest(root, statement_overrides={"schema": "unsupported"})
             with self.assertRaisesRegex(PluginError, "signed statement"):
