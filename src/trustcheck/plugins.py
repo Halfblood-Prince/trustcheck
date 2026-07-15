@@ -116,6 +116,19 @@ class PluginError(RuntimeError):
     """Raised when a requested plugin cannot be loaded or violates its contract."""
 
 
+class _PluginProcess(Protocol):
+    @property
+    def pid(self) -> int | None: ...
+
+    def is_alive(self) -> bool: ...
+
+    def terminate(self) -> None: ...
+
+    def kill(self) -> None: ...
+
+    def join(self, timeout: float | None = None) -> None: ...
+
+
 def _require_rsa_key_strength(key: rsa.RSAPrivateKey | rsa.RSAPublicKey) -> None:
     if key.key_size < MIN_PLUGIN_RSA_KEY_BITS:
         raise PluginError(
@@ -2071,13 +2084,15 @@ def _run_plugin_process(
             _terminate_plugin_process(process)
 
 
-def _terminate_plugin_process(process: multiprocessing.Process) -> None:
+def _terminate_plugin_process(process: _PluginProcess) -> None:
     if not process.is_alive():
         return
-    pid = getattr(process, "pid", None)
-    if os.name == "posix" and isinstance(pid, int) and pid > 0:
+    pid = process.pid
+    raw_killpg = getattr(os, "killpg", None)
+    if os.name == "posix" and isinstance(pid, int) and pid > 0 and callable(raw_killpg):
+        killpg = cast(Callable[[int, int], None], raw_killpg)
         try:
-            os.killpg(pid, signal.SIGTERM)
+            killpg(pid, int(signal.SIGTERM))
         except ProcessLookupError:
             process.terminate()
         except OSError:
@@ -2085,7 +2100,8 @@ def _terminate_plugin_process(process: multiprocessing.Process) -> None:
         process.join(timeout=1)
         if process.is_alive():
             try:
-                os.killpg(pid, signal.SIGKILL)
+                kill_signal = int(getattr(signal, "SIGKILL", signal.SIGTERM))
+                killpg(pid, kill_signal)
             except ProcessLookupError:
                 process.kill()
             except OSError:
