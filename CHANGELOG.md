@@ -6,6 +6,35 @@ The project follows Semantic Versioning for the supported public API described i
 
 ## Unreleased
 
+### Security
+
+- Hardened signed plugin execution against adjacent `.pyc` bypasses by
+  redirecting resource-bounded workers to a private bytecode cache before
+  importing verified plugin source.
+- Kept bounded dynamic-analysis artifacts private on POSIX by running the
+  container as the host UID/GID instead of making mounted artifacts
+  world-readable.
+- Added archive size, member-count, expanded-size and compression-ratio limits
+  to plugin-manifest wheel verification.
+
+### Changed
+
+- Plugin-manifest signing preserves unchanged wheel member `ZipInfo` metadata
+  and writes deterministic metadata for the inserted manifest and `RECORD`.
+- Dynamic analysis now keeps pip build isolation enabled while installing build
+  backends from the offline analyzer wheelhouse.
+- `plugin-manifest` authoring commands no longer initialize installed plugins
+  and their help output is scoped to manifest authoring and verification.
+
+### Fixed
+
+- Made the 98% coverage gate use two decimal places so rounded totals cannot
+  pass below the configured threshold.
+- Added `build` to the `test` extra so local plugin-wheel integration tests do
+  not silently skip after `.[test]`.
+- Rejected plugin wheels with unsupported `console_scripts` or `gui_scripts`
+  during signing, and rejected non-`.whl` signing output paths before writing.
+
 ## [3.0.0] - 2026-07-14
 
 Package release `3.0.0` emits machine-readable report schema `1.12.0`.

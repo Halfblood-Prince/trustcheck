@@ -127,6 +127,12 @@ Self-signed plugin metadata alone is rejected. Execution status, timing, and
 whether the resource-bounded worker was used are included in report
 diagnostics.
 
+Before importing plugin code, the resource-bounded worker redirects bytecode
+lookup to a new private empty cache, disables bytecode writes, and invalidates
+import caches. Adjacent pip-generated `__pycache__` files are therefore not a
+source-bypass for signed plugins. `isolate = false` loads plugins in the main
+interpreter and cannot provide the same source-binding guarantee.
+
 Worker IPC uses plugin protocol version `1` over
 `multiprocessing.Pipe.send_bytes()` and `recv_bytes()`. The parent and worker
 exchange UTF-8 JSON bytes only; plugin-controlled Python objects are never
@@ -217,7 +223,9 @@ digesting it so row order, pip-generated `__pycache__` bytecode rows, and
 installer metadata such as `INSTALLER`, `REQUESTED`, and `direct_url.json` do
 not make a correctly signed wheel unverifiable after a real pip install.
 Modifying plugin code, dependencies, the canonical `RECORD` rows, the declared
-configuration schema, or declared capabilities fails closed.
+configuration schema, or declared capabilities fails closed. Wheels declaring
+`console_scripts` or `gui_scripts` are rejected by the manifest signing command
+until installer-generated script paths can be bound portably across platforms.
 The earlier `requires_network`, `requires_filesystem`, and
 `requires_subprocess` statement fields are rejected until Trustcheck has
 enforcement that can turn those declarations into real sandbox policy.

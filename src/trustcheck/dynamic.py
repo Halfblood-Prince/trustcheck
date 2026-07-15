@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess  # nosec B404
@@ -86,18 +87,20 @@ def analyze_artifact_dynamic(
         )
         return result
 
+    container_user = _container_user()
+    result.user = container_user
     artifact_name = Path(filename).name or "artifact"
     with tempfile.TemporaryDirectory(prefix="trustcheck-dynamic-") as directory:
         artifact_path = Path(directory) / artifact_name
         artifact_path.write_bytes(payload)
         try:
-            artifact_path.parent.chmod(0o711)
-            artifact_path.chmod(0o644)
+            artifact_path.parent.chmod(0o700)
+            artifact_path.chmod(0o600)
         except OSError as exc:
             _fail_before_execution(
                 result,
                 error=(
-                    "unable to make artifact readable by bounded install analysis "
+                    "unable to make artifact private for bounded install analysis "
                     f"container: {exc}"
                 ),
                 classification="unsupported",
@@ -117,7 +120,7 @@ def analyze_artifact_dynamic(
             "--network",
             "none",
             "--user",
-            "65534:65534",
+            container_user,
             "--cpus",
             "1",
             "--memory",
@@ -210,6 +213,14 @@ def default_dynamic_image(python_version: str = DEFAULT_DYNAMIC_PYTHON) -> str |
     return DYNAMIC_ANALYZER_IMAGES.get(python_version)
 
 
+def _container_user() -> str:
+    getuid = getattr(os, "getuid", None)
+    getgid = getattr(os, "getgid", None)
+    if callable(getuid) and callable(getgid):
+        return f"{getuid()}:{getgid()}"
+    return "65534:65534"
+
+
 def _base_result(
     *,
     image: str | None,
@@ -223,7 +234,7 @@ def _base_result(
         classification="inconclusive",
         sandbox="docker",
         network="none",
-        user="65534:65534",
+        user=_container_user(),
         cpu_limit=f"1 CPU, {MAX_DYNAMIC_CPU_SECONDS} CPU seconds",
         memory_limit="512 MiB",
         pids_limit=128,
@@ -591,7 +602,7 @@ def _runner_source(
         "        python, str(PIP_WRAPPER), 'install', '--dry-run', '--report',\n"
         "        str(metadata_dir / 'report.json'), '--no-input',\n"
         "        '--disable-pip-version-check', '--no-cache-dir', '--no-deps',\n"
-        "        '--no-index', '--no-build-isolation', *find_links_args,\n"
+        "        '--no-index', *find_links_args,\n"
         "        str(ARTIFACT),\n"
         "    ]\n"
         "    ok = run_phase('metadata_preparation', metadata_cmd)\n"
@@ -602,7 +613,7 @@ def _runner_source(
         "    wheel_cmd = [\n"
         "        python, str(PIP_WRAPPER), 'wheel', '--no-input',\n"
         "        '--disable-pip-version-check', '--no-cache-dir', '--no-deps',\n"
-        "        '--no-index', '--no-build-isolation', *find_links_args,\n"
+        "        '--no-index', *find_links_args,\n"
         "        '--wheel-dir', str(wheel_dir), str(ARTIFACT),\n"
         "    ]\n"
         "    ok = run_phase('wheel_build', wheel_cmd)\n"
@@ -612,7 +623,7 @@ def _runner_source(
         "    install_cmd = [\n"
         "        python, str(PIP_WRAPPER), 'install', '--no-input',\n"
         "        '--disable-pip-version-check', '--no-cache-dir', '--no-deps',\n"
-        "        '--no-index', '--no-build-isolation', *find_links_args,\n"
+        "        '--no-index', *find_links_args,\n"
         "        install_target,\n"
         "    ]\n"
         "    ok = run_phase('wheel_installation', install_cmd)\n"

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import base64
 import configparser
+import copy
 import csv
 import hashlib
 import io
 import json
+import os
 import tempfile
+import time
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -17,6 +20,15 @@ from typing import Any, cast
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
+from .artifacts import (
+    ENTRY_POINT_NAME_PATTERN,
+    ENTRY_POINT_TARGET_PATTERN,
+    MAX_ARCHIVE_MEMBERS,
+    MAX_ARCHIVE_UNCOMPRESSED_BYTES,
+    MAX_ARTIFACT_BYTES,
+    MAX_COMPRESSION_RATIO,
+    MIN_COMPRESSION_RATIO_BYTES,
+)
 from .plugins import (
     PLUGIN_API_VERSION,
     PLUGIN_EMPTY_CONFIGURATION_SCHEMA_SHA256,
@@ -64,6 +76,7 @@ class _WheelRecord:
 class _WheelProject:
     path: Path
     entries: Mapping[str, bytes]
+    infos: Mapping[str, zipfile.ZipInfo]
     dist_info_dir: str
     record_path: str
     distribution: str
@@ -140,6 +153,8 @@ def sign_plugin_wheel(
     """Insert a signed v2 plugin manifest into *wheel* and revalidate it."""
     wheel_path = Path(wheel)
     output_path = Path(output) if output is not None else wheel_path
+    if output_path.suffix != ".whl":
+        raise PluginError(f"plugin manifest output must be a .whl file: {output_path}")
     project = _read_plugin_wheel(wheel_path)
     schema = _load_configuration_schema(configuration_schema)
     statement, record = _build_statement(project, schema)
@@ -183,7 +198,10 @@ def verify_plugin_manifest(path: str | Path) -> PluginManifestSummary:
 
 
 def fingerprint_public_key_file(path: str | Path) -> str:
-    public_key = serialization.load_pem_public_key(Path(path).read_bytes())
+    try:
+        public_key = serialization.load_pem_public_key(Path(path).read_bytes())
+    except (OSError, TypeError, ValueError) as exc:
+        raise PluginError(f"unable to read plugin public key {path}: {exc}") from exc
     if not isinstance(public_key, rsa.RSAPublicKey):
         raise PluginError("plugin manifests require an RSA public key")
     return fingerprint_public_key(public_key)
@@ -201,9 +219,18 @@ def fingerprint_public_key(public_key: rsa.RSAPublicKey) -> str:
 def _read_plugin_wheel(path: Path) -> _WheelProject:
     if not path.is_file() or path.suffix != ".whl":
         raise PluginError(f"plugin manifest signing requires a wheel file: {path}")
+    try:
+        if path.stat().st_size > MAX_ARTIFACT_BYTES:
+            raise PluginError(
+                f"plugin wheel exceeds the {MAX_ARTIFACT_BYTES}-byte artifact limit"
+            )
+    except OSError as exc:
+        raise PluginError(f"unable to read plugin wheel {path}: {exc}") from exc
     entries: dict[str, bytes] = {}
+    infos: dict[str, zipfile.ZipInfo] = {}
     try:
         with zipfile.ZipFile(path) as archive:
+            _validate_wheel_members(path, archive.infolist())
             for info in archive.infolist():
                 if info.is_dir():
                     continue
@@ -211,6 +238,7 @@ def _read_plugin_wheel(path: Path) -> _WheelProject:
                 if name in entries:
                     raise PluginError(f"wheel {path} contains duplicate entry {name}")
                 entries[name] = archive.read(info)
+                infos[name] = _copy_zip_info(info, name)
     except zipfile.BadZipFile as exc:
         raise PluginError(f"plugin wheel {path} is not a valid zip archive") from exc
 
@@ -235,6 +263,7 @@ def _read_plugin_wheel(path: Path) -> _WheelProject:
     return _WheelProject(
         path=path,
         entries=entries,
+        infos=infos,
         dist_info_dir=dist_info_dir,
         record_path=record_path,
         distribution=_required_metadata(metadata, "Name"),
@@ -258,7 +287,25 @@ def _read_plugin_entry_point(payload: bytes) -> _PluginEntryPoint:
         if not parser.has_section(group):
             continue
         for name, value in parser.items(group):
-            candidates.append(_PluginEntryPoint(name=name, kind=kind, value=value.strip()))
+            normalized_value = value.strip()
+            if (
+                ENTRY_POINT_NAME_PATTERN.fullmatch(name) is None
+                or ENTRY_POINT_TARGET_PATTERN.fullmatch(normalized_value) is None
+            ):
+                raise PluginError("plugin wheel has invalid Trustcheck entry point metadata")
+            candidates.append(_PluginEntryPoint(name=name, kind=kind, value=normalized_value))
+    script_sections = [
+        section
+        for section in ("console_scripts", "gui_scripts")
+        if parser.has_section(section)
+    ]
+    if script_sections:
+        raise PluginError(
+            "plugin wheels with console_scripts or gui_scripts are not supported; "
+            "remove "
+            + ", ".join(script_sections)
+            + " before signing"
+        )
     if len(candidates) != 1:
         raise PluginError(
             "plugin wheel must declare exactly one Trustcheck plugin entry point"
@@ -347,9 +394,9 @@ def _write_wheel_archive(
         for name in sorted(project.entries):
             if name in {PLUGIN_MANIFEST_NAME, project.record_path}:
                 continue
-            archive.writestr(name, project.entries[name])
-        archive.writestr(PLUGIN_MANIFEST_NAME, manifest_bytes)
-        archive.writestr(project.record_path, record_bytes)
+            archive.writestr(project.infos[name], project.entries[name])
+        archive.writestr(_new_zip_info(PLUGIN_MANIFEST_NAME), manifest_bytes)
+        archive.writestr(_new_zip_info(project.record_path), record_bytes)
 
 
 def _verify_distribution_tree(root: Path, display_path: Path) -> PluginManifestSummary:
@@ -395,7 +442,10 @@ def _verify_distribution_tree(root: Path, display_path: Path) -> PluginManifestS
 
 
 def fingerprint_public_key_pem(public_key_pem: str) -> str:
-    public_key = serialization.load_pem_public_key(public_key_pem.encode("ascii"))
+    try:
+        public_key = serialization.load_pem_public_key(public_key_pem.encode("ascii"))
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise PluginError(f"plugin manifest has invalid public key data: {exc}") from exc
     if not isinstance(public_key, rsa.RSAPublicKey):
         raise PluginError("plugin manifests require an RSA public key")
     return fingerprint_public_key(public_key)
@@ -415,7 +465,10 @@ def _find_dist_info_dir(root: Path) -> str:
 
 
 def _load_private_key(path: Path) -> rsa.RSAPrivateKey:
-    key = serialization.load_pem_private_key(path.read_bytes(), password=None)
+    try:
+        key = serialization.load_pem_private_key(path.read_bytes(), password=None)
+    except (OSError, TypeError, ValueError) as exc:
+        raise PluginError(f"unable to read plugin private key {path}: {exc}") from exc
     if not isinstance(key, rsa.RSAPrivateKey):
         raise PluginError("plugin manifests require an RSA private key")
     return key
@@ -454,7 +507,15 @@ def _safe_wheel_path(value: str) -> str:
 
 def _extract_wheel(path: Path, root: Path) -> None:
     try:
+        if path.stat().st_size > MAX_ARTIFACT_BYTES:
+            raise PluginError(
+                f"plugin wheel exceeds the {MAX_ARTIFACT_BYTES}-byte artifact limit"
+            )
+    except OSError as exc:
+        raise PluginError(f"unable to read plugin wheel {path}: {exc}") from exc
+    try:
         with zipfile.ZipFile(path) as archive:
+            _validate_wheel_members(path, archive.infolist())
             for info in archive.infolist():
                 if info.is_dir():
                     continue
@@ -464,6 +525,64 @@ def _extract_wheel(path: Path, root: Path) -> None:
                 destination.write_bytes(archive.read(info))
     except zipfile.BadZipFile as exc:
         raise PluginError(f"plugin wheel {path} is not a valid zip archive") from exc
+
+
+def _validate_wheel_members(path: Path, infos: Sequence[zipfile.ZipInfo]) -> None:
+    files = [info for info in infos if not info.is_dir()]
+    if len(files) > MAX_ARCHIVE_MEMBERS:
+        raise PluginError(
+            f"plugin wheel contains {len(files)} members; limit is {MAX_ARCHIVE_MEMBERS}"
+        )
+    total = 0
+    for info in files:
+        total += info.file_size
+        if total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+            raise PluginError(
+                "plugin wheel expanded size exceeds the "
+                f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES}-byte limit"
+            )
+        if info.file_size >= MIN_COMPRESSION_RATIO_BYTES and info.compress_size > 0:
+            ratio = info.file_size / info.compress_size
+            if ratio > MAX_COMPRESSION_RATIO:
+                raise PluginError(
+                    f"plugin wheel member {info.filename!r} compression ratio "
+                    f"{ratio:.1f} exceeds limit {MAX_COMPRESSION_RATIO:g}"
+                )
+    if not files:
+        raise PluginError(f"plugin wheel {path} contains no files")
+
+
+def _copy_zip_info(info: zipfile.ZipInfo, filename: str) -> zipfile.ZipInfo:
+    copied = copy.copy(info)
+    copied.filename = filename
+    return copied
+
+
+def _new_zip_info(filename: str) -> zipfile.ZipInfo:
+    info = zipfile.ZipInfo(filename, date_time=_zip_timestamp())
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.create_system = 3
+    info.external_attr = 0o100644 << 16
+    return info
+
+
+def _zip_timestamp() -> tuple[int, int, int, int, int, int]:
+    raw = os.environ.get("SOURCE_DATE_EPOCH")
+    if raw is None:
+        return (1980, 1, 1, 0, 0, 0)
+    try:
+        epoch = max(315532800, int(raw))
+    except ValueError:
+        epoch = 315532800
+    timestamp = time.gmtime(epoch)
+    return (
+        timestamp.tm_year,
+        timestamp.tm_mon,
+        timestamp.tm_mday,
+        timestamp.tm_hour,
+        timestamp.tm_min,
+        timestamp.tm_sec,
+    )
 
 
 def _render_record(rows: Sequence[tuple[str, str, str]]) -> bytes:

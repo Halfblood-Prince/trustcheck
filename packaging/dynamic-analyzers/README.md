@@ -29,6 +29,7 @@ the image, publishes to GHCR with BuildKit SBOM and provenance attestations, and
 uploads the immutable digest records that should be copied into
 `DYNAMIC_ANALYZER_IMAGES`.
 
-The analyzer runner uses `--no-index` during analysis and only reads backend
-wheels from `/opt/trustcheck/wheelhouse`. Do not add network fetches to runtime
-analysis phases.
+The analyzer runner uses `--no-index --find-links /opt/trustcheck/wheelhouse`
+during analysis. Keep pip build isolation enabled so each sdist build
+environment installs its declared backend requirements exclusively from the
+offline wheelhouse. Do not add network fetches to runtime analysis phases.

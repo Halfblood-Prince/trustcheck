@@ -45,6 +45,7 @@ dependencies = [
 [project.optional-dependencies]
 keyring = ["keyring>=25,<27"]
 test = [
+  "build>=1.5,<2",
   "hypothesis>=6.100,<7",
   "Pillow>=11,<13",
   "pytest>=8,<10",
@@ -113,5 +114,6 @@ source = ["trustcheck"]
 
 [tool.coverage.report]
 fail_under = 98
+precision = 2
 show_missing = true
 skip_covered = true

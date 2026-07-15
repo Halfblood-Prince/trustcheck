@@ -86,6 +86,16 @@ class ReleaseReadinessTests(unittest.TestCase):
             docs_changelog,
         )
 
+    def test_coverage_gate_and_test_extra_cover_release_blockers(self) -> None:
+        with (ROOT / "pyproject.toml").open("rb") as pyproject_file:
+            pyproject = tomllib.load(pyproject_file)
+
+        coverage_report = pyproject["tool"]["coverage"]["report"]
+        self.assertEqual(coverage_report["fail_under"], 98)
+        self.assertEqual(coverage_report["precision"], 2)
+        test_extra = pyproject["project"]["optional-dependencies"]["test"]
+        self.assertIn("build>=1.5,<2", test_extra)
+
     def test_github_action_docs_use_current_major_ref(self) -> None:
         current_major = f"v{RELEASE_VERSION.split('.', 1)[0]}"
         documentation = "\n".join(

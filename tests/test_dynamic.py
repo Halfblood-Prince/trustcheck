@@ -68,6 +68,8 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertIn("if WRITING_AUDIT:", source)
         self.assertIn("WRITING_AUDIT = True", source)
         self.assertNotIn("/tmp/trustcheck-audit.jsonl", allowed_block)
+        self.assertIn("'--no-index', *find_links_args", source)
+        self.assertNotIn("--no-build-isolation", source)
 
     def test_rejects_mutable_container_images_without_executing(self) -> None:
         with patch("trustcheck.dynamic.shutil.which") as which:
@@ -162,7 +164,11 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertEqual(result.stdout, ["installed"])
         self.assertIn("--rm", command)
         self.assertIn("none", command[command.index("--network") + 1])
-        self.assertIn("65534:65534", command[command.index("--user") + 1])
+        self.assertEqual(
+            command[command.index("--user") + 1],
+            dynamic_mod._container_user(),
+        )
+        self.assertEqual(result.user, dynamic_mod._container_user())
         self.assertIn("512m", command[command.index("--memory") + 1])
         self.assertIn("cpu=10", command[command.index("--ulimit") + 1])
         self.assertIn("no-new-privileges", command)
@@ -178,13 +184,17 @@ class DynamicAnalysisTests(unittest.TestCase):
         self.assertEqual(command[command.index(PINNED_IMAGE)], PINNED_IMAGE)
 
     @unittest.skipIf(os.name == "nt", "POSIX mode bits are not meaningful on Windows")
-    def test_artifact_mount_is_readable_by_non_root_container(self) -> None:
+    def test_artifact_mount_stays_private_for_host_user_container(self) -> None:
         def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
             volume = command[command.index("--volume") + 1]
             host_directory = Path(volume.split(":", 1)[0])
             artifact = host_directory / "demo.whl"
-            self.assertEqual(stat.S_IMODE(host_directory.stat().st_mode), 0o711)
-            self.assertEqual(stat.S_IMODE(artifact.stat().st_mode), 0o644)
+            self.assertEqual(stat.S_IMODE(host_directory.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(artifact.stat().st_mode), 0o600)
+            self.assertEqual(
+                command[command.index("--user") + 1],
+                f"{os.getuid()}:{os.getgid()}",
+            )
             return subprocess.CompletedProcess(
                 args=command,
                 returncode=0,

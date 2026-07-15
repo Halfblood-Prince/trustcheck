@@ -75,7 +75,7 @@ artifacts in a disposable Docker container, so it is never enabled by default.
 The container is started with:
 
 - `--network none`
-- a non-root `65534:65534` user
+- the host UID/GID on POSIX so mounted artifacts remain `0600`
 - dropped Linux capabilities and `no-new-privileges`
 - a read-only root filesystem plus a temporary `/tmp`
 - one CPU, a 10-second CPU ulimit, 512 MiB RAM, a 128-process limit, and a
@@ -89,7 +89,10 @@ unsupported, inconclusive, or suspicious behavior when evidence supports it.
 
 Analyzer images are digest-pinned. Trustcheck-controlled image definitions live
 in `packaging/dynamic-analyzers/` and prebuild common backend wheels so analysis
-can run with `--no-index`. `--dynamic-python` selects Python 3.11, 3.12, 3.13,
+can run with `--no-index --find-links /opt/trustcheck/wheelhouse`. Pip build
+isolation remains enabled, so source distributions install their declared PEP
+517 backends from that offline wheelhouse instead of relying on globally
+installed image packages. `--dynamic-python` selects Python 3.11, 3.12, 3.13,
 or 3.14; profiles without a configured digest-pinned image fail as unsupported
 instead of silently reusing another Python version. `--dynamic-image` can supply
 an explicit digest-pinned image. Source builds do not default to a generic

@@ -21,6 +21,8 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         output = Path(args.output)
         if output.exists() and output.is_dir():
             parser.error("--output must be a wheel path, not a directory")
+        if output.suffix != ".whl":
+            parser.error("--output must end with .whl")
 
 
 def run(args: argparse.Namespace, context: CommandContext) -> int:
@@ -70,6 +72,7 @@ def _render_summary(
         "distribution": summary.distribution,
         "distribution_version": summary.distribution_version,
         "signer_sha256": summary.signer_sha256,
+        "trust_policy": "not evaluated",
         "wheel_sha256": summary.wheel_sha256,
         "record_sha256": summary.record_sha256,
     }
@@ -85,4 +88,5 @@ def _render_summary(
     ]
     if summary.signer_sha256 is not None:
         lines.append(f"signer_sha256: {summary.signer_sha256}")
+    lines.append("trust policy: not evaluated")
     return "\n".join(lines)

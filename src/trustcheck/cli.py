@@ -988,7 +988,11 @@ def build_parser() -> argparse.ArgumentParser:
         "init",
         help="Render an unsigned v2 plugin manifest draft for a wheel.",
     )
-    _add_plugin_manifest_common_arguments(plugin_manifest_init_parser)
+    _add_plugin_manifest_common_arguments(
+        plugin_manifest_init_parser,
+        formats=("json",),
+        default_format="json",
+    )
     plugin_manifest_init_parser.add_argument(
         "distribution",
         metavar="DIST_OR_WHEEL",
@@ -1303,22 +1307,22 @@ def _add_manifest_common_arguments(parser: argparse.ArgumentParser) -> None:
     _add_runtime_arguments(parser)
 
 
-def _add_plugin_manifest_common_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--config-file",
-        help="Path to a JSON, TOML, or pyproject.toml configuration file.",
-    )
+def _add_plugin_manifest_common_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    formats: tuple[str, ...] = ("text", "json"),
+    default_format: str = "text",
+) -> None:
     parser.add_argument(
         "--format",
-        choices=("text", "json"),
-        default="text",
+        choices=formats,
+        default=default_format,
         help="Output format.",
     )
     parser.add_argument(
         "--output-file",
         help="Write command output to this path instead of standard output.",
     )
-    _add_runtime_arguments(parser)
 
 
 def _add_target_environment_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1570,8 +1574,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(raw_argv)
     args._explicit_config_fields = _explicit_config_fields(raw_argv)
     try:
-        config_payload = _load_config_file(args.config_file)
-        _apply_project_config(args, config_payload)
+        if args.command == "plugin-manifest":
+            config_payload = {}
+        else:
+            config_payload = _load_config_file(getattr(args, "config_file", None))
+            _apply_project_config(args, config_payload)
     except (
         OSError,
         TypeError,
@@ -1585,7 +1592,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             debug=args.debug,
         )
     if (
-        args.max_workers is not None
+        getattr(args, "max_workers", None) is not None
         and args.max_workers != -1
         and not 1 <= args.max_workers <= 64
     ):
@@ -1604,6 +1611,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         plugin_manifest_command.validate_args(args, parser)
 
     try:
+        if args.command == "plugin-manifest":
+            context = CommandContext(
+                parser=parser,
+                config_payload=config_payload,
+                plugin_manager=PluginManager(),
+                facade=sys.modules[__name__],
+            )
+            return plugin_manifest_command.run(args, context)
         plugin_manager = PluginManager.from_options(
             enabled=args.enable_plugins,
             selected=args.plugin,
@@ -1635,8 +1650,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             return diff_command.run(args, context)
         if args.command == "manifest":
             return manifest_command.run(args, context)
-        if args.command == "plugin-manifest":
-            return plugin_manifest_command.run(args, context)
         if args.command == "environment":
             return environment_command.run(args, context)
         if args.command == "doctor":

@@ -8,6 +8,8 @@ import io
 import json
 import math
 import multiprocessing
+import sys
+import tempfile
 import time
 import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -2064,19 +2066,23 @@ def _plugin_worker(
     request_id = "unknown"
     try:
         _apply_plugin_limits()
-        payload = request_receiver.recv_bytes(PLUGIN_IPC_MAX_REQUEST_BYTES)
-        request = _decode_plugin_message(
-            payload,
-            max_bytes=PLUGIN_IPC_MAX_REQUEST_BYTES,
-            label="plugin IPC request",
-        )
-        request_id = _validate_request_envelope(request)
-        response = {
-            "plugin_protocol_version": PLUGIN_IPC_PROTOCOL_VERSION,
-            "request_id": request_id,
-            "ok": True,
-            "result": _execute_plugin_request(request),
-        }
+        with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-pycache-") as cache:
+            sys.pycache_prefix = cache
+            sys.dont_write_bytecode = True
+            importlib.invalidate_caches()
+            payload = request_receiver.recv_bytes(PLUGIN_IPC_MAX_REQUEST_BYTES)
+            request = _decode_plugin_message(
+                payload,
+                max_bytes=PLUGIN_IPC_MAX_REQUEST_BYTES,
+                label="plugin IPC request",
+            )
+            request_id = _validate_request_envelope(request)
+            response = {
+                "plugin_protocol_version": PLUGIN_IPC_PROTOCOL_VERSION,
+                "request_id": request_id,
+                "ok": True,
+                "result": _execute_plugin_request(request),
+            }
     except BaseException as exc:
         response = _plugin_error_response(request_id, exc)
     try:
