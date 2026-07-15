@@ -271,6 +271,7 @@ workflow.
 | `extra-index-urls` | empty | Whitespace- or newline-separated additional indexes. |
 | `keyring-provider` | `auto` | `auto`, `disabled`, `import`, or `subprocess`. |
 | `allow-dependency-confusion` | `false` | Continue after reporting a cross-index project-name collision. |
+| `allow-insecure-index` | `false` | Explicitly allow HTTP Simple Repository indexes and their artifact URLs. |
 | `trusted-projects` | empty | Whitespace- or newline-separated names added to the typosquatting reference set. |
 | `workers` | `8` | Bound concurrent target, advisory, and network work from 1 through 64, or `-1` for all available CPU cores. |
 | `sandbox` | `strict` | Resolver isolation: `off`, `warn`, `auto`, `container`, `bubblewrap`, or `strict`. |

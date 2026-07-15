@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import base64
+import configparser
 import importlib
+import io
 import json
 import netrc
 import os
 import re
+import stat
 import subprocess  # nosec B404
 import sys
+import tempfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Iterator, Protocol, cast
 from urllib import error, parse, request
 
 from packaging.utils import (
@@ -34,6 +39,7 @@ RESPONSE_CHUNK_BYTES = 1024 * 1024
 KEYRING_PROVIDERS = {"auto", "disabled", "import", "subprocess"}
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 UrlOpener = Callable[..., Any]
+AUTHORIZATION_HEADERS = {"authorization", "proxy-authorization"}
 
 
 class _KeyringModule(Protocol):
@@ -42,6 +48,116 @@ class _KeyringModule(Protocol):
 
 class IndexError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class IndexURLPolicy:
+    allow_insecure_index: bool = False
+    max_redirects: int = 10
+
+    def validate_index_url(self, url: str) -> None:
+        self._validated_remote_url(url, context="package index URL")
+
+    def validate_remote_artifact_url(
+        self,
+        url: str,
+        *,
+        context: str = "remote index artifact URL",
+    ) -> None:
+        self._validated_remote_url(url, context=context)
+
+    def validate_request_url(self, url: str, *, context: str = "request URL") -> None:
+        self._validated_remote_url(url, context=context)
+
+    def validate_redirect(self, source_url: str, target_url: str) -> str:
+        resolved = parse.urljoin(source_url, target_url)
+        source = self._validated_remote_url(
+            source_url,
+            context="redirect source URL",
+        )
+        target = _split_url(resolved, context="redirect target URL")
+        if source.scheme.lower() == "https" and target.scheme.lower() == "http":
+            raise ValueError(
+                "refusing HTTPS-to-HTTP redirect from "
+                f"{redact_url_credentials(source_url)} to "
+                f"{redact_url_credentials(resolved)}"
+            )
+        self._validated_remote_url(
+            resolved,
+            context="redirect target URL",
+        )
+        return resolved
+
+    def validate_final_url(
+        self,
+        source_url: str,
+        final_url: str,
+        *,
+        context: str = "final response URL",
+    ) -> None:
+        if final_url != source_url:
+            self.validate_redirect(source_url, final_url)
+        else:
+            self._validated_remote_url(final_url, context=context)
+
+    def _validated_remote_url(
+        self,
+        url: str,
+        *,
+        context: str,
+    ) -> parse.SplitResult:
+        parsed = _split_url(url, context=context)
+        scheme = parsed.scheme.lower()
+        if scheme not in {"http", "https"}:
+            raise ValueError(
+                f"{context} must use HTTPS"
+                + (" or explicitly allowed HTTP" if self.allow_insecure_index else "")
+                + f": {redact_url_credentials(url)!r}"
+            )
+        if scheme == "http" and not self.allow_insecure_index:
+            raise ValueError(
+                f"{context} must use HTTPS unless --allow-insecure-index is set: "
+                f"{redact_url_credentials(url)!r}"
+            )
+        return parsed
+
+
+class _PolicyRedirectHandler(request.HTTPRedirectHandler):
+    def __init__(self, policy: IndexURLPolicy) -> None:
+        super().__init__()
+        self.policy = policy
+        self.max_redirections = policy.max_redirects
+
+    def redirect_request(
+        self,
+        req: request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Mapping[str, str],
+        newurl: str,
+    ) -> request.Request | None:
+        try:
+            target_url = self.policy.validate_redirect(req.full_url, newurl)
+        except ValueError as exc:
+            raise error.URLError(str(exc)) from exc
+        redirected = super().redirect_request(req, fp, code, msg, headers, target_url)
+        if redirected is not None and not _same_origin(
+            parse.urlsplit(req.full_url),
+            parse.urlsplit(target_url),
+        ):
+            _remove_request_headers(redirected, AUTHORIZATION_HEADERS)
+        return redirected
+
+
+def _safe_urlopen(
+    req: request.Request,
+    *,
+    timeout: float,
+    policy: IndexURLPolicy,
+) -> Any:
+    opener = request.build_opener(_PolicyRedirectHandler(policy))
+    return opener.open(req, timeout=timeout)
 
 
 def _read_bounded_response(response: Any, *, limit: int, url: str) -> bytes:
@@ -73,15 +189,22 @@ class IndexConfiguration:
     index_url: str = DEFAULT_INDEX_URL
     extra_index_urls: tuple[str, ...] = ()
     keyring_provider: str = "auto"
+    allow_insecure_index: bool = False
 
     def __post_init__(self) -> None:
         if self.keyring_provider not in KEYRING_PROVIDERS:
             raise ValueError(
                 "keyring provider must be auto, disabled, import, or subprocess"
             )
-        _validate_index_url(self.index_url)
+        _validate_index_url(
+            self.index_url,
+            allow_insecure_index=self.allow_insecure_index,
+        )
         for index_url in self.extra_index_urls:
-            _validate_index_url(index_url)
+            _validate_index_url(
+                index_url,
+                allow_insecure_index=self.allow_insecure_index,
+            )
 
     @property
     def all_urls(self) -> tuple[str, ...]:
@@ -99,12 +222,51 @@ class IndexConfiguration:
     def has_multiple_indexes(self) -> bool:
         return len(self.all_urls) > 1
 
+    @property
+    def has_url_credentials(self) -> bool:
+        return any(_url_has_credentials(url) for url in (self.index_url, *self.extra_index_urls))
+
     def pip_arguments(self) -> list[str]:
-        arguments = ["--index-url", self.index_url]
+        arguments = ["--index-url", _without_url_credentials(self.index_url)]
         for index_url in self.extra_index_urls:
-            arguments.extend(["--extra-index-url", index_url])
+            arguments.extend(["--extra-index-url", _without_url_credentials(index_url)])
         arguments.extend(["--keyring-provider", self.keyring_provider])
         return arguments
+
+    @contextmanager
+    def pip_subprocess(
+        self,
+        *,
+        env: Mapping[str, str] | None = None,
+    ) -> Iterator[tuple[list[str], dict[str, str] | None]]:
+        if not self.has_url_credentials:
+            yield self.pip_arguments(), dict(env) if env is not None else None
+            return
+
+        directory = tempfile.TemporaryDirectory(prefix="trustcheck-pip-config-")
+        config_path = Path(directory.name) / ("pip.ini" if os.name == "nt" else "pip.conf")
+        try:
+            _write_private_text(config_path, self._pip_config_text())
+            prepared_env = dict(env) if env is not None else dict(os.environ)
+            prepared_env["PIP_CONFIG_FILE"] = str(config_path)
+            yield [], prepared_env
+        finally:
+            _secure_delete(config_path)
+            directory.cleanup()
+
+    def _pip_config_text(self) -> str:
+        parser = configparser.RawConfigParser()
+        parser["global"] = {
+            "index-url": self.index_url,
+            "keyring-provider": self.keyring_provider,
+        }
+        if self.extra_index_urls:
+            parser["global"]["extra-index-url"] = "\n" + "\n".join(
+                self.extra_index_urls
+            )
+        stream = io.StringIO()
+        parser.write(stream, space_around_delimiters=True)
+        return stream.getvalue()
 
     def redacted(self) -> dict[str, object]:
         return {
@@ -113,6 +275,7 @@ class IndexConfiguration:
                 redact_url_credentials(url) for url in self.extra_index_urls
             ],
             "keyring_provider": self.keyring_provider,
+            "allow_insecure_index": self.allow_insecure_index,
         }
 
 
@@ -141,6 +304,7 @@ class IndexProject:
 class DependencyConfusionFinding:
     project: str
     indexes: tuple[str, ...]
+    evidence: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -148,10 +312,11 @@ class SimpleRepositoryClient:
     timeout: float = 15.0
     max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES
     keyring_provider: str = "auto"
-    opener: UrlOpener = request.urlopen
+    opener: UrlOpener | None = None
     runner: CommandRunner = subprocess.run
     python_executable: str = sys.executable
     environ: Mapping[str, str] = field(default_factory=lambda: os.environ)
+    url_policy: IndexURLPolicy = field(default_factory=IndexURLPolicy)
     _cache: dict[tuple[str, str], IndexProject | None] = field(default_factory=dict)
 
     def get_project(self, index_url: str, project: str) -> IndexProject | None:
@@ -169,6 +334,7 @@ class SimpleRepositoryClient:
             payload, content_type, final_url = self._request(
                 project_url,
                 accept=SIMPLE_JSON_ACCEPT,
+                kind="index",
             )
         except error.HTTPError as exc:
             if exc.code == 404:
@@ -191,6 +357,7 @@ class SimpleRepositoryClient:
                     project=project,
                     index_url=normalized_index,
                     response_url=final_url,
+                    url_policy=self.url_policy,
                 )
             else:
                 result = parse_simple_html(
@@ -198,6 +365,7 @@ class SimpleRepositoryClient:
                     project=project,
                     index_url=normalized_index,
                     response_url=final_url,
+                    url_policy=self.url_policy,
                 )
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             raise IndexError(
@@ -225,16 +393,28 @@ class SimpleRepositoryClient:
             return ()
         findings: list[DependencyConfusionFinding] = []
         for project in sorted(set(projects), key=canonicalize_name):
+            matched_projects = []
+            for index_url in indexes:
+                index_project = self.get_project(index_url, project)
+                if index_project is not None:
+                    matched_projects.append((index_url, index_project))
             matches = [
-                redact_url_credentials(index_url)
-                for index_url in indexes
-                if self.get_project(index_url, project) is not None
+                redact_url_credentials(
+                    getattr(index_project, "index_url", index_url)
+                )
+                for index_url, index_project in matched_projects
             ]
             if len(matches) > 1:
+                index_projects = tuple(
+                    index_project
+                    for _, index_project in matched_projects
+                    if isinstance(index_project, IndexProject)
+                )
                 findings.append(
                     DependencyConfusionFinding(
                         project=project,
                         indexes=tuple(matches),
+                        evidence=dependency_confusion_evidence(index_projects),
                     )
                 )
         return tuple(findings)
@@ -267,12 +447,25 @@ class SimpleRepositoryClient:
         *,
         accept: str | None = None,
         index_url: str | None = None,
+        kind: str = "artifact",
     ) -> tuple[bytes, str, str]:
+        self._validate_request_url(url, kind=kind)
+        if index_url is not None:
+            self._validate_request_url(index_url, kind="index")
         request_url, headers = self._authenticated_request(url, index_url=index_url)
         if accept:
             headers["Accept"] = accept
         req = request.Request(request_url, headers=headers)
-        with self.opener(req, timeout=self.timeout) as response:
+        opener = self.opener
+        if opener is None:
+            response_context = _safe_urlopen(
+                req,
+                timeout=self.timeout,
+                policy=self.url_policy,
+            )
+        else:
+            response_context = opener(req, timeout=self.timeout)
+        with response_context as response:
             payload = _read_bounded_response(
                 response,
                 limit=self.max_response_bytes,
@@ -289,7 +482,28 @@ class SimpleRepositoryClient:
                 if hasattr(response, "geturl")
                 else request_url
             )
+            self._validate_final_url(request_url, final_url, kind=kind)
             return payload, str(content_type), final_url
+
+    def _validate_request_url(self, url: str, *, kind: str) -> None:
+        try:
+            if kind == "index":
+                self.url_policy.validate_index_url(url)
+            else:
+                self.url_policy.validate_remote_artifact_url(url)
+        except ValueError as exc:
+            raise IndexError(str(exc)) from exc
+
+    def _validate_final_url(self, request_url: str, final_url: str, *, kind: str) -> None:
+        try:
+            context = "index response URL" if kind == "index" else "artifact response URL"
+            self.url_policy.validate_final_url(
+                request_url,
+                final_url,
+                context=context,
+            )
+        except ValueError as exc:
+            raise IndexError(str(exc)) from exc
 
     def _authenticated_request(
         self,
@@ -425,7 +639,9 @@ def parse_simple_json(
     project: str,
     index_url: str,
     response_url: str,
+    url_policy: IndexURLPolicy | None = None,
 ) -> IndexProject:
+    policy = url_policy or IndexURLPolicy()
     raw = json.loads(payload)
     if not isinstance(raw, dict):
         raise ValueError("JSON response must be an object")
@@ -456,6 +672,7 @@ def parse_simple_json(
             metadata_value = raw_file.get("dist-info-metadata")
         metadata_hashes = _metadata_hashes(metadata_value)
         file_url = parse.urljoin(response_url, raw_url)
+        policy.validate_remote_artifact_url(file_url)
         files.append(
             IndexFile(
                 filename=filename,
@@ -466,7 +683,7 @@ def parse_simple_json(
                 size=_optional_int(raw_file.get("size")),
                 upload_time=_optional_string(raw_file.get("upload-time")),
                 metadata_url=(
-                    f"{redact_url_credentials(file_url)}.metadata"
+                    redact_url_credentials(_metadata_url(file_url))
                     if metadata_value not in (None, False)
                     else None
                 ),
@@ -482,9 +699,10 @@ def parse_simple_json(
 
 
 class _SimpleHTMLParser(HTMLParser):
-    def __init__(self, response_url: str) -> None:
+    def __init__(self, response_url: str, url_policy: IndexURLPolicy) -> None:
         super().__init__(convert_charrefs=True)
         self.response_url = response_url
+        self.url_policy = url_policy
         self.files: list[IndexFile] = []
 
     def handle_starttag(
@@ -499,6 +717,7 @@ class _SimpleHTMLParser(HTMLParser):
         if not href:
             return
         file_url = parse.urljoin(self.response_url, href)
+        self.url_policy.validate_remote_artifact_url(file_url)
         parsed = parse.urlsplit(file_url)
         filename = Path(parse.unquote(parsed.path)).name
         if not filename:
@@ -518,7 +737,7 @@ class _SimpleHTMLParser(HTMLParser):
                 requires_python=attributes.get("data-requires-python"),
                 yanked=_yanked_value(attributes.get("data-yanked")),
                 metadata_url=(
-                    f"{redact_url_credentials(clean_url)}.metadata"
+                    redact_url_credentials(_metadata_url(clean_url))
                     if metadata_value not in (None, "false")
                     else None
                 ),
@@ -533,8 +752,9 @@ def parse_simple_html(
     project: str,
     index_url: str,
     response_url: str,
+    url_policy: IndexURLPolicy | None = None,
 ) -> IndexProject:
-    parser = _SimpleHTMLParser(response_url)
+    parser = _SimpleHTMLParser(response_url, url_policy or IndexURLPolicy())
     parser.feed(payload.decode("utf-8"))
     parser.close()
     return IndexProject(
@@ -559,14 +779,20 @@ def redact_url_credentials(url: str) -> str:
             r"\g<scheme><redacted>@",
             url,
         )
-    parsed = parse.urlsplit(url)
+    try:
+        parsed = parse.urlsplit(url)
+    except ValueError:
+        return url
     if parsed.username is None:
         return url
-    hostname = parsed.hostname or ""
-    if parsed.port is not None:
-        hostname = f"{hostname}:{parsed.port}"
     return parse.urlunsplit(
-        (parsed.scheme, f"<redacted>@{hostname}", parsed.path, parsed.query, parsed.fragment)
+        (
+            parsed.scheme,
+            f"<redacted>@{_parsed_host_port(parsed)}",
+            parsed.path,
+            parsed.query,
+            parsed.fragment,
+        )
     )
 
 
@@ -588,16 +814,187 @@ def files_for_version(
     return tuple(selected)
 
 
+def dependency_confusion_evidence(
+    projects: Sequence[IndexProject],
+) -> tuple[str, ...]:
+    evidence: list[str] = [
+        "resolver_strategy=version-priority",
+        "index_trust_order=not-enforced-by-pip",
+        "mirror_relationship=not-declared",
+    ]
+    for project in projects:
+        index_url = redact_url_credentials(project.index_url)
+        evidence.append(
+            f"available_versions[{index_url}]="
+            f"{_format_available_versions(_project_versions(project))}"
+        )
+    evidence.extend(_filename_hash_mismatch_evidence(projects))
+    evidence.extend(_version_metadata_mismatch_evidence(projects))
+    return tuple(dict.fromkeys(evidence))
+
+
 def _without_url_credentials(url: str) -> str:
-    parsed = parse.urlsplit(url)
+    try:
+        parsed = parse.urlsplit(url)
+    except ValueError:
+        return url
     if parsed.username is None:
         return url
-    hostname = parsed.hostname or ""
-    if parsed.port is not None:
-        hostname = f"{hostname}:{parsed.port}"
     return parse.urlunsplit(
-        (parsed.scheme, hostname, parsed.path, parsed.query, parsed.fragment)
+        (parsed.scheme, _parsed_host_port(parsed), parsed.path, parsed.query, parsed.fragment)
     )
+
+
+def _project_versions(project: IndexProject) -> tuple[str, ...]:
+    versions = {
+        version
+        for item in project.files
+        if (version := _file_version(item.filename)) is not None
+    }
+    return tuple(sorted(versions, key=_version_sort_key))
+
+
+def _file_version(filename: str) -> str | None:
+    try:
+        if filename.endswith(".whl"):
+            _, parsed_version, _, _ = parse_wheel_filename(filename)
+        else:
+            _, parsed_version = parse_sdist_filename(filename)
+    except (InvalidWheelFilename, InvalidSdistFilename):
+        return None
+    return str(parsed_version)
+
+
+def _version_sort_key(version: str) -> tuple[int, object]:
+    try:
+        from packaging.version import Version
+
+        return (0, Version(version))
+    except Exception:
+        return (1, version)
+
+
+def _format_available_versions(versions: Sequence[str]) -> str:
+    if not versions:
+        return "unknown"
+    if len(versions) <= 8:
+        return ",".join(versions)
+    return ",".join((*versions[:7], f"+{len(versions) - 7} more"))
+
+
+def _filename_hash_mismatch_evidence(
+    projects: Sequence[IndexProject],
+) -> tuple[str, ...]:
+    by_filename: dict[str, list[tuple[str, IndexFile]]] = {}
+    for project in projects:
+        index_url = redact_url_credentials(project.index_url)
+        for item in project.files:
+            by_filename.setdefault(item.filename, []).append((index_url, item))
+
+    evidence: list[str] = []
+    for filename, entries in sorted(by_filename.items()):
+        if len(entries) < 2:
+            continue
+        hash_summaries = {_hash_summary(item.hashes) for _, item in entries}
+        if len(hash_summaries) < 2:
+            continue
+        evidence.append(
+            "filename_hash_mismatch:"
+            f"{filename}="
+            + ";".join(
+                f"{index_url}:{_hash_summary(item.hashes)}"
+                for index_url, item in entries
+            )
+        )
+    return tuple(evidence[:8])
+
+
+def _version_metadata_mismatch_evidence(
+    projects: Sequence[IndexProject],
+) -> tuple[str, ...]:
+    by_version: dict[str, list[tuple[str, tuple[IndexFile, ...]]]] = {}
+    for project in projects:
+        index_url = redact_url_credentials(project.index_url)
+        for version in _project_versions(project):
+            by_version.setdefault(version, []).append(
+                (index_url, files_for_version(project, version))
+            )
+
+    evidence: list[str] = []
+    for version, entries in sorted(by_version.items(), key=lambda item: _version_sort_key(item[0])):
+        if len(entries) < 2:
+            continue
+        signatures = {
+            _metadata_signature(files)
+            for _, files in entries
+        }
+        if len(signatures) < 2:
+            continue
+        evidence.append(
+            f"version_metadata_mismatch:{version}="
+            + ";".join(
+                f"{index_url}:{_metadata_signature_label(files)}"
+                for index_url, files in entries
+            )
+        )
+    return tuple(evidence[:8])
+
+
+def _metadata_signature(files: Sequence[IndexFile]) -> tuple[object, ...]:
+    return (
+        tuple(sorted({item.requires_python or "" for item in files})),
+        tuple(sorted({str(item.yanked) for item in files})),
+        tuple(sorted({_hash_summary(item.metadata_hashes) for item in files})),
+        tuple(sorted({str(item.size) for item in files if item.size is not None})),
+        tuple(sorted({item.upload_time or "" for item in files})),
+    )
+
+
+def _metadata_signature_label(files: Sequence[IndexFile]) -> str:
+    requires_python, yanked, metadata_hashes, sizes, upload_times = _metadata_signature(files)
+    parts = [
+        f"requires_python={_join_compact(requires_python)}",
+        f"yanked={_join_compact(yanked)}",
+        f"metadata_hashes={_join_compact(metadata_hashes)}",
+    ]
+    if sizes:
+        parts.append(f"sizes={_join_compact(sizes)}")
+    if upload_times:
+        parts.append(f"upload_times={_join_compact(upload_times)}")
+    return ",".join(parts)
+
+
+def _hash_summary(hashes: Sequence[tuple[str, str]]) -> str:
+    if not hashes:
+        return "missing"
+    return "|".join(
+        f"{algorithm.lower()}={digest.lower()}"
+        for algorithm, digest in hashes
+    )
+
+
+def _join_compact(values: object) -> str:
+    if not isinstance(values, tuple):
+        return str(values)
+    filtered = [str(value) for value in values if str(value)]
+    if not filtered:
+        return "unknown"
+    if len(filtered) <= 3:
+        return "/".join(filtered)
+    return "/".join((*filtered[:2], f"+{len(filtered) - 2} more"))
+
+
+def _parsed_host_port(parsed: parse.SplitResult) -> str:
+    hostname = parsed.hostname or ""
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if port is not None:
+        hostname = f"{hostname}:{port}"
+    return hostname
 
 
 def _same_origin(
@@ -607,18 +1004,25 @@ def _same_origin(
     default_ports = {"http": 80, "https": 443}
     first_scheme = first.scheme.lower()
     second_scheme = second.scheme.lower()
+    try:
+        first_port = first.port
+        second_port = second.port
+    except ValueError:
+        return False
     return (
         first_scheme == second_scheme
         and first.hostname == second.hostname
-        and (first.port or default_ports.get(first_scheme))
-        == (second.port or default_ports.get(second_scheme))
+        and (first_port or default_ports.get(first_scheme))
+        == (second_port or default_ports.get(second_scheme))
     )
 
 
-def _validate_index_url(url: str) -> None:
-    parsed = parse.urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError(f"package index URL must use HTTP or HTTPS: {url!r}")
+def _validate_index_url(
+    url: str,
+    *,
+    allow_insecure_index: bool = False,
+) -> None:
+    IndexURLPolicy(allow_insecure_index=allow_insecure_index).validate_index_url(url)
 
 
 def _hash_mapping(value: object) -> tuple[tuple[str, str], ...]:
@@ -643,10 +1047,80 @@ def _hash_fragment(fragment: str) -> tuple[tuple[str, str], ...]:
 
 
 def _metadata_hashes(value: object) -> tuple[tuple[str, str], ...]:
+    if isinstance(value, dict):
+        return _hash_mapping(value)
     if not isinstance(value, str) or "=" not in value:
         return ()
     algorithm, digest = value.split("=", 1)
     return _hash_mapping({algorithm: digest})
+
+
+def _metadata_url(file_url: str) -> str:
+    parsed = parse.urlsplit(file_url)
+    return parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, f"{parsed.path}.metadata", parsed.query, "")
+    )
+
+
+def _split_url(url: str, *, context: str) -> parse.SplitResult:
+    try:
+        parsed = parse.urlsplit(url)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError as exc:
+        raise ValueError(
+            f"{context} has a malformed host or port: {redact_url_credentials(url)!r}"
+        ) from exc
+    if not parsed.scheme or not hostname:
+        raise ValueError(
+            f"{context} must include a scheme and host: {redact_url_credentials(url)!r}"
+        )
+    return parsed
+
+
+def _url_has_credentials(url: str) -> bool:
+    try:
+        return parse.urlsplit(url).username is not None
+    except ValueError:
+        return False
+
+
+def _remove_request_headers(req: request.Request, names: set[str]) -> None:
+    for mapping in (req.headers, req.unredirected_hdrs):
+        for key in list(mapping):
+            if key.lower() in names:
+                del mapping[key]
+
+
+def _write_private_text(path: Path, text: str) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    fd = os.open(path, flags, stat.S_IRUSR | stat.S_IWUSR)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            fd = -1
+            stream.write(text)
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _secure_delete(path: Path) -> None:
+    try:
+        size = path.stat().st_size
+        with path.open("r+b") as stream:
+            if size:
+                stream.write(b"\0" * size)
+                stream.flush()
+                os.fsync(stream.fileno())
+    except OSError:
+        pass
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
 
 
 def _optional_string(value: object) -> str | None:
@@ -654,7 +1128,11 @@ def _optional_string(value: object) -> str | None:
 
 
 def _optional_int(value: object) -> int | None:
-    return value if isinstance(value, int) and value >= 0 else None
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        else None
+    )
 
 
 def _yanked_value(value: object) -> bool | str:

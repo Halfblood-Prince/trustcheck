@@ -133,6 +133,18 @@ import caches. Adjacent pip-generated `__pycache__` files are therefore not a
 source-bypass for signed plugins. `isolate = false` loads plugins in the main
 interpreter and cannot provide the same source-binding guarantee.
 
+The worker is a plugin integrity and IPC boundary, not a complete operating system sandbox.
+A trusted plugin still runs Python code with the worker
+process's filesystem, network, and subprocess permissions unless the host
+environment applies additional controls. Do not treat declared plugin
+capabilities as enforced resource policy; Trustcheck rejects filesystem,
+network, and subprocess capability claims until those permissions can be
+mapped to real isolation. A future hardened mode should use OS controls such
+as Bubblewrap on Linux, a locked container fallback, capability-specific
+filesystem mounts, network disabled unless explicitly permitted, subprocess
+restrictions, and platform-specific warnings where equivalent isolation is not
+available.
+
 Worker IPC uses plugin protocol version `1` over
 `multiprocessing.Pipe.send_bytes()` and `recv_bytes()`. The parent and worker
 exchange UTF-8 JSON bytes only; plugin-controlled Python objects are never
@@ -273,7 +285,8 @@ Plugin statements may not claim `sigstore_identity` or `sigstore_issuer`.
 Sigstore identity trust is intentionally unsupported until Trustcheck verifies
 a real Sigstore bundle or attestation, including the certificate chain, Fulcio
 root, transparency-log inclusion where applicable, certificate identity, OIDC
-issuer, and digest of the exact installed plugin contents.
+issuer, artifact or installed-content digest, and transparency-log inclusion proof
+before considering the identity verified.
 
 Example plugin configuration:
 

@@ -573,16 +573,20 @@ class IndexBackedPackageClient:
     index_url: str
     artifacts: tuple[ArtifactReference, ...] = ()
     requires_dist: tuple[str, ...] = ()
+    allow_insecure_index: bool = False
     request_hook: Callable[[str, dict[str, Any]], None] | None = None
     repository_client: Any = None
 
     def __post_init__(self) -> None:
         if self.repository_client is None:
-            from .indexes import SimpleRepositoryClient
+            from .indexes import IndexURLPolicy, SimpleRepositoryClient
 
             self.repository_client = SimpleRepositoryClient(
                 timeout=self.base_client.timeout,
                 max_response_bytes=self.base_client.max_download_bytes,
+                url_policy=IndexURLPolicy(
+                    allow_insecure_index=self.allow_insecure_index,
+                ),
             )
 
     def __getattr__(self, name: str) -> Any:
@@ -623,8 +627,16 @@ class IndexBackedPackageClient:
     def download_distribution(self, url: str) -> bytes:
         parsed = parse.urlsplit(url)
         if parsed.scheme == "file":
+            if not self._allows_local_artifact(url):
+                raise PypiClientError(
+                    "local file artifact URLs are only allowed for explicitly "
+                    "local lockfile or direct artifacts",
+                    url=url,
+                    code="upstream",
+                    subcode="local_artifact_not_allowed",
+                )
             try:
-                path = Path(request.url2pathname(parsed.path))
+                path = _local_file_url_path(url)
                 if path.stat().st_size > self.base_client.max_download_bytes:
                     raise PypiClientError(
                         f"artifact exceeds the {self.base_client.max_download_bytes}-byte "
@@ -746,3 +758,38 @@ class IndexBackedPackageClient:
             "urls": urls,
             "vulnerabilities": [],
         }
+
+    def _allows_local_artifact(self, url: str) -> bool:
+        try:
+            requested_path = _local_file_url_path(url).resolve()
+        except PypiClientError:
+            return False
+        for artifact in self.artifacts:
+            if artifact.kind == "index":
+                continue
+            candidates: list[Path] = []
+            if artifact.url:
+                try:
+                    candidates.append(_local_file_url_path(artifact.url).resolve())
+                except PypiClientError:
+                    pass
+            if artifact.path:
+                try:
+                    candidates.append(Path(artifact.path).resolve())
+                except OSError:
+                    pass
+            if requested_path in candidates:
+                return True
+        return False
+
+
+def _local_file_url_path(url: str) -> Path:
+    parsed = parse.urlsplit(url)
+    if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
+        raise PypiClientError(
+            f"unsupported local artifact URL: {url}",
+            url=url,
+            code="upstream",
+            subcode="local_artifact_url_invalid",
+        )
+    return Path(request.url2pathname(parsed.path))

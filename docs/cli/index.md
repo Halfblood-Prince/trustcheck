@@ -113,11 +113,22 @@ container resolver image is pinned by digest.
   credential provider
 - `--allow-dependency-confusion`: continue after a cross-index name collision
   that has been independently reviewed
+- `--allow-insecure-index`: explicitly allow HTTP package indexes and artifact
+  URLs from those indexes
 
-`--extra-index-url` is secure by default: `trustcheck` checks every resolved
-name independently on each configured index and stops when public and private
-indexes both provide the name. Index credentials are redacted from errors and
-JSON output.
+`--extra-index-url` is secure by default: `trustcheck` requires HTTPS indexes
+unless `--allow-insecure-index` is set, validates artifact URL schemes and
+redirect targets, strips credentials on cross-origin redirects, checks every
+resolved name independently on each configured index, and stops when public and
+private indexes both provide the name. Index credentials are redacted from
+errors and JSON output.
+
+The resolver reports dependency-confusion evidence using explicit resolver
+terminology: pip behaves as a version-priority resolver across configured
+indexes, and index trust order is not enforced by pip. Do not use
+`--allow-dependency-confusion` as an index-priority switch; use it only after
+the intended source index and artifact hashes have been independently
+reviewed.
 
 ## Policy override flags
 

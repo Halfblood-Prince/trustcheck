@@ -70,6 +70,10 @@ inputs:
     description: Continue after reporting a project-name collision across configured indexes.
     required: false
     default: "false"
+  allow-insecure-index:
+    description: Allow HTTP Simple Repository indexes and artifact URLs from those indexes.
+    required: false
+    default: "false"
   trusted-projects:
     description: Whitespace- or newline-separated project names added to the typosquatting reference set.
     required: false
@@ -267,6 +271,7 @@ runs:
         TRUSTCHECK_ACTION_EXTRA_INDEX_URLS: ${{ inputs['extra-index-urls'] }}
         TRUSTCHECK_ACTION_KEYRING_PROVIDER: ${{ inputs['keyring-provider'] }}
         TRUSTCHECK_ACTION_ALLOW_DEPENDENCY_CONFUSION: ${{ inputs['allow-dependency-confusion'] }}
+        TRUSTCHECK_ACTION_ALLOW_INSECURE_INDEX: ${{ inputs['allow-insecure-index'] }}
         TRUSTCHECK_ACTION_TRUSTED_PROJECTS: ${{ inputs['trusted-projects'] }}
         TRUSTCHECK_ACTION_WORKERS: ${{ inputs['workers'] }}
         TRUSTCHECK_ACTION_SANDBOX: ${{ inputs['sandbox'] }}

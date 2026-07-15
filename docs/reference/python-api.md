@@ -352,7 +352,10 @@ When dependency inspection is requested without `locked_versions`,
 `PipResolver(indexes=IndexConfiguration(...))` supports primary and extra
 PEP 503/691 indexes, keyring provider selection, source attribution, and
 dependency-confusion detection. Cross-index collisions raise
-`ResolutionError` unless `allow_dependency_confusion=True`.
+`ResolutionError` unless `allow_dependency_confusion=True`. Dependency-confusion
+findings expose an `evidence` tuple with resolver terminology, available
+versions per index, and hash or metadata mismatches when the configured index
+client can observe them.
 
 `load_lockfile(path, extras=(), groups=(), environment=None)` returns a
 `LockfileResolution` containing exact `LockedPackage` entries and retained

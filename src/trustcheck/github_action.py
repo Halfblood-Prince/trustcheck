@@ -64,6 +64,7 @@ class ActionSettings:
     extra_index_urls: tuple[str, ...] = ()
     keyring_provider: str = "auto"
     allow_dependency_confusion: bool = False
+    allow_insecure_index: bool = False
     trusted_projects: tuple[str, ...] = ()
     max_workers: int = 8
     sandbox: str = "strict"
@@ -328,6 +329,8 @@ def build_cli_arguments(settings: ActionSettings, *, workspace: Path) -> list[st
     arguments.extend(["--keyring-provider", settings.keyring_provider])
     if settings.allow_dependency_confusion:
         arguments.append("--allow-dependency-confusion")
+    if settings.allow_insecure_index:
+        arguments.append("--allow-insecure-index")
     if not scan_mode:
         for project in settings.trusted_projects:
             arguments.extend(["--trusted-project", project])

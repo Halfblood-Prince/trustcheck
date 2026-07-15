@@ -646,7 +646,7 @@ class PypiClientTests(unittest.TestCase):
         )
         self.assertEqual(client.timeout, 3.0)
         self.assertIsNotNone(client.repository_client)
-        with self.assertRaisesRegex(pypi_module.PypiClientError, "unable to read"):
+        with self.assertRaisesRegex(pypi_module.PypiClientError, "only allowed"):
             client.download_distribution("file:///definitely/missing/demo.whl")
 
     def test_index_backed_client_rejects_nonmatching_index_artifacts(self) -> None:

@@ -4,24 +4,29 @@ import base64
 import json
 import subprocess
 import sys
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from urllib import error, parse, request
 
+from tests.security_http_fixture import security_http_server
 from trustcheck.indexes import (
-    DependencyConfusionFinding,
     IndexConfiguration,
     IndexError,
     IndexFile,
     IndexProject,
+    IndexURLPolicy,
     SimpleRepositoryClient,
     _hash_fragment,
     _hash_mapping,
     _metadata_hashes,
     _optional_int,
     _optional_string,
+    _PolicyRedirectHandler,
     _same_origin,
     _without_url_credentials,
     _yanked_value,
@@ -56,6 +61,16 @@ class FakeResponse:
 
     def __exit__(self, *args: object) -> bool:
         return False
+
+
+class RedirectLoopHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self.send_response(302)
+        self.send_header("Location", self.path)
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        del format, args
 
 
 def simple_payload() -> bytes:
@@ -97,7 +112,7 @@ class IndexTests(unittest.TestCase):
             configuration.pip_arguments(),
             [
                 "--index-url",
-                "https://user:secret@index.example/simple",
+                "https://index.example/simple",
                 "--extra-index-url",
                 "https://pypi.org/simple/",
                 "--extra-index-url",
@@ -106,6 +121,18 @@ class IndexTests(unittest.TestCase):
                 "subprocess",
             ],
         )
+        self.assertTrue(configuration.has_url_credentials)
+        with configuration.pip_subprocess() as (arguments, environment):
+            self.assertEqual(arguments, [])
+            assert environment is not None
+            config_path = Path(environment["PIP_CONFIG_FILE"])
+            config_text = config_path.read_text(encoding="utf-8")
+            self.assertIn(
+                "index-url = https://user:secret@index.example/simple",
+                config_text,
+            )
+            self.assertIn("keyring-provider = subprocess", config_text)
+        self.assertFalse(config_path.exists())
         self.assertEqual(
             configuration.redacted()["index_url"],
             "https://<redacted>@index.example/simple",
@@ -124,10 +151,114 @@ class IndexTests(unittest.TestCase):
     def test_index_configuration_rejects_invalid_values(self) -> None:
         with self.assertRaisesRegex(ValueError, "keyring provider"):
             IndexConfiguration(keyring_provider="bad")
-        with self.assertRaisesRegex(ValueError, "HTTP"):
+        with self.assertRaisesRegex(ValueError, "scheme and host|HTTPS"):
             IndexConfiguration(index_url="file:///tmp/simple")
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            IndexConfiguration(index_url="http://index.example/simple")
+        self.assertEqual(
+            IndexConfiguration(
+                index_url="http://index.example/simple",
+                allow_insecure_index=True,
+            ).all_urls,
+            ("http://index.example/simple/",),
+        )
         with self.assertRaisesRegex(ValueError, "empty"):
             normalize_index_url("  ")
+
+    def test_url_policy_handles_hosts_ports_and_insecure_opt_in(self) -> None:
+        policy = IndexURLPolicy(allow_insecure_index=True)
+        for url in (
+            "http://127.0.0.1:8080/simple",
+            "http://[::1]:8080/simple",
+            "http://localhost/simple",
+            "https://index.example/simple",
+        ):
+            with self.subTest(url=url):
+                policy.validate_index_url(url)
+
+        for url in (
+            "https://index.example:bad/simple",
+            "https://[::1/simple",
+            "https:///simple",
+        ):
+            with self.subTest(url=url), self.assertRaisesRegex(
+                ValueError,
+                "malformed|scheme and host",
+            ):
+                policy.validate_index_url(url)
+
+    def test_redirect_policy_allows_same_origin_and_strips_cross_origin_auth(self) -> None:
+        handler = _PolicyRedirectHandler(IndexURLPolicy())
+        token = "Basic dXNlcjpzZWNyZXQ="
+        source = request.Request(
+            "https://index.example/simple/demo/",
+            headers={"Authorization": token},
+        )
+
+        same_origin = handler.redirect_request(
+            source,
+            None,
+            302,
+            "Found",
+            {},
+            "https://index.example/simple/other/",
+        )
+        assert same_origin is not None
+        self.assertEqual(same_origin.get_header("Authorization"), token)
+
+        cross_origin = handler.redirect_request(
+            source,
+            None,
+            302,
+            "Found",
+            {},
+            "https://files.example/demo.whl",
+        )
+        assert cross_origin is not None
+        self.assertIsNone(cross_origin.get_header("Authorization"))
+
+        long_redirect = handler.redirect_request(
+            source,
+            None,
+            302,
+            "Found",
+            {},
+            "https://index.example/simple/" + ("a" * 8192),
+        )
+        assert long_redirect is not None
+        self.assertTrue(long_redirect.full_url.endswith("a" * 8192))
+
+        with self.assertRaises(error.URLError):
+            handler.redirect_request(
+                source,
+                None,
+                302,
+                "Found",
+                {},
+                "http://index.example/simple/demo/",
+            )
+
+    def test_redirect_loop_honors_policy_limit(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectLoopHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            client = SimpleRepositoryClient(
+                timeout=1.0,
+                url_policy=IndexURLPolicy(
+                    allow_insecure_index=True,
+                    max_redirects=2,
+                ),
+            )
+            with self.assertRaisesRegex(IndexError, "redirect|HTTP 302"):
+                client.get_project(
+                    f"http://127.0.0.1:{server.server_port}/simple",
+                    "demo",
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
 
     def test_parse_pep691_json_preserves_file_metadata(self) -> None:
         project = parse_simple_json(
@@ -155,6 +286,67 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(artifact.yanked, "broken")
         self.assertEqual(artifact.size, 12)
 
+    def test_parse_pep691_json_core_metadata_dict_and_query_sidecar_url(self) -> None:
+        payload = json.dumps(
+            {
+                "meta": {"api-version": "1.4"},
+                "files": [
+                    {
+                        "filename": "demo-1.0-py3-none-any.whl",
+                        "url": "demo-1.0-py3-none-any.whl?token=abc",
+                        "core-metadata": {"sha256": "b" * 64},
+                    },
+                ],
+            }
+        ).encode()
+
+        project = parse_simple_json(
+            payload,
+            project="demo",
+            index_url="https://index.example/simple/",
+            response_url="https://index.example/simple/demo/",
+        )
+
+        artifact = project.files[0]
+        self.assertEqual(artifact.metadata_hashes, (("sha256", "b" * 64),))
+        self.assertEqual(
+            artifact.metadata_url,
+            "https://index.example/simple/demo/"
+            "demo-1.0-py3-none-any.whl.metadata?token=abc",
+        )
+
+    def test_parse_pep691_json_fuzz_regressions(self) -> None:
+        payload = (
+            b'{"meta":{"api-version":"1.4"},"files":false,'
+            b'"files":[{"filename":"demo-1.0-py3-none-any.whl",'
+            b'"url":"https://User%40example:Secret@index.example/demo.whl",'
+            b'"hashes":{"SHA256":"' + (b"A" * 64) + b'"},'
+            b'"core-metadata":true,'
+            b'"size":true,'
+            b'"upload-time":false}]}'
+        )
+
+        project = parse_simple_json(
+            payload,
+            project="demo",
+            index_url="https://index.example/simple/",
+            response_url="https://index.example/simple/demo/",
+        )
+
+        artifact = project.files[0]
+        self.assertEqual(
+            artifact.url,
+            "https://<redacted>@index.example/demo.whl",
+        )
+        self.assertEqual(artifact.hashes, (("sha256", "a" * 64),))
+        self.assertEqual(
+            artifact.metadata_url,
+            "https://<redacted>@index.example/demo.whl.metadata",
+        )
+        self.assertEqual(artifact.metadata_hashes, ())
+        self.assertIsNone(artifact.size)
+        self.assertIsNone(artifact.upload_time)
+
     def test_parse_pep691_rejects_unsupported_or_invalid_payloads(self) -> None:
         cases = [
             (b"[]", "object"),
@@ -171,14 +363,48 @@ class IndexTests(unittest.TestCase):
                         response_url="https://index.example/simple/demo/",
                     )
 
+    def test_parse_remote_index_rejects_unsafe_artifact_schemes(self) -> None:
+        for scheme_url in (
+            "file:///tmp/demo.whl",
+            "ftp://index.example/demo.whl",
+            "data:text/plain,demo",
+            "plugin+demo://artifact",
+        ):
+            payload = json.dumps(
+                {
+                    "meta": {"api-version": "1.4"},
+                    "files": [
+                        {
+                            "filename": "demo-1.0-py3-none-any.whl",
+                            "url": scheme_url,
+                        },
+                    ],
+                }
+            ).encode()
+            with self.subTest(url=scheme_url), self.assertRaisesRegex(
+                ValueError,
+                "HTTPS|scheme and host",
+            ):
+                parse_simple_json(
+                    payload,
+                    project="demo",
+                    index_url="https://index.example/simple/",
+                    response_url="https://index.example/simple/demo/",
+                )
+
     def test_parse_pep503_html_and_versions(self) -> None:
         html = f"""
-        <html><body>
+        <html><head>
+          <meta name="pypi:repository-version" content="1.4">
+          <meta name="api-version" content="1.4">
+        </head><body>
           <a href="/">root</a>
           <a href="../../files/demo-1.0.tar.gz#sha256={'c' * 64}"
              data-requires-python="&gt;=3.11"
              data-yanked
              data-dist-info-metadata="sha256={'d' * 64}">demo</a>
+          <a href="https://exämple.test/files/demo-1.1.tar.gz#SHA256={'e' * 64}"
+             data-core-metadata="true">unicode-host</a>
           <a>missing</a>
         </body></html>
         """.encode()
@@ -189,7 +415,7 @@ class IndexTests(unittest.TestCase):
             response_url="https://index.example/simple/demo/",
         )
 
-        self.assertEqual(len(project.files), 1)
+        self.assertEqual(len(project.files), 2)
         artifact = project.files[0]
         self.assertEqual(artifact.hashes, (("sha256", "c" * 64),))
         self.assertEqual(artifact.requires_python, ">=3.11")
@@ -197,6 +423,16 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(
             [item.filename for item in files_for_version(project, "1.0")],
             ["demo-1.0.tar.gz"],
+        )
+        self.assertEqual(
+            artifact.metadata_url,
+            "https://index.example/files/demo-1.0.tar.gz.metadata",
+        )
+        unicode_artifact = project.files[1]
+        self.assertEqual(unicode_artifact.hashes, (("sha256", "e" * 64),))
+        self.assertEqual(
+            unicode_artifact.metadata_url,
+            "https://exämple.test/files/demo-1.1.tar.gz.metadata",
         )
         self.assertEqual(files_for_version(project, "2.0"), ())
 
@@ -281,6 +517,18 @@ class IndexTests(unittest.TestCase):
         with self.assertRaisesRegex(IndexError, "unable to download"):
             client.download("https://index.example/demo.whl")
 
+    def test_simple_client_validates_final_response_url(self) -> None:
+        downgraded = FakeResponse(
+            simple_payload(),
+            url="http://index.example/simple/demo/",
+        )
+        client = SimpleRepositoryClient(
+            opener=lambda *args, **kwargs: downgraded,
+        )
+
+        with self.assertRaisesRegex(IndexError, "HTTPS-to-HTTP"):
+            client.get_project("https://index.example/simple", "demo")
+
     def test_simple_client_streaming_cap_handles_headers_and_observed_size(self) -> None:
         declared = FakeResponse(b"", content_type="application/octet-stream")
         declared.headers["Content-Length"] = "5"
@@ -302,6 +550,46 @@ class IndexTests(unittest.TestCase):
             max_response_bytes=4,
         )
         self.assertEqual(client.download("https://index.example/demo.whl"), b"ok")
+
+    def test_security_http_fixture_exercises_sensitive_index_boundaries(self) -> None:
+        with security_http_server() as base_url:
+            client = SimpleRepositoryClient(
+                max_response_bytes=1024,
+                url_policy=IndexURLPolicy(allow_insecure_index=True),
+            )
+            authenticated_url = base_url.replace("http://", "http://user:pass@")
+
+            self.assertEqual(
+                client.download(f"{authenticated_url}/auth"),
+                b'{"meta":{"api-version":"1.0"},"files":[]}',
+            )
+            self.assertEqual(client.download(f"{base_url}/chunked"), b"chunk-body")
+            self.assertEqual(
+                client.download(f"{base_url}/demo.whl.metadata"),
+                b"Metadata-Version: 2.3\nName: demo\n",
+            )
+            self.assertEqual(
+                client.download(f"{base_url}/demo.whl.provenance"),
+                b'{"provenance":[]}',
+            )
+            self.assertEqual(
+                client.download(f"{base_url}/incorrect-length"),
+                b"s",
+            )
+            self.assertEqual(
+                client.download(f"{base_url}/slow"),
+                b'{"meta":{"api-version":"1.0"},"files":[]}',
+            )
+            with self.assertRaisesRegex(IndexError, "Redirection|scheme and host|HTTPS"):
+                client.download(f"{base_url}/redirect")
+            with self.assertRaisesRegex(IndexError, "exceeds"):
+                client.download(f"{base_url}/oversized")
+            with self.assertRaisesRegex(IndexError, "invalid Simple"):
+                client.get_project(base_url, "malformed-json")
+            self.assertEqual(
+                client.get_project(base_url, "malformed-html").files,
+                (),
+            )
 
     def test_simple_client_rejects_malformed_responses(self) -> None:
         client = SimpleRepositoryClient(
@@ -449,9 +737,54 @@ class IndexTests(unittest.TestCase):
 
     def test_dependency_confusion_detection(self) -> None:
         projects = {
-            ("https://private.example/simple/", "private-only"): object(),
-            ("https://private.example/simple/", "collision"): object(),
-            ("https://pypi.org/simple/", "collision"): object(),
+            (
+                "https://private.example/simple/",
+                "private-only",
+            ): IndexProject(
+                name="private-only",
+                index_url="https://private.example/simple",
+            ),
+            (
+                "https://private.example/simple/",
+                "collision",
+            ): IndexProject(
+                name="collision",
+                index_url="https://private.example/simple",
+                files=(
+                    IndexFile(
+                        filename="collision-1.0-py3-none-any.whl",
+                        url="https://private.example/files/collision-1.0.whl",
+                        hashes=(("sha256", "a" * 64),),
+                        requires_python=">=3.11",
+                        metadata_hashes=(("sha256", "b" * 64),),
+                        size=12,
+                        upload_time="2026-01-01T00:00:00Z",
+                    ),
+                    IndexFile(
+                        filename="collision-2.0-py3-none-any.whl",
+                        url="https://private.example/files/collision-2.0.whl",
+                        hashes=(("sha256", "c" * 64),),
+                    ),
+                ),
+            ),
+            (
+                "https://pypi.org/simple/",
+                "collision",
+            ): IndexProject(
+                name="collision",
+                index_url="https://pypi.org/simple",
+                files=(
+                    IndexFile(
+                        filename="collision-1.0-py3-none-any.whl",
+                        url="https://files.pythonhosted.org/collision-1.0.whl",
+                        hashes=(("sha256", "d" * 64),),
+                        requires_python=">=3.10",
+                        metadata_hashes=(("sha256", "e" * 64),),
+                        size=14,
+                        upload_time="2026-01-02T00:00:00Z",
+                    ),
+                ),
+            ),
         }
 
         class FakeClient(SimpleRepositoryClient):
@@ -464,17 +797,39 @@ class IndexTests(unittest.TestCase):
             ["https://private.example/simple", "https://pypi.org/simple"],
         )
 
+        self.assertEqual(len(findings), 1)
+        finding = findings[0]
+        self.assertEqual(finding.project, "collision")
         self.assertEqual(
-            findings,
+            finding.indexes,
             (
-                DependencyConfusionFinding(
-                    project="collision",
-                    indexes=(
-                        "https://private.example/simple",
-                        "https://pypi.org/simple",
-                    ),
-                ),
+                "https://private.example/simple",
+                "https://pypi.org/simple",
             ),
+        )
+        self.assertIn("resolver_strategy=version-priority", finding.evidence)
+        self.assertIn("index_trust_order=not-enforced-by-pip", finding.evidence)
+        self.assertIn(
+            "available_versions[https://private.example/simple]=1.0,2.0",
+            finding.evidence,
+        )
+        self.assertIn(
+            "available_versions[https://pypi.org/simple]=1.0",
+            finding.evidence,
+        )
+        self.assertTrue(
+            any(
+                item.startswith(
+                    "filename_hash_mismatch:collision-1.0-py3-none-any.whl="
+                )
+                for item in finding.evidence
+            )
+        )
+        self.assertTrue(
+            any(
+                item.startswith("version_metadata_mismatch:1.0=")
+                for item in finding.evidence
+            )
         )
         self.assertEqual(
             client.find_dependency_confusion(
@@ -584,8 +939,13 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(_hash_fragment("sha256"), ())
         self.assertEqual(_metadata_hashes(True), ())
         self.assertEqual(_metadata_hashes("true"), ())
+        self.assertEqual(
+            _metadata_hashes({"sha256": "a" * 64}),
+            (("sha256", "a" * 64),),
+        )
         self.assertEqual(_optional_string(3), None)
         self.assertEqual(_optional_int(-1), None)
+        self.assertEqual(_optional_int(True), None)
         self.assertEqual(_yanked_value(True), True)
         self.assertEqual(_yanked_value(None), False)
 

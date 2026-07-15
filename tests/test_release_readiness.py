@@ -125,6 +125,9 @@ class ReleaseReadinessTests(unittest.TestCase):
         limitations = (
             ROOT / "docs" / "reference" / "limitations-data-flows.md"
         ).read_text(encoding="utf-8")
+        extensibility = (
+            ROOT / "docs" / "reference" / "performance-extensibility.md"
+        ).read_text(encoding="utf-8")
         ci_guide = (ROOT / "docs" / "guides" / "ci-integration.md").read_text(
             encoding="utf-8"
         )
@@ -178,6 +181,10 @@ class ReleaseReadinessTests(unittest.TestCase):
             self.assertIn("trustcheck-report.json", document)
             self.assertIn("format: json", document)
             self.assertIn("report-path", document)
+
+        self.assertIn("not a complete operating system sandbox", extensibility)
+        self.assertIn("filesystem, network, and subprocess permissions", extensibility)
+        self.assertIn("transparency-log inclusion proof", extensibility)
 
         self.assertIn(
             "Limitations and data flows: reference/limitations-data-flows.md",

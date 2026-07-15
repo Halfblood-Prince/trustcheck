@@ -160,6 +160,13 @@ ACTION_INPUTS: tuple[ActionInputSpec, ...] = (
         kind="bool",
     ),
     ActionInputSpec(
+        "allow-insecure-index",
+        "allow_insecure_index",
+        "Allow HTTP Simple Repository indexes and artifact URLs from those indexes.",
+        default="false",
+        kind="bool",
+    ),
+    ActionInputSpec(
         "trusted-projects",
         "trusted_projects",
         "Whitespace- or newline-separated project names added to the typosquatting reference set.",

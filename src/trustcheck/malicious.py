@@ -825,6 +825,12 @@ def _dependency_confusion_findings(indexes: Sequence[str]) -> list[HeuristicFind
             "The same normalized project name is available from multiple configured indexes.",
             evidence=[
                 *normalized,
+                "resolver_strategy=version-priority",
+                "index_trust_order=not-enforced-by-pip",
+                (
+                    "pip selects candidates by version and compatibility across "
+                    "configured indexes, not by a private-index trust order."
+                ),
                 (
                     "At least one colliding source is the public PyPI index."
                     if public

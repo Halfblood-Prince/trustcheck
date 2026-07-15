@@ -1097,6 +1097,13 @@ class InspectPackageTests(unittest.TestCase):
         codes = {finding.code for finding in report.malicious_package.findings}
         self.assertIn("dependency_confusion_index_collision", codes)
         self.assertIn("typosquatting_name_similarity", codes)
+        confusion = next(
+            finding
+            for finding in report.malicious_package.findings
+            if finding.code == "dependency_confusion_index_collision"
+        )
+        self.assertIn("resolver_strategy=version-priority", confusion.evidence)
+        self.assertIn("index_trust_order=not-enforced-by-pip", confusion.evidence)
         self.assertGreaterEqual(report.malicious_package.score, 75)
         self.assertIn(
             "malicious_package_heuristics",

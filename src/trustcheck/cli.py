@@ -13,6 +13,7 @@ import threading
 import tomllib
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from dataclasses import asdict, replace
 from datetime import timedelta
 from pathlib import Path
@@ -188,6 +189,7 @@ from .exports import (
 from .indexes import (
     DEFAULT_INDEX_URL,
     IndexConfiguration,
+    IndexURLPolicy,
     SimpleRepositoryClient,
     normalize_index_url,
     redact_url_credentials,
@@ -1376,6 +1378,14 @@ def _add_index_arguments(parser: argparse.ArgumentParser) -> None:
             "index; unsafe unless the source has been independently verified."
         ),
     )
+    parser.add_argument(
+        "--allow-insecure-index",
+        action="store_true",
+        help=(
+            "Allow HTTP package indexes and artifact URLs from those indexes; "
+            "unsafe outside explicitly trusted local networks."
+        ),
+    )
 
 
 def _add_advisory_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1787,6 +1797,7 @@ def _run_scan_targets(
                 isolated_client,
                 target,
                 keyring_provider=args.keyring_provider,
+                allow_insecure_index=getattr(args, "allow_insecure_index", False),
                 plugin_manager=plugin_manager,
             )
             report = inspect_package(
@@ -2062,6 +2073,7 @@ def _scan_project_vulnerabilities(
                 requires_dist=root.requires_dist,
             ),
             keyring_provider=args.keyring_provider,
+            allow_insecure_index=getattr(args, "allow_insecure_index", False),
             plugin_manager=plugin_manager,
         )
     report = inspect_package(
@@ -2129,6 +2141,7 @@ def _run_remediation(
         reports,
         client=client,
         keyring_provider=args.keyring_provider,
+        allow_insecure_index=getattr(args, "allow_insecure_index", False),
     )
     target_environment = _target_environment_from_args(args)
 
@@ -2321,6 +2334,8 @@ def _post_fix_reproduction_command(
         command.extend(["--extra-index-url", index_url])
     if getattr(args, "allow_dependency_confusion", False):
         command.append("--allow-dependency-confusion")
+    if getattr(args, "allow_insecure_index", False):
+        command.append("--allow-insecure-index")
     if getattr(args, "python_version", None):
         command.extend(["--python-version", args.python_version])
     for platform in getattr(args, "platform", ()):
@@ -2377,25 +2392,30 @@ def _validate_fix_runtime(
             encoding="utf-8",
         )
         environment = _venv_environment(venv_path)
-        install_argv = [
-            str(python),
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "--no-input",
-        ]
-        if offline:
-            install_argv.append("--no-index")
-        else:
-            install_argv.extend(_index_configuration_from_args(args).pip_arguments())
-        install_argv.extend(["-r", str(requirements_file)])
-        install = _run_validation_subprocess(
-            "python -m pip install -r <resolved graph>",
-            install_argv,
-            cwd=prepared.root,
-            env=environment,
+        pip_context = (
+            nullcontext(([], environment))
+            if offline
+            else _index_configuration_from_args(args).pip_subprocess(env=environment)
         )
+        with pip_context as (pip_arguments, environment):
+            install_argv = [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-input",
+            ]
+            if offline:
+                install_argv.append("--no-index")
+            install_argv.extend(pip_arguments)
+            install_argv.extend(["-r", str(requirements_file)])
+            install = _run_validation_subprocess(
+                "python -m pip install -r <resolved graph>",
+                install_argv,
+                cwd=prepared.root,
+                env=environment,
+            )
         if not install.passed:
             return (
                 install,
@@ -2591,6 +2611,7 @@ def _remediation_available_versions(
     *,
     client: PypiClient,
     keyring_provider: str,
+    allow_insecure_index: bool = False,
 ) -> dict[str, tuple[str, ...]]:
     reports_by_name = {
         str(canonicalize_name(report.project)): report
@@ -2617,6 +2638,7 @@ def _remediation_available_versions(
             client,
             target,
             keyring_provider=keyring_provider,
+            allow_insecure_index=allow_insecure_index,
         )
         try:
             payload = target_client.get_project(target.project)
@@ -2789,6 +2811,7 @@ def _scan_resolution_for_remediation(
             client,
             target,
             keyring_provider=args.keyring_provider,
+            allow_insecure_index=getattr(args, "allow_insecure_index", False),
             plugin_manager=plugin_manager,
         )
         report = inspect_package(
@@ -3142,6 +3165,7 @@ def _index_configuration_from_args(
         index_url=args.index_url,
         extra_index_urls=tuple(args.extra_index_url),
         keyring_provider=args.keyring_provider,
+        allow_insecure_index=getattr(args, "allow_insecure_index", False),
     )
 
 
@@ -3153,6 +3177,9 @@ def _resolver_from_args(
     indexes = _index_configuration_from_args(args)
     index_client: RepositoryClient = SimpleRepositoryClient(
         keyring_provider=indexes.keyring_provider,
+        url_policy=IndexURLPolicy(
+            allow_insecure_index=indexes.allow_insecure_index,
+        ),
     )
     if plugin_manager is not None:
         index_client = plugin_manager.repository_client(index_client)
@@ -3183,6 +3210,7 @@ def _client_for_target(
     target: ScanTarget,
     *,
     keyring_provider: str,
+    allow_insecure_index: bool = False,
     plugin_manager: PluginManager | None = None,
 ) -> PypiClient | IndexBackedPackageClient:
     if target.version is None:
@@ -3208,6 +3236,7 @@ def _client_for_target(
     repository_client: RepositoryClient = SimpleRepositoryClient(
         timeout=client.timeout,
         keyring_provider=keyring_provider,
+        url_policy=IndexURLPolicy(allow_insecure_index=allow_insecure_index),
     )
     if plugin_manager is not None:
         repository_client = plugin_manager.repository_client(repository_client)
@@ -3218,6 +3247,7 @@ def _client_for_target(
         index_url=index_url,
         artifacts=target.artifacts,
         requires_dist=target.requires_dist,
+        allow_insecure_index=allow_insecure_index,
         repository_client=repository_client,
     )
 

@@ -113,6 +113,7 @@ class GitHubActionTests(unittest.TestCase):
                 extra_index_urls=("https://pypi.org/simple",),
                 keyring_provider="subprocess",
                 allow_dependency_confusion=True,
+                allow_insecure_index=True,
                 trusted_projects=("requests", "internal-sdk"),
                 sandbox="container",
                 sandbox_image=(
@@ -140,6 +141,7 @@ class GitHubActionTests(unittest.TestCase):
         self.assertIn("--keyring-provider", arguments)
         self.assertIn("subprocess", arguments)
         self.assertIn("--allow-dependency-confusion", arguments)
+        self.assertIn("--allow-insecure-index", arguments)
         self.assertEqual(arguments.count("--trusted-project"), 2)
         self.assertIn("internal-sdk", arguments)
         self.assertIn("--sandbox", arguments)

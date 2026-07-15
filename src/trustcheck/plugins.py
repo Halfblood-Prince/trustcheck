@@ -40,6 +40,7 @@ from .indexes import (
     DependencyConfusionFinding,
     IndexFile,
     IndexProject,
+    dependency_confusion_evidence,
     redact_url_credentials,
 )
 from .models import (
@@ -1926,6 +1927,13 @@ def _dependency_confusion_from_data(value: object) -> DependencyConfusionFinding
             _required_string(item, "", "dependency confusion index")
             for item in indexes
         ),
+        evidence=tuple(
+            _required_string(item, "", "dependency confusion evidence")
+            for item in _required_list(
+                data.get("evidence", []),
+                "dependency confusion evidence",
+            )
+        ),
     )
 
 
@@ -2276,16 +2284,29 @@ class PluginRepositoryClient:
             return ()
         findings: list[DependencyConfusionFinding] = []
         for project in sorted(set(projects)):
+            matched_projects = []
+            for index_url in indexes:
+                index_project = self.get_project(index_url, project)
+                if index_project is not None:
+                    matched_projects.append((index_url, index_project))
             matches = [
-                redact_url_credentials(index_url)
-                for index_url in indexes
-                if self.get_project(index_url, project) is not None
+                redact_url_credentials(
+                    str(getattr(index_project, "index_url", index_url))
+                )
+                for index_url, index_project in matched_projects
             ]
             if len(matches) > 1:
                 findings.append(
                     DependencyConfusionFinding(
                         project=project,
                         indexes=tuple(matches),
+                        evidence=dependency_confusion_evidence(
+                            tuple(
+                                item
+                                for _, item in matched_projects
+                                if isinstance(item, IndexProject)
+                            )
+                        ),
                     )
                 )
         return tuple(findings)

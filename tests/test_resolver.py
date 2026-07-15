@@ -976,6 +976,65 @@ class ResolverTests(unittest.TestCase):
             ("https://private.example/simple/", "https://pypi.org/simple/"),
         )
 
+    def test_pip_resolver_moves_authenticated_indexes_to_temp_config(self) -> None:
+        calls: list[list[str]] = []
+        config_paths: list[Path] = []
+
+        def runner(command, **kwargs):
+            calls.append(command)
+            environment = kwargs.get("env")
+            assert isinstance(environment, dict)
+            config_path = Path(environment["PIP_CONFIG_FILE"])
+            config_paths.append(config_path)
+            config_text = config_path.read_text(encoding="utf-8")
+            self.assertIn(
+                "index-url = https://user:secret@private.example/simple",
+                config_text,
+            )
+            self.assertNotIn("secret", " ".join(command))
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(installation_report()),
+                stderr="",
+            )
+
+        class IndexClient:
+            def find_dependency_confusion(self, projects, indexes):
+                del projects, indexes
+                return ()
+
+            def locate_artifact_index(self, project, artifact_url, indexes):
+                del project, artifact_url
+                return indexes[0]
+
+        resolver = PipResolver(
+            runner=runner,
+            sandbox_mode="off",
+            indexes=IndexConfiguration(
+                index_url="https://user:secret@private.example/simple",
+                extra_index_urls=("https://pypi.org/simple",),
+            ),
+            index_client=IndexClient(),  # type: ignore[arg-type]
+        )
+
+        resolver.resolve_requirements(["demo"])
+
+        self.assertNotIn("--index-url", calls[0])
+        self.assertTrue(config_paths)
+        self.assertFalse(config_paths[0].exists())
+
+    def test_pip_resolver_keeps_credentials_out_of_container_sandboxes(self) -> None:
+        configuration = IndexConfiguration(
+            index_url="https://user:secret@private.example/simple",
+        )
+        with self.assertRaisesRegex(ResolutionError, "credential-bearing"):
+            PipResolver(
+                indexes=configuration,
+                sandbox_mode="container",
+                executable_finder=lambda executable: "docker-test",
+            ).resolve_requirements(["demo"])
+
     def test_pip_resolver_blocks_or_reports_dependency_confusion(self) -> None:
         finding = DependencyConfusionFinding(
             project="Demo",
@@ -1007,7 +1066,10 @@ class ResolverTests(unittest.TestCase):
             index_url="https://private.example/simple",
             extra_index_urls=("https://pypi.org/simple",),
         )
-        with self.assertRaisesRegex(ResolutionError, "dependency-confusion"):
+        with self.assertRaisesRegex(
+            ResolutionError,
+            "resolver strategy: version-priority",
+        ):
             PipResolver(
                 runner=runner,
                 indexes=configuration,
@@ -1020,7 +1082,14 @@ class ResolverTests(unittest.TestCase):
             index_client=IndexClient(),  # type: ignore[arg-type]
             allow_dependency_confusion=True,
         ).resolve_requirements(["demo"])
-        self.assertEqual(resolution.dependency_confusion, (finding,))
+        self.assertEqual(len(resolution.dependency_confusion), 1)
+        allowed_finding = resolution.dependency_confusion[0]
+        self.assertEqual(allowed_finding.project, finding.project)
+        self.assertEqual(allowed_finding.indexes, finding.indexes)
+        self.assertIn(
+            "pip_selected_index=https://private.example/simple/",
+            allowed_finding.evidence,
+        )
 
     def test_pip_resolver_reports_index_inspection_failures(self) -> None:
         class IndexClient:

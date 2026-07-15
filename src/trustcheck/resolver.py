@@ -11,7 +11,8 @@ import sys
 import tempfile
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from contextlib import nullcontext
+from dataclasses import dataclass, field, replace
 from importlib.metadata import Distribution, distributions
 from pathlib import Path
 from typing import Any, Protocol
@@ -217,7 +218,7 @@ class PipResolver:
             raise ResolutionError(f"package index inspection failed: {exc}") from exc
         if findings and not self.allow_dependency_confusion:
             details = "; ".join(
-                f"{finding.project} is present on {', '.join(finding.indexes)}"
+                _dependency_confusion_message(finding)
                 for finding in findings
             )
             raise ResolutionError(
@@ -313,7 +314,22 @@ class PipResolver:
                 "sha256 digest"
             )
         selected_mode = self._selected_sandbox_mode()
-        warnings = self._sandbox_warnings(selected_mode, risk_reasons)
+        credential_sandbox_fallback = False
+        if self.indexes.has_url_credentials and selected_mode in {"container", "bubblewrap"}:
+            if self.sandbox_mode == "auto":
+                selected_mode = "strict"
+                credential_sandbox_fallback = True
+            else:
+                raise ResolutionError(
+                    "credential-bearing index URLs cannot be passed into the "
+                    f"{selected_mode} resolver sandbox; use keyring/netrc "
+                    "credentials or a non-container resolver mode"
+                )
+        warnings = self._sandbox_warnings(
+            selected_mode,
+            risk_reasons,
+            credential_sandbox_fallback=credential_sandbox_fallback,
+        )
         if selected_mode == "strict" and risk_reasons:
             raise ResolutionError(
                 "strict resolver sandbox rejected unsafe requirement input: "
@@ -361,12 +377,11 @@ class PipResolver:
             if target.is_cross_target:
                 command.extend(["--only-binary", ":all:"])
             elif selected_mode == "strict":
-                command.extend(["--isolated", "--only-binary", ":all:"])
+                if not self.indexes.has_url_credentials:
+                    command.append("--isolated")
+                command.extend(["--only-binary", ":all:"])
             if offline:
                 command.append("--no-index")
-            else:
-                command.extend(self.indexes.pip_arguments())
-            command.extend(staged_arguments)
             if selected_mode == "strict":
                 guard_directory = tempfile.TemporaryDirectory(
                     prefix="trustcheck-resolver-guard-"
@@ -374,25 +389,33 @@ class PipResolver:
                 guard_path = Path(guard_directory.name).resolve()
                 write_sitecustomize(guard_path)
                 subprocess_env = _strict_resolver_environment(guard_path)
-            command, subprocess_cwd = self._sandbox_command(
-                command,
-                mode=selected_mode,
-                workspace=sandbox_workspace,
+            pip_context = (
+                nullcontext(([], subprocess_env))
+                if offline
+                else self.indexes.pip_subprocess(env=subprocess_env)
             )
-            if cwd is None and selected_mode in {"off", "warn", "strict"}:
-                subprocess_cwd = None
+            with pip_context as (pip_arguments, subprocess_env):
+                command.extend(pip_arguments)
+                command.extend(staged_arguments)
+                command, subprocess_cwd = self._sandbox_command(
+                    command,
+                    mode=selected_mode,
+                    workspace=sandbox_workspace,
+                )
+                if cwd is None and selected_mode in {"off", "warn", "strict"}:
+                    subprocess_cwd = None
 
-            completed = self.runner(
-                command,
-                cwd=subprocess_cwd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-                shell=False,
-                env=subprocess_env,
-            )
+                completed = self.runner(
+                    command,
+                    cwd=subprocess_cwd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                    shell=False,
+                    env=subprocess_env,
+                )
         except OSError as exc:
             raise ResolutionError(f"unable to start pip dependency resolver: {exc}") from exc
         finally:
@@ -433,8 +456,16 @@ class PipResolver:
         self,
         selected_mode: str,
         risk_reasons: Sequence[str],
+        *,
+        credential_sandbox_fallback: bool = False,
     ) -> tuple[str, ...]:
         messages: list[str] = []
+        if credential_sandbox_fallback:
+            messages.append(
+                "credential-bearing index URLs are resolved in strict local mode "
+                "so pip credentials are not copied into a container or bubblewrap "
+                "sandbox"
+            )
         if selected_mode == "warn":
             detail = (
                 " Detected: " + "; ".join(dict.fromkeys(risk_reasons)) + "."
@@ -635,12 +666,56 @@ class PipResolver:
                         index_url=index_url,
                     )
                 )
+            selected_indexes = {
+                canonicalize_name(item.name): item.index_url
+                for item in annotated
+                if item.index_url is not None
+            }
+            findings = tuple(
+                _add_dependency_confusion_evidence(
+                    finding,
+                    "pip_selected_index="
+                    + selected_indexes.get(
+                        canonicalize_name(finding.project),
+                        "unknown",
+                    ),
+                )
+                for finding in findings
+            )
         except IndexError as exc:
             raise ResolutionError(f"package index inspection failed: {exc}") from exc
 
         resolution.distributions = annotated
         resolution.dependency_confusion = findings
         return resolution
+
+
+def _dependency_confusion_message(finding: DependencyConfusionFinding) -> str:
+    message = f"{finding.project} is present on {', '.join(finding.indexes)}"
+    evidence = tuple(
+        dict.fromkeys(
+            (
+                "resolver strategy: version-priority",
+                "index trust order: not enforced by pip",
+                *finding.evidence,
+            )
+        )
+    ) or (
+        "resolver_strategy=version-priority",
+        "index_trust_order=not-enforced-by-pip",
+    )
+    message += " (" + "; ".join(evidence) + ")"
+    return message
+
+
+def _add_dependency_confusion_evidence(
+    finding: DependencyConfusionFinding,
+    *evidence: str,
+) -> DependencyConfusionFinding:
+    merged = tuple(dict.fromkeys((*finding.evidence, *evidence)))
+    if merged == finding.evidence:
+        return finding
+    return replace(finding, evidence=merged)
 
 
 def _stage_sandbox_inputs(

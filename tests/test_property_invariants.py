@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from packaging.version import Version
 
-from trustcheck.indexes import IndexProject, SimpleRepositoryClient
+from trustcheck.indexes import IndexProject, SimpleRepositoryClient, parse_simple_json
 from trustcheck.models import (
     CoverageSummary,
     FileProvenance,
@@ -93,6 +94,106 @@ def test_dependency_confusion_requires_multiple_matching_indexes(
     findings = Repository().find_dependency_confusion(["Demo"], indexes)
 
     assert bool(findings) is (first and second)
+
+
+@settings(deadline=None)
+@given(
+    metadata=st.one_of(
+        st.booleans(),
+        st.dictionaries(
+            st.sampled_from(["sha256", "SHA256", "Sha512"]),
+            st.text(
+                alphabet="0123456789abcdefABCDEF",
+                min_size=64,
+                max_size=64,
+            ),
+            min_size=1,
+            max_size=2,
+        ),
+    )
+)
+def test_simple_json_metadata_dictionaries_and_booleans(metadata: object) -> None:
+    payload = json.dumps(
+        {
+            "meta": {"api-version": "1.4"},
+            "files": [
+                {
+                    "filename": "demo-1.0-py3-none-any.whl",
+                    "url": "demo-1.0-py3-none-any.whl?token=abc",
+                    "core-metadata": metadata,
+                }
+            ],
+        }
+    ).encode()
+
+    artifact = parse_simple_json(
+        payload,
+        project="demo",
+        index_url="https://index.example/simple/",
+        response_url="https://index.example/simple/demo/",
+    ).files[0]
+
+    if metadata is False:
+        assert artifact.metadata_url is None
+        assert artifact.metadata_hashes == ()
+    else:
+        assert artifact.metadata_url == (
+            "https://index.example/simple/demo/"
+            "demo-1.0-py3-none-any.whl.metadata?token=abc"
+        )
+        if isinstance(metadata, dict):
+            expected = tuple(
+                sorted(
+                    (algorithm.lower(), digest.lower())
+                    for algorithm, digest in metadata.items()
+                )
+            )
+            assert artifact.metadata_hashes == expected
+
+
+@settings(deadline=None)
+@given(
+    size=st.one_of(
+        st.none(),
+        st.booleans(),
+        st.integers(max_value=-1),
+        st.text(max_size=12),
+        st.floats(allow_nan=False, allow_infinity=False),
+    ),
+    upload_time=st.one_of(
+        st.none(),
+        st.booleans(),
+        st.integers(),
+        st.lists(st.text(max_size=4), max_size=2),
+    ),
+)
+def test_simple_json_malformed_sizes_and_upload_times_are_ignored(
+    size: object,
+    upload_time: object,
+) -> None:
+    payload = json.dumps(
+        {
+            "meta": {"api-version": "1.4"},
+            "files": [
+                {
+                    "filename": "demo-1.0-py3-none-any.whl",
+                    "url": "demo-1.0-py3-none-any.whl",
+                    "size": size,
+                    "upload-time": upload_time,
+                }
+            ],
+        }
+    ).encode()
+
+    artifact = parse_simple_json(
+        payload,
+        project="demo",
+        index_url="https://index.example/simple/",
+        response_url="https://index.example/simple/demo/",
+    ).files[0]
+
+    assert artifact.size is None
+    assert artifact.upload_time is None
 
 
 @settings(deadline=None)

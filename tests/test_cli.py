@@ -251,6 +251,7 @@ class CliBehaviorTests(unittest.TestCase):
                 "--keyring-provider",
                 "subprocess",
                 "--allow-dependency-confusion",
+                "--allow-insecure-index",
                 "--sandbox",
                 "auto",
                 "--sandbox-image",
@@ -269,6 +270,7 @@ class CliBehaviorTests(unittest.TestCase):
         self.assertEqual(scan_args.extra_index_url, ["https://pypi.org/simple"])
         self.assertEqual(scan_args.keyring_provider, "subprocess")
         self.assertTrue(scan_args.allow_dependency_confusion)
+        self.assertTrue(scan_args.allow_insecure_index)
         self.assertEqual(scan_args.sandbox, "auto")
         self.assertEqual(
             scan_args.sandbox_image,
