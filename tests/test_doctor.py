@@ -328,6 +328,18 @@ class DoctorTests(unittest.TestCase):
                 roots = _sigstore_state_directories(environ={}, home=root)
             self.assertEqual(roots[0], root / ".local" / "share" / "sigstore")
 
+            with patch("trustcheck.doctor.sys.platform", "win32"):
+                windows_roots = _sigstore_state_directories(environ={}, home=root)
+            expected_windows_root = root / "AppData" / "Local" / "sigstore"
+            self.assertEqual(
+                windows_roots,
+                (
+                    expected_windows_root,
+                    expected_windows_root,
+                    expected_windows_root,
+                ),
+            )
+
         with patch(
             "trustcheck.doctor.importlib.util.find_spec",
             side_effect=ValueError("bad module"),
