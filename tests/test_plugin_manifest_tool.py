@@ -9,16 +9,20 @@ import unittest
 import venv
 import warnings
 import zipfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from importlib.metadata import distributions
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
+import trustcheck.plugin_manifest as plugin_manifest_mod
 from trustcheck.cli import main as cli_main
+from trustcheck.cli_commands import plugin_manifest as plugin_manifest_command
+from trustcheck.cli_commands.context import CommandContext
 from trustcheck.plugin_manifest import (
     build_plugin_manifest_draft,
     fingerprint_public_key,
@@ -154,6 +158,121 @@ class PluginManifestToolTests(unittest.TestCase):
             self.assertEqual(manifest.date_time, (2024, 1, 2, 3, 4, 6))
             self.assertEqual(record.date_time, (2024, 1, 2, 3, 4, 6))
 
+    def test_configuration_schema_directory_verification_and_cli_paths(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-cli-") as temp:
+            root = Path(temp)
+            wheel = _write_minimal_plugin_wheel(
+                root / "wheel",
+                requires=("demo-dep>=1",),
+            )
+            key_path, public_key_path, signer = _write_key_pair(root)
+            schema = {"type": "object", "additionalProperties": False}
+            schema_path = root / "schema.json"
+            schema_path.write_text(json.dumps(schema), encoding="utf-8")
+
+            draft = build_plugin_manifest_draft(
+                wheel,
+                configuration_schema=schema,
+            )
+            self.assertEqual(draft["configuration_schema"], schema)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = cli_main(
+                    [
+                        "plugin-manifest",
+                        "init",
+                        "--configuration-schema",
+                        str(schema_path),
+                        str(wheel),
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(json.loads(stdout.getvalue())["configuration_schema"], schema)
+
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = cli_main(
+                    [
+                        "plugin-manifest",
+                        "fingerprint",
+                        "--format",
+                        "json",
+                        str(public_key_path),
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(json.loads(stdout.getvalue())["fingerprint_sha256"], signer)
+
+            signed = root / "signed.whl"
+            output_file = root / "summary.txt"
+            with redirect_stdout(StringIO()):
+                exit_code = cli_main(
+                    [
+                        "plugin-manifest",
+                        "sign",
+                        "--key",
+                        str(key_path),
+                        "--configuration-schema",
+                        str(schema_path),
+                        "--output",
+                        str(signed),
+                        "--output-file",
+                        str(output_file),
+                        str(wheel),
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+            self.assertIn("plugin manifest signed:", output_file.read_text(encoding="utf-8"))
+
+            extracted = root / "extracted"
+            plugin_manifest_mod._extract_wheel(signed, extracted)
+            self.assertEqual(verify_plugin_manifest(extracted).signer_sha256, signer)
+            dist_info = next(extracted.glob("*.dist-info"))
+            self.assertEqual(verify_plugin_manifest(dist_info).signer_sha256, signer)
+
+            with self.assertRaisesRegex(PluginError, "not a wheel or directory"):
+                verify_plugin_manifest(root / "not-a-wheel.txt")
+            with self.assertRaisesRegex(PluginError, "configuration schema"):
+                build_plugin_manifest_draft(wheel, configuration_schema=root / "missing.json")
+            list_schema = root / "schema-list.json"
+            list_schema.write_text("[]", encoding="utf-8")
+            with self.assertRaisesRegex(PluginError, "JSON object"):
+                build_plugin_manifest_draft(wheel, configuration_schema=list_schema)
+
+            for output in (root, root / "bad.zip"):
+                with self.subTest(output=output), self.assertRaises(SystemExit):
+                    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                        cli_main(
+                            [
+                                "plugin-manifest",
+                                "sign",
+                                "--key",
+                                str(key_path),
+                                "--output",
+                                str(output),
+                                str(wheel),
+                            ]
+                        )
+
+    def test_plugin_manifest_command_run_error_branch(self) -> None:
+        class Parser:
+            def error(self, message: str) -> None:
+                raise RuntimeError(message)
+
+        class Facade:
+            def _emit_output(self, rendered: str, output_file: str | None) -> None:
+                raise AssertionError("unexpected output")
+
+        args = SimpleNamespace(plugin_manifest_action="unknown")
+        context = CommandContext(
+            parser=Parser(),
+            config_payload={},
+            plugin_manager=PluginManager(),
+            facade=Facade(),
+        )
+        with self.assertRaisesRegex(RuntimeError, "unknown plugin-manifest action"):
+            plugin_manifest_command.run(args, context)
+
     def test_signing_rejects_console_script_layout_and_invalid_output(self) -> None:
         with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-sign-") as temp:
             root = Path(temp)
@@ -176,6 +295,21 @@ class PluginManifestToolTests(unittest.TestCase):
             with self.assertRaisesRegex(PluginError, "public key"):
                 fingerprint_public_key_file(invalid_key)
 
+            ec_key = ec.generate_private_key(ec.SECP256R1())
+            ec_public_path = root / "ec-public.pem"
+            ec_public_path.write_bytes(
+                ec_key.public_key().public_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+            )
+            with self.assertRaisesRegex(PluginError, "RSA public key"):
+                fingerprint_public_key_file(ec_public_path)
+            with self.assertRaisesRegex(PluginError, "RSA public key"):
+                plugin_manifest_mod.fingerprint_public_key_pem(
+                    ec_public_path.read_text(encoding="ascii")
+                )
+
             encrypted_key = rsa.generate_private_key(
                 public_exponent=65537,
                 key_size=2048,
@@ -190,6 +324,17 @@ class PluginManifestToolTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(PluginError, "private key"):
                 sign_plugin_wheel(wheel, key=encrypted_path)
+
+            ec_private_path = root / "ec-private.pem"
+            ec_private_path.write_bytes(
+                ec_key.private_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                )
+            )
+            with self.assertRaisesRegex(PluginError, "RSA private key"):
+                sign_plugin_wheel(wheel, key=ec_private_path)
 
     def test_signing_rejects_invalid_wheel_layouts(self) -> None:
         layout_cases = [
@@ -229,6 +374,14 @@ class PluginManifestToolTests(unittest.TestCase):
                 },
                 "invalid Trustcheck entry point",
             ),
+            (
+                {"entry_points_bytes": b"\xff"},
+                "invalid entry point metadata",
+            ),
+            (
+                {"metadata": "Metadata-Version: 2.1\nVersion: 1.0.0\n"},
+                "missing Name",
+            ),
         ]
         with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-layout-") as temp:
             base = Path(temp)
@@ -259,7 +412,16 @@ class PluginManifestToolTests(unittest.TestCase):
             with self.assertRaisesRegex(PluginError, "unsafe path"):
                 sign_plugin_wheel(unsafe, key=key_path)
 
-    def test_verify_rejects_malformed_and_oversized_wheels(self) -> None:
+            malformed = base / "malformed-1.0.0-py3-none-any.whl"
+            malformed.write_bytes(b"not a zip")
+            with self.assertRaisesRegex(PluginError, "valid zip"):
+                sign_plugin_wheel(malformed, key=key_path)
+
+            missing_input = base / "missing-1.0.0-py3-none-any.whl"
+            with self.assertRaisesRegex(PluginError, "requires a wheel file"):
+                sign_plugin_wheel(missing_input, key=key_path)
+
+    def test_verify_rejects_malformed_manifests_and_archive_limits(self) -> None:
         with tempfile.TemporaryDirectory(prefix="trustcheck-plugin-verify-") as temp:
             root = Path(temp)
             malformed = root / "demo-1.0-py3-none-any.whl"
@@ -269,12 +431,111 @@ class PluginManifestToolTests(unittest.TestCase):
 
             wheel = _write_minimal_plugin_wheel(root)
             key_path, _, _ = _write_key_pair(root)
+            signed = root / "signed.whl"
+            sign_plugin_wheel(wheel, key=key_path, output=signed)
+
             with patch(
                 "trustcheck.plugin_manifest.MAX_ARCHIVE_MEMBERS",
                 1,
             ):
                 with self.assertRaisesRegex(PluginError, "members"):
                     sign_plugin_wheel(wheel, key=key_path)
+                with self.assertRaisesRegex(PluginError, "members"):
+                    verify_plugin_manifest(signed)
+
+            with patch("trustcheck.plugin_manifest.MAX_ARTIFACT_BYTES", 1):
+                with self.assertRaisesRegex(PluginError, "artifact limit"):
+                    sign_plugin_wheel(wheel, key=key_path)
+                with self.assertRaisesRegex(PluginError, "artifact limit"):
+                    verify_plugin_manifest(signed)
+
+            with patch("trustcheck.plugin_manifest.MAX_ARCHIVE_UNCOMPRESSED_BYTES", 1):
+                with self.assertRaisesRegex(PluginError, "expanded size"):
+                    sign_plugin_wheel(wheel, key=key_path)
+
+            with patch("trustcheck.plugin_manifest.MIN_COMPRESSION_RATIO_BYTES", 1), patch(
+                "trustcheck.plugin_manifest.MAX_COMPRESSION_RATIO",
+                1.0,
+            ):
+                with self.assertRaisesRegex(PluginError, "compression ratio"):
+                    sign_plugin_wheel(wheel, key=key_path)
+
+            empty = root / "empty-1.0.0-py3-none-any.whl"
+            with zipfile.ZipFile(empty, "w"):
+                pass
+            with self.assertRaisesRegex(PluginError, "contains no files"):
+                sign_plugin_wheel(empty, key=key_path)
+
+            invalid_epoch_output = root / "invalid-epoch.whl"
+            with patch.dict("os.environ", {"SOURCE_DATE_EPOCH": "not-an-int"}):
+                sign_plugin_wheel(wheel, key=key_path, output=invalid_epoch_output)
+            with zipfile.ZipFile(invalid_epoch_output) as archive:
+                self.assertEqual(
+                    archive.getinfo("trustcheck-plugin.json").date_time,
+                    (1980, 1, 1, 0, 0, 0),
+                )
+
+            extracted = root / "extracted"
+            plugin_manifest_mod._extract_wheel(signed, extracted)
+            manifest = extracted / "trustcheck-plugin.json"
+            original_manifest = manifest.read_text(encoding="utf-8")
+            for payload, message in (
+                ("{", "unable to read signed plugin manifest"),
+                ("[]", "is invalid"),
+                (
+                    json.dumps(
+                        {
+                            "schema": "urn:trustcheck:plugin-manifest:2",
+                            "manifest": "bad",
+                            "public_key": "bad",
+                        }
+                    ),
+                    "is incomplete",
+                ),
+                (
+                    json.dumps(
+                        {
+                            "schema": "urn:trustcheck:plugin-manifest:2",
+                            "manifest": {},
+                            "public_key": 1,
+                        }
+                    ),
+                    "is incomplete",
+                ),
+                (
+                    json.dumps(
+                        {
+                            "schema": "urn:trustcheck:plugin-manifest:2",
+                            "manifest": {},
+                            "public_key": "bad",
+                        }
+                    ),
+                    "invalid public key data",
+                ),
+            ):
+                with self.subTest(message=message):
+                    manifest.write_text(payload, encoding="utf-8")
+                    with self.assertRaisesRegex(PluginError, message):
+                        verify_plugin_manifest(extracted)
+            manifest.write_text(original_manifest, encoding="utf-8")
+
+            multi_dist = root / "multi-dist"
+            multi_dist.mkdir()
+            (multi_dist / "one.dist-info").mkdir()
+            (multi_dist / "two.dist-info").mkdir()
+            with self.assertRaisesRegex(PluginError, "exactly one dist-info"):
+                verify_plugin_manifest(multi_dist)
+
+            dist_info = next(extracted.glob("*.dist-info")).name
+            distribution = plugin_manifest_mod._PathDistribution(extracted, dist_info)
+            self.assertEqual(distribution.requires, [])
+            self.assertEqual(
+                distribution.locate_file("demo_plugin.py"),
+                extracted / "demo_plugin.py",
+            )
+            with patch.object(Path, "read_bytes", side_effect=OSError("blocked")):
+                with self.assertRaisesRegex(PluginError, "unable to read plugin RECORD"):
+                    distribution.files
 
     def test_plugin_manifest_help_is_authoring_scoped(self) -> None:
         stdout = StringIO()
@@ -359,10 +620,13 @@ def _write_minimal_plugin_wheel(
     *,
     console_script: bool = False,
     entry_points: str | None = None,
+    entry_points_bytes: bytes | None = None,
     extra_entries: dict[str, bytes] | None = None,
+    metadata: str | None = None,
     omit_metadata: bool = False,
     omit_record: bool = False,
     output: Path | None = None,
+    requires: tuple[str, ...] = (),
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     wheel = output or root / "trustcheck_demo_plugin-1.0.0-py3-none-any.whl"
@@ -375,21 +639,31 @@ def _write_minimal_plugin_wheel(
     )
     if console_script:
         entry_points_payload += "\n[console_scripts]\ndemo-cli = demo_plugin:main\n"
-    entries = {
-        "demo_plugin.py": b"class Plugin:\n    name = 'demo'\n",
-        "bin/helper": b"#!/bin/sh\nexit 0\n",
-        f"{dist_info}/METADATA": (
+    metadata_payload = (
+        metadata
+        if metadata is not None
+        else (
             "Metadata-Version: 2.1\n"
             "Name: trustcheck-demo-plugin\n"
             "Version: 1.0.0\n"
-        ).encode("utf-8"),
+            + "".join(f"Requires-Dist: {item}\n" for item in requires)
+        )
+    )
+    entries = {
+        "demo_plugin.py": b"class Plugin:\n    name = 'demo'\n",
+        "bin/helper": b"#!/bin/sh\nexit 0\n",
+        f"{dist_info}/METADATA": metadata_payload.encode("utf-8"),
         f"{dist_info}/WHEEL": (
             "Wheel-Version: 1.0\n"
             "Generator: trustcheck fixture\n"
             "Root-Is-Purelib: true\n"
             "Tag: py3-none-any\n"
         ).encode("utf-8"),
-        f"{dist_info}/entry_points.txt": entry_points_payload.encode("utf-8"),
+        f"{dist_info}/entry_points.txt": (
+            entry_points_payload.encode("utf-8")
+            if entry_points_bytes is None
+            else entry_points_bytes
+        ),
     }
     if omit_metadata:
         entries.pop(f"{dist_info}/METADATA")
