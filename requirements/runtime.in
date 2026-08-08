@@ -1,4 +1,4 @@
-cryptography>=49.0.0,<50
+cryptography>=49.0.0,<51
 packaging>=24,<27
 pydantic>=2.12,<3
 sigstore>=4.4,<5
