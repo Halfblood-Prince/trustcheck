@@ -1,4 +1,4 @@
-cryptography>=49.0.0,<50
+cryptography>=49.0.0,<51
 packaging>=24,<27
 pydantic>=2.12,<3
 sigstore>=4.4,<5
@@ -19,8 +19,8 @@ coverage
 cyclonedx-bom
 mkdocs-material
 # Keep mutation tooling compatible with the CI Python 3.11-3.14 jobs.
-mutmut>=3.6,<4
-libcst>=1.8.6,<2
+mutmut>=3.7.0,<4
+libcst>=1.9.0,<2
 # LibCST uses PyYAML-ft only on Python 3.13; include it explicitly so
 # hash-checked installs work on the 3.13 matrix jobs.
 pyyaml-ft>=8.0.0; python_version == "3.13"
@@ -28,7 +28,7 @@ mypy
 pip-audit
 # Keep psutil on a release published for Linux Python 3.13.
 psutil<=7.2.2
-pyinstaller>=6.21.0,<7
+pyinstaller>=6.22.0,<7
 # PyInstaller requires macholib on macOS; pin it explicitly for hashed CI installs.
 macholib>=1.16.4,<2
 pytest-cov
